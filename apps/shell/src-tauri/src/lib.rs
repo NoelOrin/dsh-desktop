@@ -127,6 +127,10 @@ const BRIDGE_SCRIPT: &str = r#"(function () {
       get: function () { return invoke("get_autostart"); },
       set: function (enabled) { return invoke("set_autostart", { enabled: enabled }); },
     },
+    desktop: {
+      get: function () { return invoke("get_desktop_settings"); },
+      set: function (settings) { return invoke("set_desktop_settings", { settings: settings }); },
+    },
     shortcuts: {
       register: function (s, cb) {
         return invoke("register_shortcut", { shortcut: s }).then(function () {
@@ -422,6 +426,7 @@ struct AppState {
     tx: Sender<ManagerMessage>,
     log_dir: PathBuf,
     config_path: PathBuf,
+    desktop_settings_path: PathBuf,
     /// 应用是否正在退出（托盘"退出"置 true，用于关闭到托盘时区分真正退出）。
     exiting: Arc<AtomicBool>,
     /// --autostart + settings startupMode=tray 时隐藏主窗口，直到用户从托盘唤起。
@@ -561,6 +566,7 @@ pub fn run() {
             std::fs::create_dir_all(&log_dir)?;
             let log_path = log_dir.join("dsh.log");
             let config_path = app_data.join("config.json");
+            let desktop_settings_path = app_data.join("desktop-settings.json");
 
             let inner = Arc::new(Mutex::new(Inner {
                 log_dir: Some(log_dir.clone()),
@@ -575,18 +581,23 @@ pub fn run() {
                 .clone()
                 .or_else(|| std::env::var("DSH_HOME").ok())
                 .or_else(|| std::env::var("HOME").ok().map(|h| format!("{h}/.dsh")));
-            let startup_mode = settings_home
-                .as_deref()
-                .map(Path::new)
-                .map(|home| home.join("settings.yaml"))
-                .map(|path| {
-                    desktop_settings::startup_mode(&desktop_settings::read_desktop_section(&path))
-                })
-                .unwrap_or("normal");
+            let startup_mode = desktop_settings::read_startup_mode(&desktop_settings_path)
+                .unwrap_or_else(|| {
+                    settings_home
+                        .as_deref()
+                        .map(Path::new)
+                        .map(|home| home.join("settings.yaml"))
+                        .map(|path| {
+                            desktop_settings::startup_mode(&desktop_settings::read_desktop_section(
+                                &path,
+                            ))
+                        })
+                        .unwrap_or(desktop_settings::StartupMode::Normal)
+                });
             let start_in_tray = Arc::new(AtomicBool::new(
-                autostart_requested && startup_mode == "tray",
+                autostart_requested && startup_mode == desktop_settings::StartupMode::Tray,
             ));
-            if autostart_requested && startup_mode == "minimized" {
+            if autostart_requested && startup_mode == desktop_settings::StartupMode::Minimized {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.minimize();
                 }
@@ -619,6 +630,7 @@ pub fn run() {
                 tx: tx.clone(),
                 log_dir,
                 config_path,
+                desktop_settings_path,
                 exiting: exiting.clone(),
                 start_in_tray: start_in_tray.clone(),
                 shortcuts: Arc::new(Mutex::new(HashMap::new())),
@@ -733,6 +745,8 @@ pub fn run() {
             open_external,
             get_autostart,
             set_autostart,
+            get_desktop_settings,
+            set_desktop_settings,
             register_shortcut,
             unregister_shortcut,
             get_shortcuts,
@@ -1591,6 +1605,39 @@ fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
     } else {
         app.autolaunch().disable().map_err(|e| e.to_string())
     }
+}
+
+/// 查询开机自启与自启后窗口模式（OS 启停 + 壳侧持久化的启动模式）。
+#[tauri::command]
+fn get_desktop_settings(
+    state: State<AppState>,
+    app: AppHandle,
+) -> Result<desktop_settings::DesktopSettings, String> {
+    let autostart = app.autolaunch().is_enabled().map_err(|e| e.to_string())?;
+    let startup_mode = desktop_settings::read_startup_mode(&state.desktop_settings_path)
+        .unwrap_or(desktop_settings::StartupMode::Normal);
+    Ok(desktop_settings::DesktopSettings {
+        autostart,
+        startup_mode,
+    })
+}
+
+/// 设置开机自启开关与自启后窗口模式（供 dsh 插件设置面板经桥接调用）。
+#[tauri::command]
+fn set_desktop_settings(
+    state: State<AppState>,
+    app: AppHandle,
+    settings: desktop_settings::DesktopSettings,
+) -> Result<(), String> {
+    let enabled = app.autolaunch().is_enabled().map_err(|e| e.to_string())?;
+    if enabled != settings.autostart {
+        if settings.autostart {
+            app.autolaunch().enable().map_err(|e| e.to_string())?;
+        } else {
+            app.autolaunch().disable().map_err(|e| e.to_string())?;
+        }
+    }
+    desktop_settings::save_desktop_settings(&state.desktop_settings_path, &settings)
 }
 
 /// 保存快捷键注册表到 config.json（保留其余配置字段）。

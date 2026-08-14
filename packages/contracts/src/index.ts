@@ -57,6 +57,11 @@ export interface DshConfig {
   shortcuts: string[];
 }
 
+export interface DesktopSettings {
+  autostart: boolean;
+  startup_mode: StartupMode;
+}
+
 export interface UiThemeTokens {
   bg: string;
   fg: string;
@@ -90,6 +95,8 @@ export const COMMANDS = {
   openExternal: "open_external",
   getUiTheme: "get_ui_theme",
   windowAction: "window_action",
+  getDesktopSettings: "get_desktop_settings",
+  setDesktopSettings: "set_desktop_settings",
   getShortcuts: "get_shortcuts",
   unregisterAllShortcuts: "unregister_all_shortcuts",
   getPendingDeepLinks: "get_pending_deeplinks",

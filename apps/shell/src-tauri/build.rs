@@ -12,6 +12,8 @@ fn main() {
             "open_external",
             "get_autostart",
             "set_autostart",
+            "get_desktop_settings",
+            "set_desktop_settings",
             "register_shortcut",
             "unregister_shortcut",
             "check_update",

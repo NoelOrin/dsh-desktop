@@ -6,14 +6,16 @@
 
 **Architecture:** 能力分三层落地：Tauri 壳侧（Rust 插件注册 + 最小命令 + capabilities 白名单）、桥接层（`window.__DSH_DESKTOP__` 扩展）、dsh 插件侧（`packages/plugins/bridge` 的 host settings 注册 + client 设置面板 UI）。开机自启按用户要求**不做在壳侧控制中心**，而是做成 dsh 插件在 dsh WebUI 设置面板里提供开关，默认关闭。
 
-**Tech Stack:** Tauri 2.11.5（Rust）+ tauri-plugin-window-state/deep-link/updater/autostart + SolidJS 控制中心 + dsh（cordis）插件生态（schemastery schema + settings 服务 + client slots）。
+**Tech Stack:** Tauri 2.11.5（Rust）+ tauri-plugin-window-state/deep-link/updater/autostart + dsh（cordis）插件生态（schemastery schema + settings 服务 + client slots）。
 
 **Spec:** 本计划实现用户在会话中确认的需求清单（无独立 spec 文件）；功能边界与分层遵循 `docs/plugin-tauri-boundary.md`（§5 受控桥接、§6 bridge 插件定位）。每项功能的"需求/行为"在各任务开头内联说明。
+
+> **计划更新（2026-08-14 16:xx）：** 执行期间另一工作流（embedded-plugin-auto-mount）完成，已将原 `apps/control-center`（SolidJS 控制中心）移除，控制中心 UI（状态/配置/工具/开机自启）迁移到 `packages/plugins/bridge` 的 client“桌面”页。本计划据此调整：Task 4 的前端落点改到 bridge“桌面”页“工具”面板（壳侧新增 `check_update`/`install_update` 命令）；Task 2 仅 main 窗口；同步点从四处改为三处。已提交部分（Task 1/2/3/5/6/9 对应 commit）保留有效。
 
 ## Global Constraints
 
 - Tauri 2.11.5；Rust 1.97；前端 TypeScript strict；所有 user-facing 文案为中文
-- 新增 IPC 能力必须同步 `packages/contracts/src/index.ts`、Rust serde 类型、`apps/shell/src/main.ts`、`apps/control-center/src/lib/ipc.ts`，以及 `apps/shell/src-tauri/capabilities/*.json` 权限声明
+- 新增 IPC 能力必须同步 `packages/contracts/src/index.ts`、Rust serde 类型、`apps/shell/src/main.ts`，以及 `apps/shell/src-tauri/capabilities/*.json` 权限声明（原 `apps/control-center` 已随 2026-08-14 embedded-plugin-auto-mount 工作流移除，控制中心 UI 迁移至 `packages/plugins/bridge` 的 client“桌面”页）
 - 桥接能力只经 `capabilities/bridge.json` 的 remote 白名单（`http://127.0.0.1:*`）开放最小命令切片；不开放 `core:default` 给远程
 - 应用命令 ACL 由 `apps/shell/src-tauri/build.rs` 的 `AppManifest::commands` 生成（权限 id 形如 `allow-get-status`，下划线转连字符）
 - `tauri-plugin-single-instance` 必须最先注册；本次需为其启用 `deep-link` feature 以支持 Windows/Linux 深链转发
@@ -96,7 +98,7 @@ git commit -m "feat: 注册 window-state/deep-link/updater/autostart 插件"
 
 ### Task 2: 窗口状态记忆（window-state）
 
-**需求/行为:** 应用重启后，main/control 窗口记住上次的大小、位置、最大化/最小化状态。由于关闭到托盘不销毁窗口，状态在 `RunEvent::Exit` 时由插件自动保存。
+**需求/行为:** 应用重启后，main 窗口记住上次的大小、位置、最大化/最小化状态（control 窗口已随 embedded-plugin-auto-mount 工作流移除，仅剩 main）。由于关闭到托盘不销毁窗口，状态在 `RunEvent::Exit` 时由插件自动保存。
 
 **Files:**
 - Modify: `apps/shell/src-tauri/src/lib.rs`
@@ -219,28 +221,30 @@ git commit -m "feat: 注册 dsh-desktop:// 深链并桥接 onDeepLink"
 
 ### Task 4: 自动更新（updater + GitHub Release 签名）
 
-**需求/行为:** 应用启动后后台检查 GitHub Release 是否有新版本；控制中心"设置"或"工具"页提供"检查更新"按钮，发现更新后提示下载、安装并重启。需要：`tauri signer generate` 生成签名密钥对（私钥作 CI secret，公钥写 tauri.conf.json）、CI 在发布时生成 `latest.json` 与 `.sig` 签名并上传、壳侧 `updater:default` 权限、控制中心前端 `@tauri-apps/plugin-updater` + `@tauri-apps/plugin-process`。
+**需求/行为:** 应用启动后后台检查 GitHub Release 是否有新版本；dsh WebUI 设置面板的 bridge 插件“桌面”页“工具”区提供“检查更新”入口，发现更新后提示下载、安装并重启。需要：`tauri signer generate` 生成签名密钥对（私钥作 CI secret，公钥写 tauri.conf.json）、CI 在发布时生成 `latest.json` 与 `.sig` 签名并上传、壳侧 `updater:default` 权限、bridge 插件 client“工具”面板调用壳侧 `check_update` / `install_update` 命令（经 `window.__DSH_DESKTOP__`，新增到 build.rs ACL 与 bridge.json 白名单）。
+
+> 变更说明（2026-08-14）：原计划的控制中心前端已不存在——embedded-plugin-auto-mount 工作流把控制中心 UI 迁移到 `packages/plugins/bridge` 的 client“桌面”页（状态/配置/工具/开机自启）。因此本任务的 UI 落点改为该“工具”面板，且前端不再直接 `import @tauri-apps/plugin-updater`（远程页面无该绑定），改由壳侧暴露最小命令。
 
 **Files:**
 - Modify: `apps/shell/src-tauri/tauri.conf.json`（pubkey + endpoints）
-- Modify: `apps/shell/src-tauri/src/lib.rs`（启用 updater 插件；启动时异步 `check` 事件）
-- Modify: `apps/shell/src-tauri/capabilities/default.json`（`updater:default`）
+- Modify: `apps/shell/src-tauri/src/lib.rs`（启用 updater 插件；启动时异步 `check` 事件；新增 `check_update` / `install_update` 命令）
+- Modify: `apps/shell/src-tauri/build.rs`（commands 加 `check_update` / `install_update`）
+- Modify: `apps/shell/src-tauri/capabilities/default.json`（`updater:default`）与 `bridge.json`（`allow-check-update` / `allow-install-update`）
+- Modify: `packages/plugins/bridge/src/client.tsx`（“桌面”页“工具”面板加“检查更新”入口）
+- Modify: `packages/plugins/bridge/src/index.ts`（`DshDesktopBridge` 加 `update` 切片）
 - Modify: `.github/workflows/build.yml`（release job 生成 latest.json + .sig 并上传）
-- Modify: `apps/control-center/package.json`（`@tauri-apps/plugin-updater`、`@tauri-apps/plugin-process`）
-- Modify: `apps/control-center/src/pages/Tools.tsx` 或新增 `src/pages/Updates.tsx`（检查更新 UI）
-- Modify: `apps/control-center/src/App.tsx`（如新增页需挂 Tab）
 
 **Interfaces:**
 - Consumes: `tauri_plugin_updater`（`UpdaterExt::updater().check()` / `update.download_and_install()`）
-- Produces: 前端 `checkForUpdates()` 流程（check → 有更新则 download_and_install → `relaunch()`）；CI 发布物含 `latest.json` + 各平台 `.sig`
+- Produces: 壳侧命令 `check_update() -> Result<Option<String>, String>` / `install_update() -> Result<(), String>`；bridge 插件 `update.check()/install()`；CI 发布物含 `latest.json` + 各平台 `.sig`
 
 - [ ] **Step 1: 生成签名密钥并把公钥写入配置**
 
-Run: `cd apps/shell/src-tauri && cargo tauri signer generate -w ~/.tauri/dsh-desktop.key`（或 `yarn tauri signer generate`）
-Expected: 输出公钥（`-----BEGIN PUBLIC KEY-----...`）并生成私钥文件。
+Run: `cd apps/shell/src-tauri && cargo tauri signer generate --ci -w ~/.tauri/dsh-desktop.key`（或 `yarn tauri signer generate`）
+Expected: 输出公钥并生成私钥文件。
 将输出公钥替换 `tauri.conf.json` 的 `REPLACE_WITH_GENERATED_PUBKEY`。私钥内容**不要提交**——配到 GitHub 仓库 secret `TAURI_SIGNING_PRIVATE_KEY`（值含 `BEGIN PRIVATE KEY` 的 PEM）。
 
-- [ ] **Step 2: 启用 updater 插件（去掉 Task 1 的占位 pubkey 写法）**
+- [ ] **Step 2: 启用 updater 插件并加壳侧命令**
 
 `lib.rs` 改为：
 
@@ -263,34 +267,68 @@ tauri::async_runtime::spawn(async move {
 
 （需要 `use tauri_plugin_updater::UpdaterExt;`）
 
-- [ ] **Step 3: capabilities 声明 updater 权限**
+新增两个最小命令（供 bridge“工具”面板经桥接调用）：
 
-`capabilities/default.json` 的 `permissions` 加 `"updater:default"`。
+```rust
+#[tauri::command]
+fn check_update(app: AppHandle) -> Result<Option<String>, String> {
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    match updater.check().map_err(|e| e.to_string())? {
+        Some(update) => Ok(Some(update.version)),
+        None => Ok(None),
+    }
+}
 
-- [ ] **Step 4: 控制中心前端接入检查更新**
-
-`apps/control-center/package.json` dependencies 加：
-
-```json
-"@tauri-apps/plugin-updater": "^2",
-"@tauri-apps/plugin-process": "^2"
+#[tauri::command]
+fn install_update(app: AppHandle) -> Result<(), String> {
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    let update = updater.check().map_err(|e| e.to_string())?
+        .ok_or_else(|| "没有可用更新".to_string())?;
+    update.download_and_install(|| {}, || {}).map_err(|e| e.to_string())
+}
 ```
 
-在 `apps/control-center/src/pages/Tools.tsx` 增加"检查更新"工具项（复用现有工具列表结构），点击执行：
+`invoke_handler` 加 `check_update, install_update`；`build.rs` commands 加 `"check_update"` / `"install_update"`；`BRIDGE_SCRIPT` 加：
+
+```js
+update: {
+  check: function () { return invoke("check_update"); },
+  install: function () { return invoke("install_update"); },
+},
+```
+
+- [ ] **Step 3: capabilities 声明 updater 权限**
+
+`capabilities/default.json` 的 `permissions` 加 `"updater:default"`；`capabilities/bridge.json` 加 `"allow-check-update"` / `"allow-install-update"`。
+
+- [ ] **Step 4: bridge 插件“桌面”页“工具”面板加“检查更新”入口**
+
+在 `packages/plugins/bridge/src/client.tsx` 的“工具”面板（原控制中心 Tools 迁移处）增加“检查更新”按钮，点击调用 `window.__DSH_DESKTOP__.update.check()`，有版本时提示 `update.install()`：
+
+```tsx
+const doCheckUpdate = async () => {
+  const bridge = getBridge();
+  if (!bridge) { setMsg("桌面壳桥接不可用"); return; }
+  const version = await bridge.update.check();
+  if (!version) { setMsg("当前已是最新版本"); return; }
+  if (confirm(`发现新版本 ${version}，是否下载并安装？`)) {
+    await bridge.update.install();
+    setMsg("已安装，请重启应用");
+  }
+};
+```
+
+（若“工具”面板暂未实现回调式交互，按该面板现有结构扩展；最小实现保证按钮可用即可。）
+
+- [ ] **Step 4b: bridge 插件类型**
+
+`packages/plugins/bridge/src/index.ts` 的 `DshDesktopBridge` 加：
 
 ```ts
-import { check } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
-
-async function checkForUpdates(): Promise<string> {
-  const update = await check();
-  if (!update) return "当前已是最新版本";
-  const confirmed = confirm(`发现新版本 ${update.version}，是否下载并安装？`);
-  if (!confirmed) return "已取消";
-  await update.downloadAndInstall();
-  await relaunch();
-  return "已安装，正在重启…";
-}
+update: {
+  check(): Promise<string | null>;
+  install(): Promise<void>;
+};
 ```
 
 - [ ] **Step 5: CI 发布 job 生成 latest.json 与签名**
@@ -326,14 +364,14 @@ async function checkForUpdates(): Promise<string> {
 
 - [ ] **Step 6: 验证**
 
-Run: 根 `yarn typecheck`（控制中心）、`cd apps/shell/src-tauri && cargo check`（壳侧）。
+Run: 根 `yarn typecheck`、`cd apps/shell/src-tauri && cargo check`（壳侧）。
 Expected: 全绿。（CI 签名流程本地无法端到端跑，需 push 后观察；本任务以编译 + typecheck 通过为完成标准。）
 
 - [ ] **Step 7: 提交**
 
 ```bash
-git add apps/shell/src-tauri/tauri.conf.json apps/shell/src-tauri/src/lib.rs apps/shell/src-tauri/capabilities/default.json apps/control-center/package.json apps/control-center/src .github/workflows/build.yml .github/scripts/generate-updater-artifacts.mjs
-git commit -m "feat: 接入自动更新（updater + GitHub Release 签名清单）"
+git add apps/shell/src-tauri/tauri.conf.json apps/shell/src-tauri/src/lib.rs apps/shell/src-tauri/build.rs apps/shell/src-tauri/capabilities/default.json apps/shell/src-tauri/capabilities/bridge.json packages/plugins/bridge/src/client.tsx packages/plugins/bridge/src/index.ts .github/workflows/build.yml .github/scripts/generate-updater-artifacts.mjs
+git commit -m "feat: 接入自动更新（updater 壳侧命令 + bridge 工具面板 + GitHub Release 签名清单）"
 ```
 
 ---
@@ -730,7 +768,6 @@ git commit -m "feat: 托盘退出增加二次确认"
 **Files:**
 - Modify: `AGENTS.md`（root：IPC 命令/事件表补新命令与事件、原生能力清单补六项）
 - Modify: `apps/shell/src-tauri/AGENTS.md`（契约表、原生能力节、插件清单）
-- Modify: `apps/control-center/AGENTS.md`（契约表）
 - Modify: `packages/contracts/AGENTS.md`
 - Modify: `packages/plugins/AGENTS.md` 与 `packages/plugins/bridge/AGENTS.md`（新增插件说明）
 - Modify: `docs/plugin-tauri-boundary.md`（如需记录开机自启设置项归属）
@@ -748,7 +785,7 @@ Expected: 全绿、零警告。
 - [ ] **Step 3: 提交**
 
 ```bash
-git add AGENTS.md README.md apps/shell/src-tauri/AGENTS.md apps/control-center/AGENTS.md packages/contracts/AGENTS.md packages/plugins/AGENTS.md packages/plugins/bridge/AGENTS.md docs/plugin-tauri-boundary.md
+git add AGENTS.md README.md apps/shell/src-tauri/AGENTS.md packages/contracts/AGENTS.md packages/plugins/AGENTS.md packages/plugins/bridge/AGENTS.md docs/plugin-tauri-boundary.md
 git commit -m "docs: 同步原生能力二期契约与文档"
 ```
 

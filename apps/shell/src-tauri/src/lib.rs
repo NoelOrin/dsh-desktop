@@ -523,9 +523,39 @@ impl DshManager {
         self.generation += 1;
         let generation = self.generation;
 
+        // 装配内嵌插件（best-effort）并生成 --patch overlay：任何失败只记日志，不影响 dsh 启动
+        let overlay = {
+            let resource_dir = self.app.path().resource_dir().ok();
+            let home_path = home
+                .as_ref()
+                .map(|h| PathBuf::from(h.as_str()))
+                .or_else(|| dirs::home_dir().map(|h| h.join(".dsh")));
+            let mut log = |line: &str| self.append_log(line);
+            let mounted = match (resource_dir, home_path) {
+                (Some(res), Some(home)) => embedded::assemble(&res, &home, &mut log),
+                _ => Vec::new(),
+            };
+            self.app
+                .path()
+                .app_data_dir()
+                .ok()
+                .and_then(|data_dir| embedded::write_overlay(&data_dir, &mounted))
+        };
+
         let mut cmd = Command::new(&node);
+        let mut args = vec!["web".to_string()];
+        if let Some(overlay_path) = &overlay {
+            args.push("--patch".into());
+            args.push(overlay_path.to_string_lossy().into_owned());
+        }
+        args.extend([
+            "--host".into(),
+            "127.0.0.1".into(),
+            "--port".into(),
+            port.to_string(),
+        ]);
         cmd.arg(&entry)
-            .args(["web", "--host", "127.0.0.1", "--port", &port.to_string()])
+            .args(&args)
             .env("NO_COLOR", "1")
             .current_dir(&workspace)
             .stdin(Stdio::null())
@@ -755,7 +785,7 @@ fn register_shortcut(state: State<AppState>, shortcut: String) -> Result<(), Str
     let app = state.app.clone();
     let trigger = shortcut.clone();
     app.global_shortcut()
-        .on_shortcut(s.clone(), move |app, _s, event| {
+        .on_shortcut(s, move |app, _s, event| {
             if event.state() == ShortcutState::Pressed {
                 let _ = app.emit("dsh-shortcut", trigger.clone());
             }

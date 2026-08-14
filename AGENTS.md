@@ -10,14 +10,15 @@
 | `yarn build` | `tauri build` 打包，产物在 `apps/shell/src-tauri/target/release/bundle/` |
 | `yarn dev:web` | 仅启动前端 dev server（shell :5173 + control-center :5174） |
 | `yarn build:web` | 构建前端到 `dist/`（先 shell 后 control-center；Tauri 的 `beforeBuildCommand` 会调用） |
-| `yarn typecheck` | 对所有 workspace 执行 TypeScript 类型检查（shell / control-center / contracts） |
-| `corepack yarn install` | 安装依赖（Yarn 4 + PnP，无 `node_modules` 目录） |
+| `yarn typecheck` | 对所有 workspace 执行 TypeScript 类型检查（shell / control-center / contracts / plugins） |
+| `corepack yarn install` | 安装依赖（Yarn 4 + node-modules，生成 `node_modules` 目录） |
 
 ## 模块划分
 
 - `apps/shell/` — main 窗口：启动页前端（Vite + TypeScript）与 `src-tauri/`（Tauri 2 + Rust 后端）
 - `apps/control-center/` — control 窗口：SolidJS SPA（Vite 8 + TypeScript），按需打开
 - `packages/contracts/` — 前后端共享的 IPC 契约类型与常量（`@dsh-desktop/contracts`）
+- `packages/plugins/` — dsh 插件容器：`bridge/`（桥接 Tauri 壳能力）+ `hello/`（自定义示例），每个子目录一个 cordis 插件
 - `.github/` — 三平台 CI 构建、自动发布与版本号脚本
 - `docs/` — 截图等文档资源
 
@@ -25,7 +26,7 @@
 
 1. **main 窗口**：应用启动 300ms 后，Rust 侧 `DshManager` 发送 `Start` 消息开始检测 `dsh`
 2. 已安装 → 保留一个空闲 loopback 端口，以 `dsh web --host 127.0.0.1 --port <port>` 拉起子进程
-3. 未安装 → 前端显示“安装 DSH”按钮，一键执行 `npm install --prefix <runtime> @deepseek-ai/dsh`
+3. 未安装 → 前端显示“安装 DSH”按钮，一键执行 `npm install -g @deepseek-ai/dsh`（全局安装）
 4. 子进程端口返回 HTTP 200 即视为就绪，主窗口 `navigate` 到 `http://127.0.0.1:<port>`
 5. **control 窗口**：按需打开（应用菜单项“控制中心” / `CmdOrCtrl+Shift+C`），重复调用只聚焦；关闭仅隐藏不销毁
 

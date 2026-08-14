@@ -31,7 +31,7 @@ flowchart LR
   A[main 窗口<br/>启动页 → dsh Web UI] --> B[Rust 进程管理器]
   B -->|spawn / 监控 / 停止| C[dsh web 子进程]
   C -->|HTTP 127.0.0.1:随机端口| A
-  B -->|未安装时 npm install| D[应用数据目录 runtime]
+  B -->|未安装时 npm install -g| D[全局安装 dsh]
   D --> C
   E[control 窗口<br/>SolidJS 控制中心] -->|get_status / get_config / set_config| B
 ```
@@ -80,10 +80,10 @@ yarn build
 
 ## 一键安装 dsh
 
-启动页检测到系统没有 `dsh` 时，点击“一键安装 DSH”，应用会在数据目录执行：
+启动页检测到系统没有 `dsh` 时，点击“一键安装 DSH”，应用会直接执行全局安装：
 
 ```sh
-npm install --prefix <应用数据目录>/runtime @deepseek-ai/dsh
+npm install -g @deepseek-ai/dsh
 ```
 
 安装日志实时展示在启动页，完成后自动拉起 `dsh web` 并进入界面。
@@ -121,7 +121,8 @@ dsh-desktop/
 │           ├── pages/            # Dashboard / Settings / Tools
 │           └── lib/ipc.ts        # 全部 Tauri 调用与事件监听
 ├── packages/
-│   └── contracts/                # 共享 IPC 类型与常量（@dsh-desktop/contracts）
+│   ├── contracts/                # 共享 IPC 类型与常量（@dsh-desktop/contracts）
+│   └── plugins/                  # dsh 插件容器：bridge（桥接 Tauri 壳能力）/ hello（自定义示例）等
 ├── .github/
 │   ├── scripts/                  # 版本管理脚本
 │   └── workflows/                # 三平台构建与自动发布

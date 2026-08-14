@@ -1,0 +1,8 @@
+{
+  "name": "@dsh-desktop/plugins",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "yarn@4.17.1",
+  "description": "dsh 插件容器：桥接 Tauri 壳能力的插件与自定义插件的开发目录，每个子目录一个 dsh 插件"
+}

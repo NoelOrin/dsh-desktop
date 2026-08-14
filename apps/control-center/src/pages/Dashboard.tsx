@@ -26,7 +26,6 @@ export default function Dashboard() {
           url: null,
           dsh_installed: false,
           node_found: false,
-          install_dir: null,
           log_dir: null,
           logs: [],
         });
@@ -65,7 +64,7 @@ export default function Dashboard() {
         {url() && <code class="status__url">{url()}</code>}
       </div>
       <div class="actions">
-        <button class="primary" hidden={phase() !== "missing"} onClick={() => installDsh().catch((e) => console.error(e))}>
+        <button class="primary" hidden={phase() !== "missing" || snapshot()?.node_found === false} onClick={() => installDsh().catch((e) => console.error(e))}>
           安装 DSH
         </button>
         <button hidden={phase() !== "failed"} onClick={() => restart().catch((e) => console.error(e))}>重试</button>

@@ -25,7 +25,7 @@ DSH Desktop 的 main 窗口启动页：Vite + TypeScript 的单页应用（无�
 
 phase 取值（snake_case）：`detecting` → `missing`（缺 dsh 或 node）| `installing` | `starting` → `ready`（跳转 `status.url`）| `failed` | `stopped`
 
-- 仅 `missing` 显示“安装 DSH”按钮，仅 `failed` 显示“重试”与“日志目录”
+- 仅 `missing` 且 `node_found` 为 true（已检测到 Node.js）时显示“安装 DSH”按钮；缺 Node.js 时隐藏按钮、仅提示“请先安装 Node.js”；仅 `failed` 显示“重试”与“日志目录”
 - `installing` / `starting` / `failed` 显示日志面板
 - `data-phase` 驱动按钮显隐与状态点颜色（见 `style.css` 的 `.status[data-phase=...]` 规则）
 - phase 为 `ready` 且有 url 时，用 `window.location.href = status.url` 整页跳转进入 dsh web

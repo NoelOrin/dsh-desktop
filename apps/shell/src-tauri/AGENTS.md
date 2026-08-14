@@ -53,8 +53,8 @@ DSH Desktop 的 Rust 后端。职责：检测 / 一键安装 `dsh`、以子进�
 - 常量：`READY_TIMEOUT=120s`、`POLL_INTERVAL=250ms`、`MAX_LOGS=500`（环形日志）
 - `reserve_port()`：绑定 `127.0.0.1:0` 拿到空闲端口后立即 drop —— 存在极小竞态窗口，子进程应尽快接管
 - 窗口关闭：发送 `Stop`，300ms 后 `app.exit(0)`；`RunEvent::Exit` 时发送 `Shutdown` 并清理子进程
-- 环境变量：`DSH_BIN`（dsh 入口）、`DSH_NODE`（Node 解释器）、`DSH_HOME`（透传给子进程）；数据目录为 `app_data_dir()/runtime`、`.../logs` 与 `.../config.json`
-- `resolve_dsh` 的查找顺序：`dsh_bin`（config.json 优先于环境变量）→ runtime 内 `bin/dsh` → `node_modules/@deepseek-ai/dsh/lib/bin.js` → PATH → `~/.vite-plus/bin/dsh`
+- 环境变量：`DSH_BIN`（dsh 入口）、`DSH_NODE`（Node 解释器）、`DSH_HOME`（透传给子进程）；数据目录为 `app_data_dir()/logs` 与 `.../config.json`（`dsh` 通过一键安装全局安装，不写入应用数据目录）
+- `resolve_dsh` 的查找顺序：`dsh_bin`（config.json 优先于环境变量）→ PATH → npm 全局安装目录（`npm prefix -g`，含 `bin/dsh` 与 `lib/node_modules/@deepseek-ai/dsh/lib/bin.js`）→ `~/.vite-plus/bin/dsh`
 
 ## 开发与验证
 

@@ -20,7 +20,7 @@ function render(status: Partial<RuntimeSnapshot>): void {
   statusEl.dataset.phase = phase;
   messageEl.textContent = status.message || "DSH 状态未知";
 
-  installBtn.classList.toggle("hidden", phase !== "missing");
+  installBtn.classList.toggle("hidden", phase !== "missing" || status.node_found === false);
   retryBtn.classList.toggle("hidden", phase !== "failed");
   openLogsBtn.classList.toggle("hidden", phase !== "failed");
   logsEl.classList.toggle("hidden", !SHOW_LOGS.has(phase));

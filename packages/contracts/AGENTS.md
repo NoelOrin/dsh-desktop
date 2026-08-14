@@ -6,7 +6,7 @@
 ## 内容
 
 - `RuntimePhase` — phase 联合类型（snake_case，与 Rust `RuntimePhase` serde 一致）
-- `RuntimeSnapshot` — `get_status` 返回（phase/message/url/dsh_installed/node_found/install_dir/log_dir/logs）
+- `RuntimeSnapshot` — `get_status` 返回（phase/message/url/dsh_installed/node_found/log_dir/logs）
 - `DshConfig` — `get_config` / `set_config` 的配置结构（dsh_bin/dsh_node/dsh_home，null 表示未设置）
 - `COMMANDS` / `EVENTS` — IPC 命令名与事件名字符串常量
 

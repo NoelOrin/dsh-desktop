@@ -1,15 +1,17 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "default",
-  "description": "DSH Desktop main and control windows（本地页面）",
-  "windows": ["main", "control"],
+  "identifier": "bridge",
+  "description": "DSH web（loopback 远程页面）受控桥接能力：仅对 127.0.0.1 端口白名单开放最小命令切片",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["http://127.0.0.1:*"]
+  },
   "permissions": [
-    "core:default",
-    "global-shortcut:default",
-    "notification:default",
+    "notification:allow-notify",
     "clipboard-manager:allow-read-text",
     "clipboard-manager:allow-write-text",
-    "dialog:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
     "allow-get-status",
     "allow-restart",
     "allow-install-dsh",

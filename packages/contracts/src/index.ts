@@ -13,7 +13,6 @@ export interface RuntimeSnapshot {
   url: string | null;
   dsh_installed: boolean;
   node_found: boolean;
-  install_dir: string | null;
   log_dir: string | null;
   logs: string[];
 }

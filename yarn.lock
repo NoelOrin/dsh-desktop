@@ -207,6 +207,33 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@deepseek-ai/cordis@npm:^4.0.1":
+  version: 4.0.1
+  resolution: "@deepseek-ai/cordis@npm:4.0.1"
+  dependencies:
+    "@deepseek-ai/cosmokit": "npm:^1.8.2"
+    "@standard-schema/spec": "npm:^1.1.0"
+  peerDependencies:
+    "@deepseek-ai/cordis-plugin-include": ^1.0.6
+    "@deepseek-ai/cordis-plugin-loader": ^1.0.2
+  peerDependenciesMeta:
+    "@deepseek-ai/cordis-plugin-include":
+      optional: true
+    "@deepseek-ai/cordis-plugin-loader":
+      optional: true
+  bin:
+    cordis: bin.js
+  checksum: 10c0/8939af6c352c63fccea2fe146998557ccdeb72fb06841e80e2e4e304e8a93a58ad63e3e8fc5eddbdf019150426e8cae5d4c35f3d87d6d5d7f17cf06bdf9fe5da
+  languageName: node
+  linkType: hard
+
+"@deepseek-ai/cosmokit@npm:^1.8.2":
+  version: 1.8.2
+  resolution: "@deepseek-ai/cosmokit@npm:1.8.2"
+  checksum: 10c0/2e15902445b984f2d245687f6c3590cc0251eaeec5fd5173138fc61f791a0af0c77e56b27f060ee6868213996578afd36efd52ef18d115aa0ca57fca89c6a2cb
+  languageName: node
+  linkType: hard
+
 "@dsh-desktop/contracts@workspace:^, @dsh-desktop/contracts@workspace:packages/contracts":
   version: 0.0.0-use.local
   resolution: "@dsh-desktop/contracts@workspace:packages/contracts"
@@ -225,6 +252,30 @@ __metadata:
     typescript: "npm:^5"
     vite: "npm:^8"
     vite-plugin-solid: "npm:^2.11.14"
+  languageName: unknown
+  linkType: soft
+
+"@dsh-desktop/plugin-bridge@workspace:packages/plugins/bridge":
+  version: 0.0.0-use.local
+  resolution: "@dsh-desktop/plugin-bridge@workspace:packages/plugins/bridge"
+  dependencies:
+    "@deepseek-ai/cordis": "npm:^4.0.1"
+    typescript: "npm:^5"
+  languageName: unknown
+  linkType: soft
+
+"@dsh-desktop/plugin-hello@workspace:packages/plugins/hello":
+  version: 0.0.0-use.local
+  resolution: "@dsh-desktop/plugin-hello@workspace:packages/plugins/hello"
+  dependencies:
+    "@deepseek-ai/cordis": "npm:^4.0.1"
+    typescript: "npm:^5"
+  languageName: unknown
+  linkType: soft
+
+"@dsh-desktop/plugins@workspace:packages/plugins":
+  version: 0.0.0-use.local
+  resolution: "@dsh-desktop/plugins@workspace:packages/plugins"
   languageName: unknown
   linkType: soft
 
@@ -403,6 +454,13 @@ __metadata:
   version: 1.0.1
   resolution: "@rolldown/pluginutils@npm:1.0.1"
   checksum: 10c0/99d9b06d90196823e4d8c841f258db7a16e5dbba5824a2962b05d907b79f1ba929d56f22dd744fd530936e568c865ee56a719dc31e57e13bc0a8eb4764a8d8dd
+  languageName: node
+  linkType: hard
+
+"@standard-schema/spec@npm:^1.1.0":
+  version: 1.1.0
+  resolution: "@standard-schema/spec@npm:1.1.0"
+  checksum: 10c0/d90f55acde4b2deb983529c87e8025fa693de1a5e8b49ecc6eb84d1fd96328add0e03d7d551442156c7432fd78165b2c26ff561b970a9a881f046abb78d6a526
   languageName: node
   linkType: hard
 

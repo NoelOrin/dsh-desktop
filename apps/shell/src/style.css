@@ -194,3 +194,28 @@ h1 {
     animation: none;
   }
 }
+
+/* 系统深色模式跟随 */
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #101318;
+    --ink: #e8ebf0;
+    --muted: #9aa3af;
+    --line: #2a2f38;
+    --accent: #5b7cff;
+    --accent-ink: #8fa8ff;
+    --ok: #2ebd74;
+    --danger: #f26d60;
+  }
+
+  button {
+    background: #1a1f27;
+    color: var(--ink);
+  }
+
+  .shell__panel,
+  .logs {
+    background: #161b23;
+  }
+}

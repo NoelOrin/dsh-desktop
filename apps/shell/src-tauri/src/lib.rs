@@ -18,6 +18,7 @@ use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::TrayIconBuilder;
 use tauri::webview::PageLoadEvent;
 use tauri::{AppHandle, Emitter, Manager as _, RunEvent, State, WindowEvent};
+use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_global_shortcut::{Builder as ShortcutBuilder, Code, Modifiers, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
@@ -69,6 +70,10 @@ const BRIDGE_SCRIPT: &str = r#"(function () {
     onLog: function (cb) { return listen("dsh-log", cb); },
     onFileDrop: function (cb) { return listen("dsh-file-drop", cb); },
     onDeepLink: function (cb) { return listen("dsh-deeplink", cb); },
+    autostart: {
+      get: function () { return invoke("get_autostart"); },
+      set: function (enabled) { return invoke("set_autostart", { enabled: enabled }); },
+    },
   };
 })();"#;
 
@@ -312,7 +317,9 @@ pub fn run() {
             open_log_directory,
             get_config,
             set_config,
-            open_external
+            open_external,
+            get_autostart,
+            set_autostart
         ])
         .on_window_event(|window, event| {
             let label = window.label().to_string();
@@ -762,6 +769,22 @@ fn set_config(state: State<AppState>, config: DshConfig) -> Result<(), String> {
 #[tauri::command]
 fn open_external(target: String) -> Result<(), String> {
     open_with_system(&target)
+}
+
+/// 查询开机自启状态（autostart 插件，macOS LaunchAgent / 其他平台系统自启）。
+#[tauri::command]
+fn get_autostart(app: AppHandle) -> Result<bool, String> {
+    app.autolaunch().is_enabled().map_err(|e| e.to_string())
+}
+
+/// 设置开机自启开关（供 dsh 插件设置面板经桥接调用）。
+#[tauri::command]
+fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
+    if enabled {
+        app.autolaunch().enable().map_err(|e| e.to_string())
+    } else {
+        app.autolaunch().disable().map_err(|e| e.to_string())
+    }
 }
 
 fn emit_status(app: &AppHandle, inner: &Arc<Mutex<Inner>>) {

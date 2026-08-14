@@ -10,6 +10,8 @@ fn main() {
             "get_config",
             "set_config",
             "open_external",
+            "get_autostart",
+            "set_autostart",
         ]));
     if let Err(error) = tauri_build::try_build(attributes) {
         println!("{error}");

@@ -35,6 +35,15 @@ export interface DshDesktopBridge {
   onLog(cb: (line: string) => void): Promise<() => void>;
   onFileDrop(cb: (paths: string[]) => void): Promise<() => void>;
   onDeepLink(cb: (url: string) => void): Promise<() => void>;
+  autostart: {
+    get(): Promise<boolean>;
+    set(enabled: boolean): Promise<void>;
+  };
+  shortcuts: {
+    register(shortcut: string, cb: () => void): Promise<void>;
+    unregister(shortcut: string): Promise<void>;
+  };
+  onShortcut(cb: (shortcut: string) => void): Promise<() => void>;
 }
 
 /** 读取壳注入的桥接对象；未注入（如纯浏览器）时返回 null。 */

@@ -18,6 +18,8 @@
     "allow-open-log-directory",
     "allow-get-config",
     "allow-set-config",
-    "allow-open-external"
+    "allow-open-external",
+    "allow-get-autostart",
+    "allow-set-autostart"
   ]
 }

@@ -7,7 +7,7 @@
     "beforeDevCommand": "corepack yarn web:all",
     "devUrl": "http://localhost:5173",
     "beforeBuildCommand": "corepack yarn web:build",
-    "frontendDist": "../../dist"
+    "frontendDist": "../../../dist"
   },
   "app": {
     "macOSPrivateApi": true,

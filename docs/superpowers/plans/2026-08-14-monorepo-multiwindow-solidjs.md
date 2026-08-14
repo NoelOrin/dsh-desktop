@@ -154,7 +154,7 @@ apps/shell/src-tauri/gen
 编辑 `apps/shell/src-tauri/tauri.conf.json`：
 - `build.beforeDevCommand` → `"corepack yarn web:all"`
 - `build.beforeBuildCommand` → `"corepack yarn web:build"`
-- `build.frontendDist` → `"../../dist"`
+- `build.frontendDist` → `"../../../dist"`（tauri.conf.json 位于 apps/shell/src-tauri，需上 3 级到仓库根 dist/）
 - `build.devUrl` 保持 `"http://localhost:5173"`
 
 - [ ] **Step 7: 安装依赖并验证**

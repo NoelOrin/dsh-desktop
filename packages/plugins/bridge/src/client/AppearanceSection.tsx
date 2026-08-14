@@ -2,8 +2,10 @@
 import { useSyncExternalStore } from "react";
 import { DEFAULT_PREFERENCE, THEME_PREFERENCES, type ThemePreference } from "../shared/theme";
 import css from "./appearance.module.css";
+import { GlassSlider } from "./GlassSlider";
 import { ThemeLibrary } from "./ThemeLibrary";
 import type { ThemeStore } from "./theme-store";
+import { WallpaperRow } from "./WallpaperRow";
 
 const PREFERENCE_LABELS: Record<ThemePreference, string> = {
   light: "pref.light",
@@ -55,6 +57,18 @@ export function AppearanceSection({
         </fieldset>
       </section>
       <ThemeLibrary store={store} t={t} />
+      <WallpaperRow
+        wallpaperImage={settings.wallpaperImage}
+        wallpaperBlur={settings.wallpaperBlur}
+        wallpaperPixelate={settings.wallpaperPixelate}
+        t={t}
+        setWallpaper={(patch) => store.setWallpaper(patch)}
+      />
+      <GlassSlider
+        value={settings.glassOpacity}
+        t={t}
+        onChange={(value) => store.setGlassOpacity(value)}
+      />
     </div>
   );
 }

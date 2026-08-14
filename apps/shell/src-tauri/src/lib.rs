@@ -199,8 +199,17 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
-        // 窗口状态记忆：重启后恢复 main/control 窗口大小与位置（Task 2 调整保存内容）
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // 窗口状态记忆：重启后恢复 main/control 窗口大小/位置/最大化；不保存可见性，
+        // 避免 control 窗口（visible:false）在重启后被插件恢复为可见
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::SIZE
+                        | tauri_plugin_window_state::StateFlags::POSITION
+                        | tauri_plugin_window_state::StateFlags::MAXIMIZED,
+                )
+                .build(),
+        )
         // 深链 dsh-desktop://（macOS 经 RunEvent::Opened；Windows/Linux 由 single-instance 转发）
         .plugin(tauri_plugin_deep_link::init())
         // 开机自启（默认关闭，由 dsh 插件设置面板控制）

@@ -1,5 +1,8 @@
+import { Button, Input, StateDot } from "@deepseek-ai/dsh-client-ui-primitives";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { AppearanceSection } from "./client/AppearanceSection";
+import css from "./client/desktop.module.css";
+import { SettingsPage, SettingsSection } from "./client/settings-layout";
 import { applyThemeSection } from "./client/theme-apply";
 import { createThemeStore } from "./client/theme-store";
 import { THEME_SETTINGS_NAMESPACE, type ThemeSettings } from "./shared/theme";
@@ -52,6 +55,7 @@ function getBridge(): BridgeLike | null {
 /** desktop 设置命名空间的快照形状（与 host 侧 z.object 对齐）。 */
 interface DesktopConfig {
   autostart?: boolean;
+  startupMode?: "normal" | "tray" | "minimized";
   dsh_bin?: string | null;
   dsh_node?: string | null;
   dsh_home?: string | null;
@@ -86,8 +90,8 @@ interface ClientContextLike {
   };
 }
 
-/** 开机自启开关：绑定 desktop 命名空间快照，切换时同步 Tauri 壳（壳不可达时仅写 settings）。 */
-export function AutostartSwitch(props: {
+/** 开机自启设置：settings 与系统自启事务同步，并支持自启后窗口状态。 */
+function StartupSettings(props: {
   scope: SettingsScopeLike<DesktopConfig>;
   t: Translate;
 }): JSX.Element {
@@ -95,30 +99,74 @@ export function AutostartSwitch(props: {
     (listener) => props.scope.subscribe(listener),
     () => props.scope.getSnapshot(),
   );
-  const value = snapshot.value?.autostart ?? false;
-  const onChange = async (next: boolean) => {
+  const autostart = snapshot.value?.autostart ?? false;
+  const startupMode = snapshot.value?.startupMode ?? "normal";
+  const [osEnabled, setOsEnabled] = useState<boolean | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getBridge()
+      ?.autostart.get()
+      .then(setOsEnabled)
+      .catch((e: unknown) => setError(`读取系统自启状态失败: ${String(e)}`));
+  }, []);
+
+  const apply = async (nextAutostart: boolean, nextMode: "normal" | "tray" | "minimized") => {
+    const previousAutostart = autostart;
     const bridge = getBridge();
-    if (bridge) {
+    if (bridge && osEnabled !== null && osEnabled !== nextAutostart) {
       try {
-        await bridge.autostart.set(next);
-      } catch {
-        // 壳不可达或调用失败：仍写 settings（由下一次启动 / 桥接补偿）
+        await bridge.autostart.set(nextAutostart);
+      } catch (e) {
+        setError(`系统自启设置失败: ${String(e)}`);
+        return;
       }
     }
-    await props.scope.set("autostart", next);
+    try {
+      await props.scope.set("autostart", nextAutostart);
+      await props.scope.set("startupMode", nextMode);
+      setError(null);
+    } catch (e) {
+      setError(`保存桌面设置失败: ${String(e)}`);
+      if (bridge && nextAutostart !== previousAutostart) {
+        await bridge.autostart.set(previousAutostart).catch(() => {});
+      }
+    }
   };
+
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 0" }}>
-      <div style={{ flex: 1 }}>
-        <div style={{ fontWeight: 600 }}>{props.t("autostart.title")}</div>
-        <div style={{ fontSize: 12, opacity: 0.6 }}>{props.t("autostart.desc")}</div>
-      </div>
-      <input
-        type="checkbox"
-        checked={value}
-        onChange={(e) => void onChange(e.target.checked)}
-        aria-label={props.t("autostart.title")}
-      />
+    <div className={css.block}>
+      <label className={css.toggleRow} htmlFor="startup-enabled">
+        <div className={css.toggleBody}>
+          <div className={css.toggleTitle}>{props.t("autostart.title")}</div>
+          <div className={css.toggleDesc}>{props.t("autostart.desc")}</div>
+        </div>
+        <input
+          id="startup-enabled"
+          type="checkbox"
+          className={css.toggle}
+          checked={autostart}
+          onChange={(e) => void apply(e.currentTarget.checked, startupMode)}
+          aria-label={props.t("autostart.title")}
+        />
+      </label>
+      <label className={css.modeRow} htmlFor="startup-mode">
+        <span>{props.t("autostart.mode")}</span>
+        <select
+          id="startup-mode"
+          className={css.select}
+          disabled={!autostart}
+          value={startupMode}
+          onChange={(e) =>
+            void apply(autostart, e.currentTarget.value as "normal" | "tray" | "minimized")
+          }
+        >
+          <option value="normal">{props.t("autostart.mode.normal")}</option>
+          <option value="tray">{props.t("autostart.mode.tray")}</option>
+          <option value="minimized">{props.t("autostart.mode.minimized")}</option>
+        </select>
+      </label>
+      {error && <p className={css.messageError}>{error}</p>}
     </div>
   );
 }
@@ -176,31 +224,26 @@ function StatusPanel({ t }: { t: Translate }): JSX.Element {
 
   const phase = snapshot?.phase ?? "detecting";
   const showLogs = SHOW_LOGS.has(phase);
+  const phaseState =
+    phase === "ready"
+      ? "done"
+      : phase === "failed"
+        ? "error"
+        : phase === "missing"
+          ? "warning"
+          : "ongoing";
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: "8px 0" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <span
-          style={{
-            width: 8,
-            height: 8,
-            borderRadius: "50%",
-            background:
-              phase === "ready"
-                ? "#0f9d58"
-                : phase === "failed"
-                  ? "#d92d20"
-                  : phase === "missing"
-                    ? "#b7791f"
-                    : "#3f63f4",
-          }}
-        />
-        <span style={{ fontWeight: 600 }}>{snapshot?.message ?? "正在检测运行环境..."}</span>
-        {snapshot?.url && <code style={{ fontSize: 12, opacity: 0.7 }}>{snapshot.url}</code>}
+    <div className={css.block}>
+      <div className={css.statusRow}>
+        <StateDot state={phaseState} size={10} />
+        <span className={css.statusText}>{snapshot?.message ?? "正在检测运行环境..."}</span>
+        {snapshot?.url && <code className={css.url}>{snapshot.url}</code>}
       </div>
-      <div style={{ display: "flex", gap: 8 }}>
-        <button
+      <div className={css.actions}>
+        <Button
           type="button"
+          variant="outline"
           hidden={phase !== "missing" || snapshot?.node_found === false}
           onClick={() =>
             void getBridge()
@@ -209,9 +252,10 @@ function StatusPanel({ t }: { t: Translate }): JSX.Element {
           }
         >
           {t("status.install")}
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
+          variant="outline"
           hidden={phase !== "failed"}
           onClick={() =>
             void getBridge()
@@ -220,9 +264,10 @@ function StatusPanel({ t }: { t: Translate }): JSX.Element {
           }
         >
           {t("status.retry")}
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
+          variant="ghost"
           hidden={phase !== "failed"}
           onClick={() =>
             void getBridge()
@@ -231,24 +276,10 @@ function StatusPanel({ t }: { t: Translate }): JSX.Element {
           }
         >
           {t("status.openLogs")}
-        </button>
+        </Button>
       </div>
       {showLogs && (
-        <pre
-          ref={logsRef}
-          style={{
-            margin: 0,
-            maxHeight: 300,
-            overflow: "auto",
-            padding: "12px 14px",
-            border: "1px solid var(--line, #e3e6eb)",
-            borderRadius: 6,
-            fontSize: 11,
-            lineHeight: 1.55,
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-all",
-          }}
-        >
+        <pre ref={logsRef} className={css.log}>
           {logs.join("\n")}
         </pre>
       )}
@@ -305,20 +336,14 @@ function ConfigPanel({ t }: { t: Translate }): JSX.Element {
   };
 
   return (
-    <div
-      style={{ display: "flex", flexDirection: "column", gap: 12, padding: "8px 0", maxWidth: 520 }}
-    >
-      <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 13 }}>
+    <div className={css.block}>
+      <label className={css.field} htmlFor="desktop-dsh-bin">
         <span>DSH 入口 (DSH_BIN)</span>
-        <input
-          style={{
-            padding: "8px 10px",
-            border: "1px solid var(--line, #e3e6eb)",
-            borderRadius: 5,
-            fontSize: 13,
-          }}
+        <Input
+          className={css.input}
+          id="desktop-dsh-bin"
           value={dshBin}
-          onInput={(e) => {
+          onChange={(e) => {
             setDshBin(e.currentTarget.value);
             setSaved(false);
             setError(null);
@@ -326,17 +351,13 @@ function ConfigPanel({ t }: { t: Translate }): JSX.Element {
           placeholder="例如 /path/to/dsh"
         />
       </label>
-      <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 13 }}>
+      <label className={css.field} htmlFor="desktop-dsh-node">
         <span>Node 解释器 (DSH_NODE)</span>
-        <input
-          style={{
-            padding: "8px 10px",
-            border: "1px solid var(--line, #e3e6eb)",
-            borderRadius: 5,
-            fontSize: 13,
-          }}
+        <Input
+          className={css.input}
+          id="desktop-dsh-node"
           value={dshNode}
-          onInput={(e) => {
+          onChange={(e) => {
             setDshNode(e.currentTarget.value);
             setSaved(false);
             setError(null);
@@ -344,17 +365,13 @@ function ConfigPanel({ t }: { t: Translate }): JSX.Element {
           placeholder="例如 /path/to/node"
         />
       </label>
-      <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 13 }}>
+      <label className={css.field} htmlFor="desktop-dsh-home">
         <span>Harness 数据目录 (DSH_HOME)</span>
-        <input
-          style={{
-            padding: "8px 10px",
-            border: "1px solid var(--line, #e3e6eb)",
-            borderRadius: 5,
-            fontSize: 13,
-          }}
+        <Input
+          className={css.input}
+          id="desktop-dsh-home"
           value={dshHome}
-          onInput={(e) => {
+          onChange={(e) => {
             setDshHome(e.currentTarget.value);
             setSaved(false);
             setError(null);
@@ -362,12 +379,13 @@ function ConfigPanel({ t }: { t: Translate }): JSX.Element {
           placeholder="留空则继承环境变量"
         />
       </label>
-      <div style={{ display: "flex", gap: 8 }}>
-        <button type="button" onClick={() => void save()}>
+      <div className={css.formActions}>
+        <Button type="button" onClick={() => void save()}>
           {t("config.save")}
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
+          variant="outline"
           onClick={() =>
             void getBridge()
               ?.restart()
@@ -375,10 +393,10 @@ function ConfigPanel({ t }: { t: Translate }): JSX.Element {
           }
         >
           {t("config.restart")}
-        </button>
+        </Button>
       </div>
-      {error && <p style={{ fontSize: 12, color: "#d92d20", margin: 0 }}>{error}</p>}
-      {saved && <p style={{ fontSize: 12, opacity: 0.7, margin: 0 }}>{t("config.saved")}</p>}
+      {error && <p className={css.messageError}>{error}</p>}
+      {saved && <p className={css.messageInfo}>{t("config.saved")}</p>}
     </div>
   );
 }
@@ -416,51 +434,33 @@ function ToolsPanel({ t }: { t: Translate }): JSX.Element {
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "8px 0" }}>
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: 4,
-          padding: "12px 14px",
-          border: "1px solid var(--line, #e3e6eb)",
-          borderRadius: 6,
-        }}
-      >
-        <div style={{ fontWeight: 600, fontSize: 14 }}>{t("tools.openLogs.title")}</div>
-        <div style={{ fontSize: 12, opacity: 0.6 }}>{t("tools.openLogs.desc")}</div>
-        <button
-          type="button"
-          style={{ marginTop: 8, alignSelf: "flex-start" }}
-          onClick={() =>
-            void getBridge()
-              ?.openLogDirectory()
-              .catch((e: unknown) => console.error(e))
-          }
-        >
-          {t("tools.openLogs.action")}
-        </button>
+    <div className={css.block}>
+      <div className={css.toolCard}>
+        <div className={css.toolTitle}>{t("tools.openLogs.title")}</div>
+        <div className={css.toolDesc}>{t("tools.openLogs.desc")}</div>
+        <div className={css.actions}>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() =>
+              void getBridge()
+                ?.openLogDirectory()
+                .catch((e: unknown) => console.error(e))
+            }
+          >
+            {t("tools.openLogs.action")}
+          </Button>
+        </div>
       </div>
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: 4,
-          padding: "12px 14px",
-          border: "1px solid var(--line, #e3e6eb)",
-          borderRadius: 6,
-        }}
-      >
-        <div style={{ fontWeight: 600, fontSize: 14 }}>{t("tools.checkUpdate.title")}</div>
-        <div style={{ fontSize: 12, opacity: 0.6 }}>{t("tools.checkUpdate.desc")}</div>
-        <button
-          type="button"
-          style={{ marginTop: 8, alignSelf: "flex-start" }}
-          onClick={() => void doCheckUpdate()}
-        >
-          {t("tools.checkUpdate.action")}
-        </button>
-        {msg && <p style={{ fontSize: 12, opacity: 0.7, margin: 0 }}>{msg}</p>}
+      <div className={css.toolCard}>
+        <div className={css.toolTitle}>{t("tools.checkUpdate.title")}</div>
+        <div className={css.toolDesc}>{t("tools.checkUpdate.desc")}</div>
+        <div className={css.actions}>
+          <Button type="button" variant="outline" onClick={() => void doCheckUpdate()}>
+            {t("tools.checkUpdate.action")}
+          </Button>
+        </div>
+        {msg && <p className={css.messageInfo}>{msg}</p>}
       </div>
     </div>
   );
@@ -472,24 +472,20 @@ function DesktopPanel(props: {
   t: Translate;
 }): JSX.Element {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-      <section>
-        <h3 style={{ fontSize: 15, margin: "0 0 8px" }}>{props.t("nav.status")}</h3>
+    <SettingsPage>
+      <SettingsSection title={props.t("nav.status")}>
         <StatusPanel t={props.t} />
-      </section>
-      <section>
-        <h3 style={{ fontSize: 15, margin: "0 0 8px" }}>{props.t("nav.config")}</h3>
+      </SettingsSection>
+      <SettingsSection title={props.t("nav.config")}>
         <ConfigPanel t={props.t} />
-      </section>
-      <section>
-        <h3 style={{ fontSize: 15, margin: "0 0 8px" }}>{props.t("nav.tools")}</h3>
+      </SettingsSection>
+      <SettingsSection title={props.t("nav.tools")}>
         <ToolsPanel t={props.t} />
-      </section>
-      <section>
-        <h3 style={{ fontSize: 15, margin: "0 0 8px" }}>{props.t("nav.autostart")}</h3>
-        <AutostartSwitch scope={props.scope} t={props.t} />
-      </section>
-    </div>
+      </SettingsSection>
+      <SettingsSection title={props.t("nav.autostart")}>
+        <StartupSettings scope={props.scope} t={props.t} />
+      </SettingsSection>
+    </SettingsPage>
   );
 }
 
@@ -569,6 +565,10 @@ export function apply(ctx: ClientContextLike): void {
         "tools.checkUpdate.action": "检查",
         "autostart.title": "开机自启",
         "autostart.desc": "登录系统时自动启动桌面应用",
+        "autostart.mode": "自启后窗口状态",
+        "autostart.mode.normal": "正常显示",
+        "autostart.mode.tray": "启动到托盘",
+        "autostart.mode.minimized": "启动时最小化",
       }),
     "bridge: 中文字典",
   );
@@ -594,6 +594,10 @@ export function apply(ctx: ClientContextLike): void {
         "tools.checkUpdate.action": "Check",
         "autostart.title": "Launch at login",
         "autostart.desc": "Start the desktop app automatically when you log in",
+        "autostart.mode": "Window state after autostart",
+        "autostart.mode.normal": "Show normally",
+        "autostart.mode.tray": "Start in tray",
+        "autostart.mode.minimized": "Start minimized",
       }),
     "bridge: English dictionary",
   );
@@ -617,6 +621,7 @@ export function apply(ctx: ClientContextLike): void {
 const themeSectionZh: Record<string, string> = {
   nav: "外观",
   "pref.title": "主题偏好",
+  "pref.desc": "切换界面明暗与系统跟随",
   "pref.light": "浅色",
   "pref.dark": "深色",
   "pref.system": "跟随系统",
@@ -667,6 +672,7 @@ const themeSectionZh: Record<string, string> = {
 const themeSectionEn: Record<string, string> = {
   nav: "Appearance",
   "pref.title": "Theme preference",
+  "pref.desc": "Switch between light, dark and system appearance",
   "pref.light": "Light",
   "pref.dark": "Dark",
   "pref.system": "System",

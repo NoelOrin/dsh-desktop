@@ -1,4 +1,12 @@
-import type { DshConfig, RuntimeSnapshot } from "@dsh-desktop/contracts";
+import type { Context } from "@deepseek-ai/cordis";
+import { installSettingsSection, settingsNamespace } from "@deepseek-ai/dsh-settings";
+import z from "@deepseek-ai/schemastery";
+import type {
+  DshConfig,
+  FileDropPayload,
+  NotificationActionPayload,
+  RuntimeSnapshot,
+} from "@dsh-desktop/contracts";
 
 // 桥接 Tauri 壳能力的 dsh 插件（骨架）。
 // 目标：让 dsh web 内的插件/页面能调用 Tauri 壳能力——桥接命令契约由本插件自持，
@@ -6,12 +14,29 @@ import type { DshConfig, RuntimeSnapshot } from "@dsh-desktop/contracts";
 // 白名单见 docs/plugin-tauri-boundary.md。契约与 packages/contracts（native）分离。
 export const name = "bridge";
 
+const desktopSchema = z.object({
+  autostart: z.boolean().default(false),
+  startupMode: z
+    .union([z.const("normal"), z.const("tray"), z.const("minimized")])
+    .default("normal"),
+});
+
 /** 文件对话框选项（对应 dialog 插件 OpenDialogOptions，camelCase）。 */
 export interface BridgeOpenDialogOptions {
   title?: string;
   multiple?: boolean;
   directory?: boolean;
   defaultPath?: string;
+}
+
+export interface DeepLinkPayload {
+  id: string;
+  url: string;
+  raw: string;
+  received_at: string;
+  source: "deep_link" | "second_instance";
+  args: string[];
+  cwd: string;
 }
 
 /** 壳注入到 dsh web 页面的受控桥接 API（window.__DSH_DESKTOP__）。 */
@@ -32,13 +57,20 @@ export interface DshDesktopBridge {
   getStatus(): Promise<RuntimeSnapshot>;
   restart(): Promise<void>;
   installDsh(): Promise<void>;
+  updateDsh(): Promise<void>;
   openLogDirectory(): Promise<void>;
+  openPaths(paths: string[]): Promise<void>;
+  importPaths(paths: string[]): Promise<void>;
   getConfig(): Promise<DshConfig>;
   setConfig(config: DshConfig): Promise<void>;
   onStatus(cb: (snapshot: RuntimeSnapshot) => void): Promise<() => void>;
   onLog(cb: (line: string) => void): Promise<() => void>;
-  onFileDrop(cb: (paths: string[]) => void): Promise<() => void>;
-  onDeepLink(cb: (url: string) => void): Promise<() => void>;
+  onFileDrop(cb: (payload: FileDropPayload) => void): Promise<() => void>;
+  getPendingDeepLinks(): Promise<DeepLinkPayload[]>;
+  ackDeepLink(id: string): Promise<void>;
+  onDeepLink(cb: (payload: DeepLinkPayload) => void): Promise<() => void>;
+  requestNotificationPermission(): Promise<"granted" | "prompt" | "denied">;
+  onNotificationAction(cb: (payload: NotificationActionPayload) => void): Promise<() => void>;
   autostart: {
     get(): Promise<boolean>;
     set(enabled: boolean): Promise<void>;
@@ -46,6 +78,8 @@ export interface DshDesktopBridge {
   shortcuts: {
     register(shortcut: string, cb: () => void): Promise<void>;
     unregister(shortcut: string): Promise<void>;
+    list(): Promise<Array<{ shortcut: string; registered: boolean }>>;
+    unregisterAll(): Promise<void>;
   };
   onShortcut(cb: (shortcut: string) => void): Promise<() => void>;
   update: {
@@ -61,7 +95,47 @@ export function getBridge(): DshDesktopBridge | null {
   return bridge ?? null;
 }
 
-export function apply(): void {
-  // 骨架阶段：桥接能力由 Rust 侧注入（见 BRIDGE_SCRIPT），本插件只负责类型与入口；
-  // 具体能力消费（如 pick_directory）在后续按最小切片扩展，不并入 packages/contracts。
+interface BridgeHealthContext {
+  inject(
+    dependencies: never,
+    callback: (ctx: {
+      webServer: {
+        register(route: {
+          kind: "exact";
+          path: string;
+          handler: (
+            req: unknown,
+            res: {
+              writeHead(code: number, headers?: Record<string, string>): void;
+              end(body?: string): void;
+            },
+          ) => void | Promise<void>;
+        }): () => void;
+      };
+    }) => void,
+  ): unknown;
+}
+
+export function apply(ctx: Context): void {
+  installSettingsSection(
+    ctx,
+    settingsNamespace("desktop"),
+    desktopSchema,
+    { autostart: false, startupMode: "normal" },
+    {
+      setSource() {},
+      onChange() {},
+    },
+  );
+  // 固定健康端点由桥接插件提供，壳侧用 HTTP 探测 dsh web 是否真正就绪。
+  (ctx as unknown as BridgeHealthContext).inject(["webServer"] as never, (sctx) => {
+    sctx.webServer.register({
+      kind: "exact",
+      path: "/dsh-desktop/health",
+      handler(_req, res) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
+      },
+    });
+  });
 }

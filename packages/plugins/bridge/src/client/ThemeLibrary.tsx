@@ -1,7 +1,8 @@
-/** 主题库：每个家族一张卡（浅/深两半，点哪半用哪半）。 */
+/** 主题库：每个家族一张稳定双半预览卡，点哪半用哪半。 */
 import { useSyncExternalStore } from "react";
 import { isBuiltinFamilyId, listThemeFamilies, type ThemeFamily } from "../shared/theme";
 import css from "./appearance.module.css";
+import { SettingsSection } from "./settings-layout";
 import type { ThemeStore } from "./theme-store";
 
 export function familySwatch(
@@ -32,53 +33,75 @@ export function ThemeLibrary({
   const activeDark = settings.activeDarkThemeId;
 
   return (
-    <section aria-label={t("library.title")}>
-      <h3 className={css.sectionTitle}>{t("library.title")}</h3>
-      <p className={css.hint}>{t("library.desc")}</p>
-      <div className={css.library}>
+    <SettingsSection title={t("library.title")} description={t("library.desc")}>
+      <div className={css.grid}>
         {families.map((family) => {
           const light = familySwatch(family, "light");
           const dark = familySwatch(family, "dark");
+          const lightActive = activeLight === family.id;
+          const darkActive = activeDark === family.id;
           return (
-            <div key={family.id} className={css.card}>
-              <div className={css.halves}>
+            <article key={family.id} className={css.card}>
+              <div className={css.cardPreview}>
                 <button
                   type="button"
-                  className={css.half}
-                  data-active={activeLight === family.id}
+                  className={`${css.half}${lightActive ? ` ${css.halfActive}` : ""}`}
                   style={{
                     background: light.background,
                     color: light.foreground,
-                    borderRight: "1px solid rgba(0,0,0,0.08)",
+                    borderRight: "1px solid var(--dsw-alias-border-l1)",
                   }}
-                  aria-label={`${family.name} 浅色`}
+                  aria-label={`${family.name} ${t("library.lightHalf")}`}
                   title={t("library.lightHalf")}
                   onClick={() => store.setThemeHalf("light", family.id)}
                 >
-                  <span style={{ color: light.accent, fontWeight: 700 }}>Aa</span>
+                  <span className={css.miniUi} aria-hidden="true">
+                    <span className={css.miniDot} style={{ background: light.accent }} />
+                    <span className={css.miniLines}>
+                      <span className={css.miniLine} />
+                      <span className={`${css.miniLine} ${css.miniLineShort}`} />
+                    </span>
+                  </span>
+                  <span className={css.halfLabel}>{t("library.lightHalf")}</span>
+                  {lightActive ? (
+                    <span className={css.halfBadge} aria-hidden="true">
+                      ✓
+                    </span>
+                  ) : null}
                 </button>
                 <button
                   type="button"
-                  className={css.half}
-                  data-active={activeDark === family.id}
+                  className={`${css.half}${darkActive ? ` ${css.halfActive}` : ""}`}
                   style={{ background: dark.background, color: dark.foreground }}
-                  aria-label={`${family.name} 深色`}
+                  aria-label={`${family.name} ${t("library.darkHalf")}`}
                   title={t("library.darkHalf")}
                   onClick={() => store.setThemeHalf("dark", family.id)}
                 >
-                  <span style={{ color: dark.accent, fontWeight: 700 }}>Aa</span>
+                  <span className={css.miniUi} aria-hidden="true">
+                    <span className={css.miniDot} style={{ background: dark.accent }} />
+                    <span className={css.miniLines}>
+                      <span className={css.miniLine} />
+                      <span className={`${css.miniLine} ${css.miniLineShort}`} />
+                    </span>
+                  </span>
+                  <span className={css.halfLabel}>{t("library.darkHalf")}</span>
+                  {darkActive ? (
+                    <span className={css.halfBadge} aria-hidden="true">
+                      ✓
+                    </span>
+                  ) : null}
                 </button>
               </div>
-              <div className={css.caption}>
-                <span>{family.name}</span>
+              <div className={css.cardFoot}>
+                <p className={css.cardName}>{family.name}</p>
                 <span className={css.badge}>
                   {isBuiltinFamilyId(family.id) ? t("library.builtin") : t("library.custom")}
                 </span>
               </div>
-            </div>
+            </article>
           );
         })}
       </div>
-    </section>
+    </SettingsSection>
   );
 }

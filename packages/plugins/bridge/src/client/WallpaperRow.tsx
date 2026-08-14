@@ -1,4 +1,6 @@
 /** 背景图：选图 → data URL → 毛玻璃/像素化滑块。 */
+
+import { Button } from "@deepseek-ai/dsh-client-ui-primitives";
 import { useRef } from "react";
 import {
   DEFAULT_WALLPAPER_EFFECT,
@@ -8,6 +10,8 @@ import {
   WALLPAPER_EFFECT_STEP,
 } from "../shared/theme";
 import css from "./appearance.module.css";
+import { SettingsSection } from "./settings-layout";
+import { sliderFillStyle } from "./slider";
 
 export function WallpaperRow({
   wallpaperImage,
@@ -37,17 +41,19 @@ export function WallpaperRow({
   };
 
   return (
-    <section aria-label={t("wallpaper.title")}>
-      <h3 className={css.sectionTitle}>{t("wallpaper.title")}</h3>
-      <p className={css.hint}>{t("wallpaper.desc")}</p>
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <button type="button" onClick={() => fileRef.current?.click()}>
+    <SettingsSection title={t("wallpaper.title")} description={t("wallpaper.desc")}>
+      <div className={css.wallpaperActions}>
+        <Button type="button" variant="outline" onClick={() => fileRef.current?.click()}>
           {t("wallpaper.choose")}
-        </button>
+        </Button>
         {hasImage ? (
-          <button type="button" onClick={() => setWallpaper({ wallpaperImage: "" })}>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => setWallpaper({ wallpaperImage: "" })}
+          >
             {t("wallpaper.clear")}
-          </button>
+          </Button>
         ) : null}
         <input
           ref={fileRef}
@@ -64,14 +70,8 @@ export function WallpaperRow({
       {hasImage ? (
         <>
           <div
-            style={{
-              marginTop: 12,
-              height: 120,
-              borderRadius: 8,
-              backgroundImage: `url("${wallpaperImage}")`,
-              backgroundSize: "cover",
-              backgroundPosition: "center",
-            }}
+            className={css.wallpaperPreview}
+            style={{ backgroundImage: `url("${wallpaperImage}")` }}
             role="img"
             aria-label={t("wallpaper.title")}
           />
@@ -81,8 +81,9 @@ export function WallpaperRow({
           {renderSlider("wallpaper.pixelate", wallpaperPixelate, (value) =>
             setWallpaper({ wallpaperPixelate: value }),
           )}
-          <button
+          <Button
             type="button"
+            variant="ghost"
             onClick={() =>
               setWallpaper({
                 wallpaperBlur: DEFAULT_WALLPAPER_EFFECT,
@@ -91,10 +92,10 @@ export function WallpaperRow({
             }
           >
             {t("wallpaper.reset")}
-          </button>
+          </Button>
         </>
       ) : null}
-    </section>
+    </SettingsSection>
   );
 
   function renderSlider(
@@ -103,9 +104,10 @@ export function WallpaperRow({
     onChange: (value: number) => void,
   ): JSX.Element {
     return (
-      <label style={{ display: "block", marginTop: 10 }}>
-        <span style={{ fontSize: 13 }}>
-          {t(labelKey)}：{value}%
+      <label className={css.field}>
+        <span className={css.rowHead}>
+          <span>{t(labelKey)}</span>
+          <span className={css.value}>{value}%</span>
         </span>
         <input
           type="range"
@@ -113,7 +115,8 @@ export function WallpaperRow({
           max={MAX_WALLPAPER_EFFECT}
           step={WALLPAPER_EFFECT_STEP}
           value={value}
-          style={{ width: "100%" }}
+          className={css.range}
+          style={sliderFillStyle(value, MIN_WALLPAPER_EFFECT, MAX_WALLPAPER_EFFECT)}
           aria-label={t(labelKey)}
           onChange={(event) => onChange(Number(event.currentTarget.value))}
         />

@@ -1,5 +1,8 @@
 /** 玻璃透明度：40–100，越低表面越通透。 */
 import { GLASS_OPACITY_STEP, MAX_GLASS_OPACITY, MIN_GLASS_OPACITY } from "../shared/theme";
+import css from "./appearance.module.css";
+import { SettingsSection } from "./settings-layout";
+import { sliderFillStyle } from "./slider";
 
 export function GlassSlider({
   value,
@@ -11,12 +14,15 @@ export function GlassSlider({
   onChange: (value: number) => void;
 }): JSX.Element {
   return (
-    <section aria-label={t("glass.title")}>
-      <h3 style={{ fontSize: 15, fontWeight: 600, margin: "0 0 6px" }}>{t("glass.title")}</h3>
-      <p style={{ fontSize: 12, opacity: 0.6, margin: "0 0 10px" }}>{t("glass.desc")}</p>
-      <label style={{ display: "block" }}>
-        <span style={{ fontSize: 13 }}>
-          {t("glass.opacity")}：{value}%
+    <SettingsSection
+      title={t("glass.title")}
+      description={t("glass.desc")}
+      actions={<span className={css.value}>{value}%</span>}
+    >
+      <label className={css.field}>
+        <span className={css.rowHead}>
+          <span>{t("glass.opacity")}</span>
+          <span className={css.value}>{value}%</span>
         </span>
         <input
           type="range"
@@ -24,11 +30,12 @@ export function GlassSlider({
           max={MAX_GLASS_OPACITY}
           step={GLASS_OPACITY_STEP}
           value={value}
-          style={{ width: "100%" }}
+          className={css.range}
+          style={sliderFillStyle(value, MIN_GLASS_OPACITY, MAX_GLASS_OPACITY)}
           aria-label={t("glass.opacity")}
           onChange={(event) => onChange(Number(event.currentTarget.value))}
         />
       </label>
-    </section>
+    </SettingsSection>
   );
 }

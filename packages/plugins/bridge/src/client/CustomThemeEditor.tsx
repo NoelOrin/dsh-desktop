@@ -1,5 +1,16 @@
-/** 自定义主题：创建/复制/编辑/导入导出（JSON），编辑时实时预览。 */
-import { useState, useSyncExternalStore } from "react";
+/** 自定义主题：创建/复制/编辑/导入导出，编辑时实时预览。 */
+
+import {
+  Button,
+  IconCopyOutline16,
+  IconDownloadOutline16,
+  IconEditOutline16,
+  IconFolderOpenOutline16,
+  IconPlusOutline16,
+  IconTrashOutline16,
+  Input,
+} from "@deepseek-ai/dsh-client-ui-primitives";
+import { useRef, useState, useSyncExternalStore } from "react";
 import {
   duplicateThemeFamily,
   ensureUniqueThemeId,
@@ -13,6 +24,8 @@ import {
   type ThemeSeeds,
 } from "../shared/theme";
 import css from "./appearance.module.css";
+import { SettingsSection } from "./settings-layout";
+import { sliderFillStyle } from "./slider";
 import type { ThemeStore } from "./theme-store";
 
 function blankSeeds(): ThemeSeeds {
@@ -41,6 +54,7 @@ export function CustomThemeEditor({
     () => store.getSnapshot(),
   );
   const [draft, setDraft] = useState<ThemeFamily | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const existingIds = new Set([
     ...getReservedThemeIds(),
@@ -79,74 +93,91 @@ export function CustomThemeEditor({
   };
 
   return (
-    <section aria-label={t("custom.title")}>
-      <h3 className={css.sectionTitle}>{t("custom.title")}</h3>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-        <button type="button" onClick={create}>
-          {t("custom.create")}
-        </button>
-        <label style={{ cursor: "pointer", fontSize: 13 }}>
-          {t("custom.import")}
+    <SettingsSection
+      title={t("custom.title")}
+      actions={
+        <div className={css.actions}>
+          <Button type="button" variant="outline" icon={<IconPlusOutline16 />} onClick={create}>
+            {t("custom.create")}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            icon={<IconFolderOpenOutline16 />}
+            onClick={() => fileRef.current?.click()}
+          >
+            {t("custom.import")}
+          </Button>
           <input
+            ref={fileRef}
             type="file"
             accept="application/json,.json"
             hidden
-            onChange={(event) => importFamily(event.currentTarget.files?.[0])}
-          />
-        </label>
-      </div>
-      {settings.customThemes.map((family) => (
-        <div
-          key={family.id}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "6px 0",
-            borderTop: "1px solid var(--dsw-alias-border-l1, #e3e6eb)",
-          }}
-        >
-          <span style={{ flex: 1, fontSize: 13 }}>{family.name}</span>
-          <button type="button" onClick={() => setDraft(family)}>
-            {t("custom.edit")}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              const dup = duplicateThemeFamily(family, existingIds);
-              save(dup);
+            onChange={(event) => {
+              importFamily(event.currentTarget.files?.[0]);
+              event.currentTarget.value = "";
             }}
-          >
-            {t("custom.copy")}
-          </button>
-          <button type="button" onClick={() => exportFamily(family)}>
-            {t("custom.export")}
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              store.setCustomThemes(settings.customThemes.filter((item) => item.id !== family.id))
-            }
-          >
-            {t("custom.remove")}
-          </button>
+          />
+        </div>
+      }
+    >
+      {settings.customThemes.map((family) => (
+        <div key={family.id} className={css.themeRow}>
+          <span className={css.themeRowName}>{family.name}</span>
+          <div className={css.themeRowActions}>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              icon={<IconEditOutline16 />}
+              aria-label={t("custom.edit")}
+              title={t("custom.edit")}
+              onClick={() => setDraft(family)}
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              icon={<IconCopyOutline16 />}
+              aria-label={t("custom.copy")}
+              title={t("custom.copy")}
+              onClick={() => {
+                const dup = duplicateThemeFamily(family, existingIds);
+                save(dup);
+              }}
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              icon={<IconDownloadOutline16 />}
+              aria-label={t("custom.export")}
+              title={t("custom.export")}
+              onClick={() => exportFamily(family)}
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              icon={<IconTrashOutline16 />}
+              aria-label={t("custom.remove")}
+              title={t("custom.remove")}
+              onClick={() =>
+                store.setCustomThemes(settings.customThemes.filter((item) => item.id !== family.id))
+              }
+            />
+          </div>
         </div>
       ))}
       {draft !== null ? (
-        <div
-          style={{
-            border: "1px solid var(--dsw-alias-border-l1, #e3e6eb)",
-            borderRadius: 8,
-            padding: 12,
-            marginTop: 10,
-          }}
-        >
-          <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 13 }}>
-            {t("custom.name")}
-            <input
+        <div className={css.editor}>
+          <label className={css.field} htmlFor="custom-theme-name">
+            <span>{t("custom.name")}</span>
+            <Input
+              className={css.input}
+              id="custom-theme-name"
               value={draft.name}
-              style={{ flex: 1, padding: "6px 8px" }}
-              onInput={(e) =>
+              onChange={(e) =>
                 setDraft({
                   ...draft,
                   name: e.currentTarget.value,
@@ -156,65 +187,45 @@ export function CustomThemeEditor({
             />
           </label>
           {(["light", "dark"] as const).map((mode) => (
-            <div key={mode}>
-              <div style={{ fontSize: 13, fontWeight: 600, margin: "8px 0 4px" }}>
+            <fieldset key={mode} className={css.editorHalf}>
+              <legend className={css.colorLabel}>
                 {mode === "light" ? t("custom.lightHalf") : t("custom.darkHalf")}
+              </legend>
+              <div className={css.colorGrid}>
+                {SEED_FIELDS.map((field) => (
+                  <label key={field} className={css.colorField}>
+                    <input
+                      type="color"
+                      className={css.colorSwatch}
+                      value={draft[mode][field]}
+                      onChange={(e) => {
+                        const next = {
+                          ...draft,
+                          [mode]: { ...draft[mode], [field]: e.currentTarget.value },
+                        };
+                        setDraft(next);
+                        store.previewFamily(next);
+                      }}
+                    />
+                    <span className={css.colorMeta}>
+                      <span className={css.colorLabel}>{t(`custom.${field}`)}</span>
+                      <span className={css.colorValue}>{draft[mode][field]}</span>
+                    </span>
+                  </label>
+                ))}
               </div>
-              {SEED_FIELDS.map((field) => (
-                <label
-                  key={field}
-                  style={{
-                    display: "flex",
-                    gap: 6,
-                    alignItems: "center",
-                    fontSize: 13,
-                    margin: "4px 0",
-                  }}
-                >
-                  <span style={{ width: 80 }}>{t(`custom.${field}`)}</span>
-                  <input
-                    type="color"
-                    value={draft[mode][field]}
-                    style={{ width: 44, height: 26, padding: 0, border: "none" }}
-                    onChange={(e) => {
-                      const next = {
-                        ...draft,
-                        [mode]: { ...draft[mode], [field]: e.currentTarget.value },
-                      };
-                      setDraft(next);
-                      store.previewFamily(next);
-                    }}
-                  />
-                  <input
-                    value={draft[mode][field]}
-                    style={{ flex: 1, padding: "4px 6px", fontSize: 12 }}
-                    onInput={(e) => {
-                      const next = {
-                        ...draft,
-                        [mode]: { ...draft[mode], [field]: e.currentTarget.value },
-                      };
-                      setDraft(next);
-                      store.previewFamily(next);
-                    }}
-                  />
-                </label>
-              ))}
-              <label
-                style={{
-                  display: "flex",
-                  gap: 6,
-                  alignItems: "center",
-                  fontSize: 13,
-                  margin: "4px 0",
-                }}
-              >
-                <span style={{ width: 80 }}>{t("custom.contrast")}</span>
+              <label className={css.field}>
+                <span className={css.rowHead}>
+                  <span>{t("custom.contrast")}</span>
+                  <span className={css.value}>{draft[mode].contrast}</span>
+                </span>
                 <input
                   type="range"
                   min={0}
                   max={100}
                   value={draft[mode].contrast}
-                  style={{ flex: 1 }}
+                  className={css.range}
+                  style={sliderFillStyle(draft[mode].contrast, 0, 100)}
                   onChange={(e) => {
                     const next = {
                       ...draft,
@@ -224,14 +235,21 @@ export function CustomThemeEditor({
                     store.previewFamily(next);
                   }}
                 />
-                <span style={{ fontSize: 12, width: 32, textAlign: "right" }}>
-                  {draft[mode].contrast}
-                </span>
               </label>
-            </div>
+            </fieldset>
           ))}
-          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-            <button
+          <div className={css.editorActions}>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                setDraft(null);
+                store.previewFamily(null);
+              }}
+            >
+              {t("custom.cancel")}
+            </Button>
+            <Button
               type="button"
               onClick={() => {
                 save(draft);
@@ -240,19 +258,10 @@ export function CustomThemeEditor({
               }}
             >
               {t("custom.save")}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setDraft(null);
-                store.previewFamily(null);
-              }}
-            >
-              {t("custom.cancel")}
-            </button>
+            </Button>
           </div>
         </div>
       ) : null}
-    </section>
+    </SettingsSection>
   );
 }

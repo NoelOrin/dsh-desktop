@@ -4,6 +4,7 @@ import { DEFAULT_PREFERENCE, THEME_PREFERENCES, type ThemePreference } from "../
 import css from "./appearance.module.css";
 import { CustomThemeEditor } from "./CustomThemeEditor";
 import { GlassSlider } from "./GlassSlider";
+import { SettingsPage, SettingsSection } from "./settings-layout";
 import { ThemeLibrary } from "./ThemeLibrary";
 import { TypographySection } from "./TypographySection";
 import type { ThemeStore } from "./theme-store";
@@ -32,32 +33,22 @@ export function AppearanceSection({
     }
   };
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: 28,
-        padding: "8px 0",
-        maxWidth: 640,
-      }}
-    >
-      <section aria-label={t("pref.title")}>
-        <h3 className={css.sectionTitle}>{t("pref.title")}</h3>
-        <fieldset className={css.prefRow} aria-label={t("pref.title")}>
+    <SettingsPage>
+      <SettingsSection title={t("pref.title")} description={t("pref.desc")}>
+        <div className={css.segmented}>
           {THEME_PREFERENCES.map((preference) => (
             <button
               key={preference}
               type="button"
-              className={css.cube}
-              data-active={settings.preference === preference}
+              className={`${css.option}${settings.preference === preference ? ` ${css.optionActive}` : ""}`}
               aria-pressed={settings.preference === preference}
               onClick={() => setPreference(preference)}
             >
               {t(PREFERENCE_LABELS[preference])}
             </button>
           ))}
-        </fieldset>
-      </section>
+        </div>
+      </SettingsSection>
       <ThemeLibrary store={store} t={t} />
       <WallpaperRow
         wallpaperImage={settings.wallpaperImage}
@@ -77,6 +68,6 @@ export function AppearanceSection({
         t={t}
         onChange={(patch) => store.setTypography(patch)}
       />
-    </div>
+    </SettingsPage>
   );
 }

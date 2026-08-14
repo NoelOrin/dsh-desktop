@@ -26,6 +26,7 @@ const MAX_LOGS: usize = 500;
 enum RuntimePhase {
     #[default]
     Detecting,
+    #[serde(rename = "missing")]
     MissingDsh,
     Installing,
     Starting,
@@ -736,4 +737,35 @@ fn open_external(target: &str) -> Result<(), String> {
     status
         .map(|_| ())
         .map_err(|error| format!("无法打开 {target}: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_dsh_serializes_as_missing() {
+        // 前端契约（RuntimePhase）使用 "missing"，后端序列化必须一致
+        assert_eq!(
+            serde_json::to_string(&RuntimePhase::MissingDsh).unwrap(),
+            "\"missing\""
+        );
+    }
+
+    #[test]
+    fn other_phases_serialize_in_snake_case() {
+        for (phase, expected) in [
+            (RuntimePhase::Detecting, "detecting"),
+            (RuntimePhase::Installing, "installing"),
+            (RuntimePhase::Starting, "starting"),
+            (RuntimePhase::Ready, "ready"),
+            (RuntimePhase::Failed, "failed"),
+            (RuntimePhase::Stopped, "stopped"),
+        ] {
+            assert_eq!(
+                serde_json::to_string(&phase).unwrap(),
+                format!("\"{expected}\"")
+            );
+        }
+    }
 }

@@ -9,6 +9,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+mod config;
+use config::DshConfig;
+
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager as _, RunEvent, State, WindowEvent};
 
@@ -80,23 +83,16 @@ struct AppState {
     tx: Sender<ManagerMessage>,
     runtime_dir: PathBuf,
     log_dir: PathBuf,
+    config_path: PathBuf,
 }
 
 enum ManagerMessage {
     Start,
     Stop,
     Shutdown,
-    Ready {
-        generation: u64,
-        url: String,
-    },
-    ReadyTimeout {
-        generation: u64,
-        port: u16,
-    },
-    InstallFinished {
-        result: Result<(), String>,
-    },
+    Ready { generation: u64, url: String },
+    ReadyTimeout { generation: u64, port: u16 },
+    InstallFinished { result: Result<(), String> },
 }
 
 struct DshManager {
@@ -108,6 +104,7 @@ struct DshManager {
     generation: u64,
     runtime_dir: PathBuf,
     log_path: PathBuf,
+    config_path: PathBuf,
 }
 
 pub fn run() {
@@ -120,6 +117,7 @@ pub fn run() {
             std::fs::create_dir_all(&runtime_dir)?;
             std::fs::create_dir_all(&log_dir)?;
             let log_path = log_dir.join("dsh.log");
+            let config_path = app_data.join("config.json");
 
             let inner = Arc::new(Mutex::new(Inner {
                 install_dir: Some(runtime_dir.clone()),
@@ -137,6 +135,7 @@ pub fn run() {
                 generation: 0,
                 runtime_dir: runtime_dir.clone(),
                 log_path,
+                config_path: config_path.clone(),
             };
             thread::spawn(move || manager.run());
 
@@ -146,6 +145,7 @@ pub fn run() {
                 tx: tx.clone(),
                 runtime_dir,
                 log_dir,
+                config_path,
             });
 
             let start_tx = tx.clone();
@@ -198,7 +198,9 @@ pub fn run() {
             get_status,
             restart,
             install_dsh,
-            open_log_directory
+            open_log_directory,
+            get_config,
+            set_config
         ])
         .on_window_event(|window, event| {
             if matches!(event, WindowEvent::CloseRequested { .. }) {
@@ -235,7 +237,11 @@ impl DshManager {
                 }
                 Ok(ManagerMessage::Ready { generation, url }) => {
                     if generation == self.generation {
-                        self.set_phase(RuntimePhase::Ready, format!("DSH 已就绪: {url}"), Some(url.clone()));
+                        self.set_phase(
+                            RuntimePhase::Ready,
+                            format!("DSH 已就绪: {url}"),
+                            Some(url.clone()),
+                        );
                         self.open_window(url);
                     }
                 }
@@ -265,10 +271,11 @@ impl DshManager {
     }
 
     fn handle_start(&mut self) {
-        let (node, entry) = match resolve_dsh(&self.runtime_dir) {
+        let config = config::load(&self.config_path).effective(|k| std::env::var(k).ok());
+        let (node, entry) = match resolve_dsh(&config, &self.runtime_dir) {
             Some(pair) => pair,
             None => {
-                let node_found = resolve_node().is_some();
+                let node_found = resolve_node(&config).is_some();
                 let message = if node_found {
                     "未检测到 DSH"
                 } else {
@@ -281,22 +288,17 @@ impl DshManager {
         };
 
         self.update_detection(true, true);
-        self.set_phase(
-            RuntimePhase::Starting,
-            "正在启动 DSH...".to_string(),
-            None,
-        );
-        if let Err(error) = self.start(node, entry) {
+        self.set_phase(RuntimePhase::Starting, "正在启动 DSH...".to_string(), None);
+        if let Err(error) = self.start(node, entry, config.dsh_home) {
             self.fail(error);
         }
     }
 
-    fn start(&mut self, node: PathBuf, entry: PathBuf) -> Result<(), String> {
+    fn start(&mut self, node: PathBuf, entry: PathBuf, home: Option<String>) -> Result<(), String> {
         self.cleanup_child();
 
         let port = reserve_port()?;
         let url = format!("http://127.0.0.1:{port}");
-        let home = std::env::var("DSH_HOME").ok();
         let workspace = std::env::var("HOME").unwrap_or_else(|_| ".".into());
 
         self.generation += 1;
@@ -441,8 +443,9 @@ fn install_dsh(state: State<AppState>) -> Result<(), String> {
     let tx = state.tx.clone();
     let install_dir = state.runtime_dir.clone();
     let log_path = state.log_dir.join("install.log");
+    let config = config::load(&state.config_path).effective(|k| std::env::var(k).ok());
     thread::spawn(move || {
-        let result = run_install(&install_dir, &log_path, &app, &inner);
+        let result = run_install(&config, &install_dir, &log_path, &app, &inner);
         let _ = tx.send(ManagerMessage::InstallFinished { result });
     });
     Ok(())
@@ -453,17 +456,24 @@ fn open_log_directory(state: State<AppState>) -> Result<(), String> {
     open_external(&state.log_dir.to_string_lossy())
 }
 
+#[tauri::command]
+fn get_config(state: State<AppState>) -> DshConfig {
+    let stored = config::load(&state.config_path);
+    stored.effective(|k| std::env::var(k).ok())
+}
+
+#[tauri::command]
+fn set_config(state: State<AppState>, config: DshConfig) -> Result<(), String> {
+    config::save(&state.config_path, &config)
+}
+
 fn emit_status(app: &AppHandle, inner: &Arc<Mutex<Inner>>) {
     let snapshot = inner.lock().unwrap().snapshot();
     let _ = app.emit("dsh-status", snapshot);
 }
 
 fn append_line(app: &AppHandle, inner: &Arc<Mutex<Inner>>, log_path: &Path, line: &str) {
-    if let Ok(mut file) = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_path)
-    {
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(log_path) {
         let _ = writeln!(file, "{line}");
     }
     {
@@ -494,6 +504,7 @@ fn append_stream(
 }
 
 fn run_install(
+    config: &DshConfig,
     install_dir: &Path,
     log_path: &Path,
     app: &AppHandle,
@@ -503,7 +514,7 @@ fn run_install(
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
 
-    let npm = resolve_npm();
+    let npm = resolve_npm(config);
     let mut cmd = Command::new(&npm);
     cmd.arg("install")
         .arg("--prefix")
@@ -520,7 +531,9 @@ fn run_install(
         append_stream(stderr, app, inner, log_path, "npm");
     }
 
-    let status = child.wait().map_err(|error| format!("npm 安装中断: {error}"))?;
+    let status = child
+        .wait()
+        .map_err(|error| format!("npm 安装中断: {error}"))?;
     if status.success() {
         Ok(())
     } else {
@@ -528,11 +541,12 @@ fn run_install(
     }
 }
 
-fn resolve_dsh(runtime_dir: &Path) -> Option<(PathBuf, PathBuf)> {
-    let node = resolve_node()?;
-    let entry = std::env::var("DSH_BIN")
+fn resolve_dsh(config: &DshConfig, runtime_dir: &Path) -> Option<(PathBuf, PathBuf)> {
+    let node = resolve_node(config)?;
+    let entry = config
+        .dsh_bin
+        .as_deref()
         .map(PathBuf::from)
-        .ok()
         .filter(|path| path.is_file())
         .or_else(|| {
             let candidate = runtime_dir.join("bin/dsh");
@@ -551,10 +565,11 @@ fn resolve_dsh(runtime_dir: &Path) -> Option<(PathBuf, PathBuf)> {
     Some((node, entry))
 }
 
-fn resolve_node() -> Option<PathBuf> {
-    std::env::var("DSH_NODE")
+fn resolve_node(config: &DshConfig) -> Option<PathBuf> {
+    config
+        .dsh_node
+        .as_deref()
         .map(PathBuf::from)
-        .ok()
         .filter(|path| path.is_file())
         .or_else(|| find_in_path("node"))
         .or_else(|| {
@@ -564,10 +579,10 @@ fn resolve_node() -> Option<PathBuf> {
         })
 }
 
-fn resolve_npm() -> PathBuf {
+fn resolve_npm(config: &DshConfig) -> PathBuf {
     find_in_path("npm")
         .or_else(|| {
-            resolve_node()
+            resolve_node(config)
                 .and_then(|node| node.parent().map(|dir| dir.join("npm")))
                 .filter(|path| path.is_file())
         })
@@ -590,7 +605,8 @@ fn find_in_path(name: &str) -> Option<PathBuf> {
 }
 
 fn reserve_port() -> Result<u16, String> {
-    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).map_err(|error| error.to_string())?;
+    let listener =
+        std::net::TcpListener::bind(("127.0.0.1", 0)).map_err(|error| error.to_string())?;
     let port = listener
         .local_addr()
         .map_err(|error| error.to_string())?
@@ -641,5 +657,7 @@ fn open_external(target: &str) -> Result<(), String> {
         .args(["/C", "start", ""])
         .arg(target)
         .status();
-    status.map(|_| ()).map_err(|error| format!("无法打开 {target}: {error}"))
+    status
+        .map(|_| ())
+        .map_err(|error| format!("无法打开 {target}: {error}"))
 }

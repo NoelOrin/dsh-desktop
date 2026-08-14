@@ -1,191 +1,51 @@
-.page {
-  display: flex;
-  flex-direction: column;
-  gap: 28px;
-  max-width: 720px;
-  padding: 8px 0;
-}
-
-.block {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.heading,
-.subtitle {
-  margin: 0;
-  font-size: var(--dsw-font-size-l, 15px);
-  font-weight: var(--dsw-font-weight-semibold, 600);
-  color: var(--dsw-alias-label-primary);
-}
-
-.rowHead {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.hint {
-  margin: 0;
-  font-size: var(--dsw-font-size-s, 12px);
-  color: var(--dsw-alias-label-secondary);
-}
-
-.value {
-  font-size: var(--dsw-font-size-s, 12px);
-  color: var(--dsw-alias-label-secondary);
-  font-variant-numeric: tabular-nums;
-}
-
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  font-size: var(--dsw-font-size-s, 13px);
-  color: var(--dsw-alias-label-primary);
-}
-
-.input {
-  box-sizing: border-box;
-  width: 100%;
-  min-height: 32px;
-}
-
 .actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-}
-
-.range {
-  appearance: none;
-  width: 100%;
-  height: 24px;
-  margin: 0;
-  background: transparent;
-  cursor: pointer;
-}
-
-.range::-webkit-slider-runnable-track {
-  height: 6px;
-  border-radius: 999px;
-  background:
-    linear-gradient(var(--dsw-alias-brand-primary), var(--dsw-alias-brand-primary)) 0 0 /
-    var(--dsh-slider-fill, 0%) 100% no-repeat,
-    var(--dsw-alias-bg-layer-2);
-  box-shadow: inset 0 0 0 1px var(--dsw-alias-border-l1);
-}
-
-.range::-webkit-slider-thumb {
-  appearance: none;
-  width: 16px;
-  height: 16px;
-  margin-top: -5px;
-  border-radius: 999px;
-  background: var(--dsw-alias-bg-layer-1);
-  border: 2px solid var(--dsw-alias-brand-primary);
-  transition: transform var(--ds-transition-duration-fast, 0.1s) ease;
-}
-
-.range::-webkit-slider-thumb:hover {
-  transform: scale(1.12);
-}
-
-.range:active::-webkit-slider-thumb {
-  transform: scale(1.2);
-}
-
-.range:focus-visible {
-  outline: none;
-}
-
-.range:focus-visible::-webkit-slider-thumb {
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsw-alias-brand-primary) 30%, transparent);
-}
-
-.segmented {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.option {
-  box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: 68px;
-  padding: 12px 16px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 10px;
-  background: transparent;
-  font: inherit;
-  font-size: 13px;
-  line-height: 20px;
-  color: var(--dsw-alias-label-primary);
-  cursor: pointer;
-  transition:
-    background var(--ds-transition-duration-fast, 0.1s) ease,
-    border-color var(--ds-transition-duration-fast, 0.1s) ease;
-}
-
-.option:hover:not(.optionActive) {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.optionActive {
-  background: var(--dsw-alias-bg-layer-1);
-  border-color: var(--dsw-alias-brand-primary);
-  color: var(--dsw-alias-brand-primary);
-  font-weight: 600;
-}
-
-.option:focus-visible {
-  outline: 2px solid var(--dsw-alias-brand-primary);
-  outline-offset: 2px;
-}
-
-.libraryActions {
-  display: flex;
-  flex-wrap: wrap;
   gap: 8px;
 }
 
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 14px;
-}
+/* ── 主题库 ─────────────────────────────────────────────── */
 
-.card {
+.library {
   display: flex;
   flex-direction: column;
-  min-height: 126px;
+  gap: 16px;
+}
+
+.libraryToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.librarySummary {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+
+.themeGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.themeCard {
+  min-width: 0;
   overflow: hidden;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--dsw-alias-bg-layer-1);
-  transition:
-    border-color var(--ds-transition-duration-fast, 0.1s) ease,
-    box-shadow var(--ds-transition-duration-fast, 0.1s) ease;
 }
 
-.card:hover {
-  border-color: var(--dsw-alias-border-l2);
-  box-shadow: 0 6px 20px color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent);
-}
-
-.cardPreview {
+.themePreview {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  height: 96px;
+  height: 104px;
 }
 
-.half {
+.themeHalf {
   position: relative;
   display: flex;
   flex-direction: column;
@@ -193,20 +53,20 @@
   justify-content: space-between;
   gap: 8px;
   min-width: 0;
-  padding: 10px 12px;
+  padding: 12px;
   border: 0;
   margin: 0;
   font: inherit;
-  cursor: pointer;
   text-align: left;
+  cursor: pointer;
 }
 
-.half:focus-visible {
+.themeHalf:focus-visible {
   outline: 2px solid var(--dsw-alias-brand-primary);
   outline-offset: -3px;
 }
 
-.halfActive::after {
+.themeHalfActive::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -221,9 +81,10 @@
 }
 
 .miniDot {
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   border-radius: 999px;
+  box-shadow: 0 1px 3px color-mix(in srgb, currentColor 22%, transparent);
 }
 
 .miniLines {
@@ -233,7 +94,7 @@
 }
 
 .miniLine {
-  width: 44px;
+  width: 48px;
   height: 5px;
   border-radius: 3px;
   background: currentcolor;
@@ -241,66 +102,158 @@
 }
 
 .miniLineShort {
-  width: 28px;
-  opacity: 0.25;
+  width: 30px;
+  opacity: 0.24;
 }
 
-.halfLabel {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
+.themeHalfLabel {
   font-size: 11px;
   line-height: 1;
-  opacity: 0.75;
+  opacity: 0.78;
 }
 
-.halfBadge {
+.themeBadge {
   position: absolute;
-  top: 6px;
-  right: 6px;
+  top: 8px;
+  right: 8px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   border-radius: 999px;
   background: var(--dsw-alias-brand-primary);
-  color: var(--dsw-alias-bg-layer-1);
-  font-size: 10px;
+  color: var(--dsw-alias-label-primary-foreground);
+  font-size: 11px;
   line-height: 1;
 }
 
-.cardFoot {
+.themeCardFoot {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  min-height: 42px;
-  padding: 10px 12px;
+  min-height: 38px;
+  padding: 8px 12px;
   border-top: 1px solid var(--dsw-alias-border-l1);
 }
 
-.cardName {
-  margin: 0;
+.themeName {
+  min-width: 0;
   overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--dsw-font-size-s, 13px);
-  color: var(--dsw-alias-label-primary);
 }
 
-.badge {
+.themeMeta {
   flex: none;
-  font-size: 11px;
   color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+}
+
+/* ── 背景图 ─────────────────────────────────────────────── */
+
+.wallpaperActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.wallpaperPreview {
+  box-sizing: border-box;
+  width: 100%;
+  height: 160px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background-color: var(--dsw-alias-bg-layer-1);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+}
+
+.wallpaperEmpty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 96px;
+  border: 1px dashed var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+}
+
+.effectStack {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+/* ── 玻璃预览 ───────────────────────────────────────────── */
+
+.glassStage {
+  position: relative;
+  overflow: hidden;
+  height: 108px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--dsw-alias-brand-primary) 16%, transparent),
+      transparent 58%
+    ),
+    var(--dsw-alias-bg-layer-2);
+}
+
+.glassBackdrop {
+  position: absolute;
+  inset: 16px;
+  border-radius: 8px;
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--dsw-alias-label-primary) 16%, transparent),
+      transparent 70%
+    ),
+    var(--dsw-alias-bg-layer-3);
+  opacity: 0.7;
+}
+
+.glassSurface {
+  position: absolute;
+  top: 22px;
+  left: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56%;
+  height: 58%;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent);
+}
+
+/* ── 自定义主题 ─────────────────────────────────────────── */
+
+.themeList {
+  display: flex;
+  flex-direction: column;
 }
 
 .themeRow {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  min-width: 0;
   padding: 10px 0;
   border-top: 1px solid var(--dsw-alias-border-l1);
 }
@@ -308,10 +261,10 @@
 .themeRowName {
   min-width: 0;
   overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
-  color: var(--dsw-alias-label-primary);
 }
 
 .themeRowActions {
@@ -326,38 +279,45 @@
   gap: 16px;
   padding: 16px;
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 12px;
+  border-radius: 8px;
   background: var(--dsw-alias-bg-layer-1);
+}
+
+.editorGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
 }
 
 .editorHalf {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   min-width: 0;
   margin: 0;
-  padding: 12px;
+  padding: 14px;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 10px;
+  border-radius: 8px;
 }
 
 .colorGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
 }
 
 .colorField {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
 }
 
 .colorSwatch {
   box-sizing: border-box;
-  width: 44px;
-  height: 30px;
+  flex: none;
+  width: 46px;
+  height: 32px;
   padding: 0;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 6px;
@@ -367,40 +327,93 @@
 .colorMeta {
   display: flex;
   flex-direction: column;
+  gap: 2px;
   min-width: 0;
 }
 
 .colorLabel {
-  font-size: 12px;
+  display: block;
   color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
 }
 
 .colorValue {
   overflow: hidden;
-  text-overflow: ellipsis;
+  color: var(--dsw-alias-label-primary);
   font-family: var(--ds-font-family-code);
-  font-size: 12px;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .editorActions {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 8px;
 }
 
-.wallpaperActions {
+.field {
   display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
 }
 
-.wallpaperPreview {
+.rowHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.value {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.input {
+  box-sizing: border-box;
   width: 100%;
-  height: 120px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 10px;
-  background-color: var(--dsw-alias-bg-layer-1);
-  background-position: center;
-  background-repeat: no-repeat;
-  background-size: cover;
+  min-height: 32px;
+  min-width: 0;
+}
+
+.input input {
+  width: 100%;
+}
+
+/* ── 排版 ───────────────────────────────────────────────── */
+
+.typographyGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+@media (max-width: 640px) {
+  .themeGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .editorGrid,
+  .colorGrid,
+  .effectStack,
+  .typographyGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .wallpaperPreview {
+    height: 128px;
+  }
+
+  .themeRow {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .themeRowActions {
+    justify-content: flex-start;
+  }
 }

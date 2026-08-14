@@ -57,6 +57,18 @@ export function wallpaperStyleSheet(): string {
 
 let styleInjected = false;
 
+const PAGE_STYLE_ID = "dsh-desktop-page-style";
+
+/** 全局页面样式：阻止 dsh web 滚动到底/顶时触发系统 overscroll。 */
+export function ensurePageStyle(): void {
+  if (typeof document === "undefined") return;
+  if (document.getElementById(PAGE_STYLE_ID)) return;
+  const style = document.createElement("style");
+  style.id = PAGE_STYLE_ID;
+  style.textContent = "html, body, #root { overscroll-behavior: none; }";
+  document.documentElement.appendChild(style);
+}
+
 function ensureWallpaperStyle(): void {
   if (styleInjected) return;
   const style = document.createElement("style");

@@ -1,4 +1,4 @@
-/** 主题库：每个家族一张稳定双半预览卡，点哪半用哪半。 */
+/** 主题库：每个家族一张双半预览卡，点哪半用哪半。 */
 import { useSyncExternalStore } from "react";
 import { isBuiltinFamilyId, listThemeFamilies, type ThemeFamily } from "../shared/theme";
 import css from "./appearance.module.css";
@@ -33,19 +33,23 @@ export function ThemeLibrary({
   const activeDark = settings.activeDarkThemeId;
 
   return (
-    <SettingsSection title={t("library.title")} description={t("library.desc")}>
-      <div className={css.grid}>
+    <SettingsSection
+      headingId="appearance-library-heading"
+      title={t("library.title")}
+      description={t("library.desc")}
+    >
+      <div className={css.themeGrid}>
         {families.map((family) => {
           const light = familySwatch(family, "light");
           const dark = familySwatch(family, "dark");
           const lightActive = activeLight === family.id;
           const darkActive = activeDark === family.id;
           return (
-            <article key={family.id} className={css.card}>
-              <div className={css.cardPreview}>
+            <article key={family.id} className={css.themeCard}>
+              <div className={css.themePreview}>
                 <button
                   type="button"
-                  className={`${css.half}${lightActive ? ` ${css.halfActive}` : ""}`}
+                  className={`${css.themeHalf}${lightActive ? ` ${css.themeHalfActive}` : ""}`}
                   style={{
                     background: light.background,
                     color: light.foreground,
@@ -62,16 +66,16 @@ export function ThemeLibrary({
                       <span className={`${css.miniLine} ${css.miniLineShort}`} />
                     </span>
                   </span>
-                  <span className={css.halfLabel}>{t("library.lightHalf")}</span>
+                  <span className={css.themeHalfLabel}>{t("library.lightHalf")}</span>
                   {lightActive ? (
-                    <span className={css.halfBadge} aria-hidden="true">
+                    <span className={css.themeBadge} aria-hidden="true">
                       ✓
                     </span>
                   ) : null}
                 </button>
                 <button
                   type="button"
-                  className={`${css.half}${darkActive ? ` ${css.halfActive}` : ""}`}
+                  className={`${css.themeHalf}${darkActive ? ` ${css.themeHalfActive}` : ""}`}
                   style={{ background: dark.background, color: dark.foreground }}
                   aria-label={`${family.name} ${t("library.darkHalf")}`}
                   title={t("library.darkHalf")}
@@ -84,17 +88,17 @@ export function ThemeLibrary({
                       <span className={`${css.miniLine} ${css.miniLineShort}`} />
                     </span>
                   </span>
-                  <span className={css.halfLabel}>{t("library.darkHalf")}</span>
+                  <span className={css.themeHalfLabel}>{t("library.darkHalf")}</span>
                   {darkActive ? (
-                    <span className={css.halfBadge} aria-hidden="true">
+                    <span className={css.themeBadge} aria-hidden="true">
                       ✓
                     </span>
                   ) : null}
                 </button>
               </div>
-              <div className={css.cardFoot}>
-                <p className={css.cardName}>{family.name}</p>
-                <span className={css.badge}>
+              <div className={css.themeCardFoot}>
+                <span className={css.themeName}>{family.name}</span>
+                <span className={css.themeMeta}>
                   {isBuiltinFamilyId(family.id) ? t("library.builtin") : t("library.custom")}
                 </span>
               </div>

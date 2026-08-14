@@ -1,15 +1,14 @@
 .page {
   display: flex;
   flex-direction: column;
-  gap: 32px;
+  gap: 24px;
   max-width: 720px;
-  padding: 12px 0 32px;
 }
 
 .section {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
   min-width: 0;
 }
 
@@ -17,40 +16,48 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
   flex-wrap: wrap;
+  gap: 16px;
 }
 
-.headingGroup {
+.section + .section {
+  padding-top: 24px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.headerText {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  flex: 1;
   min-width: 0;
 }
 
-.title {
+.headerActions {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.heading {
   margin: 0;
-  font-size: var(--dsw-font-size-l, 15px);
-  font-weight: var(--dsw-font-weight-semibold, 600);
+  font-size: var(--dsw-font-size-l);
+  font-weight: var(--dsw-font-weight-semibold);
   color: var(--dsw-alias-label-primary);
 }
 
-.description {
+.hint {
   margin: 0;
-  font-size: var(--dsw-font-size-s, 12px);
+  font-size: var(--dsw-font-size-s);
+  line-height: 1.6;
   color: var(--dsw-alias-label-secondary);
-}
-
-.actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
 }
 
 .body {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
   min-width: 0;
 }

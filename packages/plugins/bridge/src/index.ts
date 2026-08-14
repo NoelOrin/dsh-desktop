@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import type { Context } from "@deepseek-ai/cordis";
 import { installSettingsSection, settingsNamespace } from "@deepseek-ai/dsh-settings";
 import z from "@deepseek-ai/schemastery";
@@ -13,6 +14,8 @@ import type {
 // Rust 侧在 apps/shell/src-tauri/capabilities/bridge.json 声明实现与权限，
 // 白名单见 docs/plugin-tauri-boundary.md。契约与 packages/contracts（native）分离。
 export const name = "bridge";
+
+const STYLE_CSS_URL = new URL("./style.css", import.meta.url);
 
 const desktopSchema = z.object({
   autostart: z.boolean().default(false),
@@ -135,6 +138,24 @@ export function apply(ctx: Context): void {
       handler(_req, res) {
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify({ ok: true }));
+      },
+    });
+    // dsh web 不托管插件独立 CSS；由 host 直接提供 style.css，client 用 link 加载。
+    sctx.webServer.register({
+      kind: "exact",
+      path: "/dsh-desktop/style.css",
+      handler(_req, res) {
+        try {
+          const css = readFileSync(STYLE_CSS_URL, "utf8");
+          res.writeHead(200, {
+            "content-type": "text/css; charset=utf-8",
+            "cache-control": "no-cache",
+          });
+          res.end(css);
+        } catch {
+          res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+          res.end("style.css not found");
+        }
       },
     });
   });

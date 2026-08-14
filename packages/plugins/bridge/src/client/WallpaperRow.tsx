@@ -1,5 +1,4 @@
-/** 背景图：选图 → data URL → 毛玻璃/像素化滑块。 */
-
+/** 背景图设置：选图、预览、毛玻璃与像素化。 */
 import { Button } from "@deepseek-ai/dsh-client-ui-primitives";
 import { useRef } from "react";
 import {
@@ -11,7 +10,7 @@ import {
 } from "../shared/theme";
 import css from "./appearance.module.css";
 import { SettingsSection } from "./settings-layout";
-import { sliderFillStyle } from "./slider";
+import { SliderField } from "./ui/controls";
 
 export function WallpaperRow({
   wallpaperImage,
@@ -41,7 +40,11 @@ export function WallpaperRow({
   };
 
   return (
-    <SettingsSection title={t("wallpaper.title")} description={t("wallpaper.desc")}>
+    <SettingsSection
+      headingId="appearance-wallpaper-heading"
+      title={t("wallpaper.title")}
+      description={t("wallpaper.desc")}
+    >
       <div className={css.wallpaperActions}>
         <Button type="button" variant="outline" onClick={() => fileRef.current?.click()}>
           {t("wallpaper.choose")}
@@ -68,59 +71,51 @@ export function WallpaperRow({
         />
       </div>
       {hasImage ? (
-        <>
-          <div
-            className={css.wallpaperPreview}
-            style={{ backgroundImage: `url("${wallpaperImage}")` }}
-            role="img"
-            aria-label={t("wallpaper.title")}
-          />
-          {renderSlider("wallpaper.blur", wallpaperBlur, (value) =>
-            setWallpaper({ wallpaperBlur: value }),
-          )}
-          {renderSlider("wallpaper.pixelate", wallpaperPixelate, (value) =>
-            setWallpaper({ wallpaperPixelate: value }),
-          )}
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={() =>
-              setWallpaper({
-                wallpaperBlur: DEFAULT_WALLPAPER_EFFECT,
-                wallpaperPixelate: DEFAULT_WALLPAPER_EFFECT,
-              })
-            }
-          >
-            {t("wallpaper.reset")}
-          </Button>
-        </>
-      ) : null}
-    </SettingsSection>
-  );
-
-  function renderSlider(
-    labelKey: string,
-    value: number,
-    onChange: (value: number) => void,
-  ): JSX.Element {
-    return (
-      <label className={css.field}>
-        <span className={css.rowHead}>
-          <span>{t(labelKey)}</span>
-          <span className={css.value}>{value}%</span>
-        </span>
-        <input
-          type="range"
+        <div
+          className={css.wallpaperPreview}
+          style={{ backgroundImage: `url("${wallpaperImage}")` }}
+          role="img"
+          aria-label={t("wallpaper.preview")}
+        />
+      ) : (
+        <div className={css.wallpaperEmpty}>{t("wallpaper.empty")}</div>
+      )}
+      <div className={css.effectStack}>
+        <SliderField
+          id="wallpaper-blur"
+          label={t("wallpaper.blur")}
+          value={wallpaperBlur}
+          display={`${wallpaperBlur}%`}
           min={MIN_WALLPAPER_EFFECT}
           max={MAX_WALLPAPER_EFFECT}
           step={WALLPAPER_EFFECT_STEP}
-          value={value}
-          className={css.range}
-          style={sliderFillStyle(value, MIN_WALLPAPER_EFFECT, MAX_WALLPAPER_EFFECT)}
-          aria-label={t(labelKey)}
-          onChange={(event) => onChange(Number(event.currentTarget.value))}
+          onChange={(value) => setWallpaper({ wallpaperBlur: value })}
         />
-      </label>
-    );
-  }
+        <SliderField
+          id="wallpaper-pixelate"
+          label={t("wallpaper.pixelate")}
+          value={wallpaperPixelate}
+          display={`${wallpaperPixelate}%`}
+          min={MIN_WALLPAPER_EFFECT}
+          max={MAX_WALLPAPER_EFFECT}
+          step={WALLPAPER_EFFECT_STEP}
+          onChange={(value) => setWallpaper({ wallpaperPixelate: value })}
+        />
+      </div>
+      {hasImage ? (
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={() =>
+            setWallpaper({
+              wallpaperBlur: DEFAULT_WALLPAPER_EFFECT,
+              wallpaperPixelate: DEFAULT_WALLPAPER_EFFECT,
+            })
+          }
+        >
+          {t("wallpaper.reset")}
+        </Button>
+      ) : null}
+    </SettingsSection>
+  );
 }

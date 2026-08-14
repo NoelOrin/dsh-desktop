@@ -1,8 +1,9 @@
-/** 玻璃透明度：40–100，越低表面越通透。 */
+/** 玻璃透明度：实时表面预览加滑块。 */
+import { Button } from "@deepseek-ai/dsh-client-ui-primitives";
 import { GLASS_OPACITY_STEP, MAX_GLASS_OPACITY, MIN_GLASS_OPACITY } from "../shared/theme";
 import css from "./appearance.module.css";
 import { SettingsSection } from "./settings-layout";
-import { sliderFillStyle } from "./slider";
+import { SliderField } from "./ui/controls";
 
 export function GlassSlider({
   value,
@@ -15,27 +16,29 @@ export function GlassSlider({
 }): JSX.Element {
   return (
     <SettingsSection
+      headingId="appearance-glass-heading"
       title={t("glass.title")}
       description={t("glass.desc")}
-      actions={<span className={css.value}>{value}%</span>}
     >
-      <label className={css.field}>
-        <span className={css.rowHead}>
-          <span>{t("glass.opacity")}</span>
-          <span className={css.value}>{value}%</span>
-        </span>
-        <input
-          type="range"
-          min={MIN_GLASS_OPACITY}
-          max={MAX_GLASS_OPACITY}
-          step={GLASS_OPACITY_STEP}
-          value={value}
-          className={css.range}
-          style={sliderFillStyle(value, MIN_GLASS_OPACITY, MAX_GLASS_OPACITY)}
-          aria-label={t("glass.opacity")}
-          onChange={(event) => onChange(Number(event.currentTarget.value))}
-        />
-      </label>
+      <div className={css.glassStage} role="img" aria-label={t("glass.preview")}>
+        <div className={css.glassBackdrop} aria-hidden="true" />
+        <div className={css.glassSurface} style={{ opacity: value / 100 }} aria-hidden="true">
+          {t("glass.surface")}
+        </div>
+      </div>
+      <SliderField
+        id="glass-opacity"
+        label={t("glass.opacity")}
+        value={value}
+        display={`${value}%`}
+        min={MIN_GLASS_OPACITY}
+        max={MAX_GLASS_OPACITY}
+        step={GLASS_OPACITY_STEP}
+        onChange={onChange}
+      />
+      <Button type="button" variant="ghost" onClick={() => onChange(100)}>
+        {t("wallpaper.reset")}
+      </Button>
     </SettingsSection>
   );
 }

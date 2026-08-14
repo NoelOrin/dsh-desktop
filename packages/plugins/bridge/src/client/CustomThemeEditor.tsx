@@ -1,5 +1,4 @@
 /** 自定义主题：创建/复制/编辑/导入导出，编辑时实时预览。 */
-
 import {
   Button,
   IconCopyOutline16,
@@ -25,8 +24,8 @@ import {
 } from "../shared/theme";
 import css from "./appearance.module.css";
 import { SettingsSection } from "./settings-layout";
-import { sliderFillStyle } from "./slider";
 import type { ThemeStore } from "./theme-store";
+import { SliderField } from "./ui/controls";
 
 function blankSeeds(): ThemeSeeds {
   return { accent: "#4176e6", background: "#ffffff", foreground: "#0f1115", contrast: 46 };
@@ -94,6 +93,7 @@ export function CustomThemeEditor({
 
   return (
     <SettingsSection
+      headingId="appearance-custom-heading"
       title={t("custom.title")}
       actions={
         <div className={css.actions}>
@@ -121,54 +121,58 @@ export function CustomThemeEditor({
         </div>
       }
     >
-      {settings.customThemes.map((family) => (
-        <div key={family.id} className={css.themeRow}>
-          <span className={css.themeRowName}>{family.name}</span>
-          <div className={css.themeRowActions}>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              icon={<IconEditOutline16 />}
-              aria-label={t("custom.edit")}
-              title={t("custom.edit")}
-              onClick={() => setDraft(family)}
-            />
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              icon={<IconCopyOutline16 />}
-              aria-label={t("custom.copy")}
-              title={t("custom.copy")}
-              onClick={() => {
-                const dup = duplicateThemeFamily(family, existingIds);
-                save(dup);
-              }}
-            />
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              icon={<IconDownloadOutline16 />}
-              aria-label={t("custom.export")}
-              title={t("custom.export")}
-              onClick={() => exportFamily(family)}
-            />
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              icon={<IconTrashOutline16 />}
-              aria-label={t("custom.remove")}
-              title={t("custom.remove")}
-              onClick={() =>
-                store.setCustomThemes(settings.customThemes.filter((item) => item.id !== family.id))
-              }
-            />
+      <div className={css.themeList}>
+        {settings.customThemes.map((family) => (
+          <div key={family.id} className={css.themeRow}>
+            <span className={css.themeRowName}>{family.name}</span>
+            <div className={css.themeRowActions}>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                icon={<IconEditOutline16 />}
+                aria-label={t("custom.edit")}
+                title={t("custom.edit")}
+                onClick={() => setDraft(family)}
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                icon={<IconCopyOutline16 />}
+                aria-label={t("custom.copy")}
+                title={t("custom.copy")}
+                onClick={() => {
+                  const dup = duplicateThemeFamily(family, existingIds);
+                  save(dup);
+                }}
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                icon={<IconDownloadOutline16 />}
+                aria-label={t("custom.export")}
+                title={t("custom.export")}
+                onClick={() => exportFamily(family)}
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                icon={<IconTrashOutline16 />}
+                aria-label={t("custom.remove")}
+                title={t("custom.remove")}
+                onClick={() =>
+                  store.setCustomThemes(
+                    settings.customThemes.filter((item) => item.id !== family.id),
+                  )
+                }
+              />
+            </div>
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
       {draft !== null ? (
         <div className={css.editor}>
           <label className={css.field} htmlFor="custom-theme-name">
@@ -186,58 +190,54 @@ export function CustomThemeEditor({
               }
             />
           </label>
-          {(["light", "dark"] as const).map((mode) => (
-            <fieldset key={mode} className={css.editorHalf}>
-              <legend className={css.colorLabel}>
-                {mode === "light" ? t("custom.lightHalf") : t("custom.darkHalf")}
-              </legend>
-              <div className={css.colorGrid}>
-                {SEED_FIELDS.map((field) => (
-                  <label key={field} className={css.colorField}>
-                    <input
-                      type="color"
-                      className={css.colorSwatch}
-                      value={draft[mode][field]}
-                      onChange={(e) => {
-                        const next = {
-                          ...draft,
-                          [mode]: { ...draft[mode], [field]: e.currentTarget.value },
-                        };
-                        setDraft(next);
-                        store.previewFamily(next);
-                      }}
-                    />
-                    <span className={css.colorMeta}>
-                      <span className={css.colorLabel}>{t(`custom.${field}`)}</span>
-                      <span className={css.colorValue}>{draft[mode][field]}</span>
-                    </span>
-                  </label>
-                ))}
-              </div>
-              <label className={css.field}>
-                <span className={css.rowHead}>
-                  <span>{t("custom.contrast")}</span>
-                  <span className={css.value}>{draft[mode].contrast}</span>
-                </span>
-                <input
-                  type="range"
+          <div className={css.editorGrid}>
+            {(["light", "dark"] as const).map((mode) => (
+              <fieldset key={mode} className={css.editorHalf}>
+                <legend className={css.colorLabel}>
+                  {mode === "light" ? t("custom.lightHalf") : t("custom.darkHalf")}
+                </legend>
+                <div className={css.colorGrid}>
+                  {SEED_FIELDS.map((field) => (
+                    <label key={field} className={css.colorField}>
+                      <input
+                        type="color"
+                        className={css.colorSwatch}
+                        value={draft[mode][field]}
+                        onChange={(e) => {
+                          const next = {
+                            ...draft,
+                            [mode]: { ...draft[mode], [field]: e.currentTarget.value },
+                          };
+                          setDraft(next);
+                          store.previewFamily(next);
+                        }}
+                      />
+                      <span className={css.colorMeta}>
+                        <span className={css.colorLabel}>{t(`custom.${field}`)}</span>
+                        <span className={css.colorValue}>{draft[mode][field]}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                <SliderField
+                  id={`custom-${mode}-contrast`}
+                  label={t("custom.contrast")}
+                  value={draft[mode].contrast}
+                  display={`${draft[mode].contrast}`}
                   min={0}
                   max={100}
-                  value={draft[mode].contrast}
-                  className={css.range}
-                  style={sliderFillStyle(draft[mode].contrast, 0, 100)}
-                  onChange={(e) => {
+                  onChange={(value) => {
                     const next = {
                       ...draft,
-                      [mode]: { ...draft[mode], contrast: Number(e.currentTarget.value) },
+                      [mode]: { ...draft[mode], contrast: value },
                     };
                     setDraft(next);
                     store.previewFamily(next);
                   }}
                 />
-              </label>
-            </fieldset>
-          ))}
+              </fieldset>
+            ))}
+          </div>
           <div className={css.editorActions}>
             <Button
               type="button"

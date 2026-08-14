@@ -1,6 +1,8 @@
-/** 排版：界面/代码字号与字体族。 */
-import { Input } from "@deepseek-ai/dsh-client-ui-primitives";
+/** 排版设置：界面/代码字号与字体族。 */
+import { Button, Input } from "@deepseek-ai/dsh-client-ui-primitives";
 import {
+  DEFAULT_CODE_FONT_SIZE,
+  DEFAULT_INTERFACE_FONT_SIZE,
   MAX_CODE_FONT_SIZE,
   MAX_INTERFACE_FONT_SIZE,
   MIN_CODE_FONT_SIZE,
@@ -9,7 +11,7 @@ import {
 } from "../shared/theme";
 import css from "./appearance.module.css";
 import { SettingsSection } from "./settings-layout";
-import { sliderFillStyle } from "./slider";
+import { SliderField } from "./ui/controls";
 
 export function TypographySection({
   settings,
@@ -33,62 +35,63 @@ export function TypographySection({
   ) => void;
 }): JSX.Element {
   return (
-    <SettingsSection title={t("type.title")} description={t("type.desc")}>
-      {renderRange(
-        "type.interfaceSize",
-        settings.fontSizeInterface,
-        MIN_INTERFACE_FONT_SIZE,
-        MAX_INTERFACE_FONT_SIZE,
-        (value) => onChange({ fontSizeInterface: value }),
-      )}
-      {renderRange(
-        "type.codeSize",
-        settings.fontSizeCode,
-        MIN_CODE_FONT_SIZE,
-        MAX_CODE_FONT_SIZE,
-        (value) => onChange({ fontSizeCode: value }),
-      )}
-      {renderText("type.sans", settings.fontFamilySans, (value) =>
-        onChange({ fontFamilySans: value }),
-      )}
-      {renderText("type.code", settings.fontFamilyCode, (value) =>
-        onChange({ fontFamilyCode: value }),
-      )}
-      {renderText("type.composer", settings.fontFamilyComposer, (value) =>
-        onChange({ fontFamilyComposer: value }),
-      )}
-      {renderText("type.terminal", settings.fontFamilyTerminal, (value) =>
-        onChange({ fontFamilyTerminal: value }),
-      )}
+    <SettingsSection
+      headingId="appearance-type-heading"
+      title={t("type.title")}
+      description={t("type.desc")}
+      actions={
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={() =>
+            onChange({
+              fontFamilySans: "",
+              fontFamilyCode: "",
+              fontSizeInterface: DEFAULT_INTERFACE_FONT_SIZE,
+              fontSizeCode: DEFAULT_CODE_FONT_SIZE,
+              fontFamilyComposer: "",
+              fontFamilyTerminal: "",
+            })
+          }
+        >
+          {t("wallpaper.reset")}
+        </Button>
+      }
+    >
+      <div className={css.typographyGrid}>
+        <SliderField
+          id="type-interface-size"
+          label={t("type.interfaceSize")}
+          value={settings.fontSizeInterface}
+          display={`${settings.fontSizeInterface}px`}
+          min={MIN_INTERFACE_FONT_SIZE}
+          max={MAX_INTERFACE_FONT_SIZE}
+          onChange={(value) => onChange({ fontSizeInterface: value })}
+        />
+        <SliderField
+          id="type-code-size"
+          label={t("type.codeSize")}
+          value={settings.fontSizeCode}
+          display={`${settings.fontSizeCode}px`}
+          min={MIN_CODE_FONT_SIZE}
+          max={MAX_CODE_FONT_SIZE}
+          onChange={(value) => onChange({ fontSizeCode: value })}
+        />
+        {renderText("type.sans", settings.fontFamilySans, (value) =>
+          onChange({ fontFamilySans: value }),
+        )}
+        {renderText("type.code", settings.fontFamilyCode, (value) =>
+          onChange({ fontFamilyCode: value }),
+        )}
+        {renderText("type.composer", settings.fontFamilyComposer, (value) =>
+          onChange({ fontFamilyComposer: value }),
+        )}
+        {renderText("type.terminal", settings.fontFamilyTerminal, (value) =>
+          onChange({ fontFamilyTerminal: value }),
+        )}
+      </div>
     </SettingsSection>
   );
-
-  function renderRange(
-    labelKey: string,
-    value: number,
-    min: number,
-    max: number,
-    apply: (value: number) => void,
-  ): JSX.Element {
-    return (
-      <label className={css.field}>
-        <span className={css.rowHead}>
-          <span>{t(labelKey)}</span>
-          <span className={css.value}>{value}px</span>
-        </span>
-        <input
-          type="range"
-          min={min}
-          max={max}
-          value={value}
-          className={css.range}
-          style={sliderFillStyle(value, min, max)}
-          aria-label={t(labelKey)}
-          onChange={(event) => apply(Number(event.currentTarget.value))}
-        />
-      </label>
-    );
-  }
 
   function renderText(
     labelKey: string,

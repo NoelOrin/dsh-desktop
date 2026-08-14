@@ -40,7 +40,7 @@
 7. **内嵌插件自动挂载**：`packages/plugins` 各插件经 `yarn build:plugins` 编译打包进 Tauri resources（`apps/shell/src-tauri/resources/plugins/`），应用启动时 Rust 侧把插件包装配到 `$DSH_HOME/profiles/node_modules/@dsh-desktop/<name>/`（版本键控幂等、原子替换、best-effort）并生成 `embedded-plugins.patch.yml` overlay，以 `dsh web --patch <overlay>` 挂载（host 走 loader、client 走 dsh-client-modules）；不写 profile manifest、不下载；单独 `dsh web`（不带 `--patch`）不挂载内嵌插件
    - 发布模式按版本号幂等装配；开发模式 `assemble_dev` 强制重装，避免源码更新后仍加载旧产物
    - `yarn dev` 下由 `scripts/watch-plugins.mjs` 监听插件源码并热部署到 profile，client bundle 经 dsh 自带 `dsh-client-hmr` 热替换
-8. **主题与无边框窗口**：壳侧读取 `settings.yaml` 的 `desktop` 与 `ui-theme` 分节，通过 `get_ui_theme` / `dsh-ui-theme` 让启动页和窗口背景跟随；main 窗口无系统边框（macOS 使用 Overlay title bar），启动页与 dsh web 注入自绘标题栏（拖动、双击最大化、窗口控制按钮）
+8. **主题与无边框窗口**：壳侧读取 `settings.yaml` 的 `ui-theme` 分节与壳侧 `desktop-settings.json` 的 `startupMode`，通过 `get_ui_theme` / `dsh-ui-theme` 让启动页和窗口背景跟随；main 窗口无系统边框（macOS 使用 Overlay title bar），启动页与 dsh web 注入自绘标题栏（拖动、双击最大化、窗口控制按钮）
 
 ## 配置优先级
 
@@ -55,7 +55,7 @@
   （含官方文档链接，新增插件/修改 client 面前先读该文件；client UI 设计范式另见 `packages/plugins/design.md`）
 - 前后端通过固定契约通信：
   - native 命令：`get_status` / `install_dsh` / `update_dsh` / `restart` / `open_log_directory` / `get_config` / `set_config` / `open_external` / `get_ui_theme` / `window_action` / `get_pending_deeplinks` / `ack_deeplink` / `request_notification_permission` / `open_paths` / `import_paths`
-  - 桥接/壳能力命令：`get_autostart` / `set_autostart` / `register_shortcut` / `unregister_shortcut` / `get_shortcuts` / `unregister_all_shortcuts` / `check_update` / `install_update`
+  - 桥接/壳能力命令：`get_autostart` / `set_autostart` / `get_desktop_settings` / `set_desktop_settings` / `register_shortcut` / `unregister_shortcut` / `get_shortcuts` / `unregister_all_shortcuts` / `check_update` / `install_update`
   - 事件：`dsh-status` / `dsh-log` / `dsh-file-drop` / `dsh-theme` / `dsh-deeplink` / `dsh-shortcut` / `dsh-update-available` / `dsh-ui-theme` / `dsh-window-state` / `dsh-notification-action`
   - 类型与常量见 `packages/contracts`；桥接对象 `window.__DSH_DESKTOP__` 的契约由 `packages/plugins/bridge/AGENTS.md` 自持
 - 系统托盘常驻后台（关闭到托盘），关键节点弹原生通知；dsh web 通过受控桥接 `window.__DSH_DESKTOP__` 调用最小能力（白名单见 `apps/shell/src-tauri/capabilities/bridge.json`，边界见 `docs/plugin-tauri-boundary.md`）

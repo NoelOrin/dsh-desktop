@@ -9,8 +9,7 @@ dsh 插件的开发容器：**每个子目录一个 dsh 插件**（cordis bundle
   让 dsh web 内的插件/页面能调用 Tauri 壳能力。**桥接命令契约由本插件自持**
   （Rust 侧在 `apps/shell/src-tauri/capabilities/bridge.json` 声明），不并入
   `packages/contracts`——contracts 只负责 native 内容（边界见 `docs/plugin-tauri-boundary.md`）。
-  host 侧注册 `desktop` settings 命名空间（`autostart` 默认关闭）与
-  `dsh-desktop/health` 健康端点，不实现 dsh 业务；client 侧在 dsh WebUI 设置面板
+  host 侧注册 `dsh-desktop/health` 健康端点，不实现 dsh 业务；client 侧在 dsh WebUI 设置面板
   渲染“桌面”与“外观”设置节，桥接面覆盖桌面原生能力（详见 `./bridge/AGENTS.md`）
 - `hello/`（`@dsh-desktop/plugin-hello`）— **自定义插件示例**（骨架），演示开发结构
 

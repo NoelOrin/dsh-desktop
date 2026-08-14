@@ -46,7 +46,7 @@ DSH Desktop 是 dsh 的桌面套壳：Rust 后端拉起 `dsh web` 子进程，�
 | 职责 | 检测/安装/拉起/监控/停止 dsh 子进程；窗口/菜单/全局快捷键；应用数据目录；`config.json`；原生交互（打开日志目录）；打包分发 |
 | 已声明能力 | capabilities `core:default` + `global-shortcut:default`（覆盖 main 窗口） |
 | 实现契约 | `get_status` / `install_dsh` / `restart` / `open_log_directory` / `get_config` / `set_config` / `get_ui_theme` / `window_action`（类型与常量见 `packages/contracts`） |
-| 配置 | `config.json`（应用数据目录）→ 环境变量（`DSH_BIN`/ `DSH_NODE`/ `DSH_HOME`）→ PATH 检测 |
+| 配置 | `config.json`（应用数据目录）与 `desktop-settings.json`（自启/启动模式）→ 环境变量（`DSH_BIN`/ `DSH_NODE`/ `DSH_HOME`）→ PATH 检测 |
 
 **红线**：Tauri 壳不实现任何 dsh 产品功能——不做 agent、不做工具、不接 LLM、
 不解析 dsh 的配置树、**不重复实现 dsh 的插件管理**。这些永远是 dsh 自己的事。
@@ -57,8 +57,8 @@ DSH Desktop 是 dsh 的桌面套壳：Rust 后端拉起 `dsh web` 子进程，�
 全局快捷键、通知、进程日志与文件拖放均由壳负责实现、持久化与事件出口；
 dsh 侧只能经 `window.__DSH_DESKTOP__` 的最小桥接面调用或订阅。
 
-`packages/plugins/bridge` 的 host 面只注册 `desktop` settings 命名空间与
-`dsh-desktop/health` 健康端点，**不实现 dsh 业务**；agent、工具、会话等
+`packages/plugins/bridge` 的 host 面只注册 `dsh-desktop/health` 健康端点，
+**不实现 dsh 业务**；agent、工具、会话等
 dsh 产品逻辑仍由 dsh 官方或自定义 cordis 插件提供。
 
 ## 3. 归属判断规则
@@ -164,10 +164,11 @@ snake_case）。
   dsh 现成的 cordis 插件（`dsh-host-plugin-inventory` /
   `dsh-client-ui-settings-plugin-inventory` / `dsh-client-ui-settings-plugins`），
   由 `dsh-web-app` 装配，壳侧与本包都不重复实现。
-- **开机自启设置项归属（示例）**：设置项状态存于 dsh settings（`packages/plugins/bridge`
-  的 `desktop` 命名空间，`autostart` 默认关闭）——属 **dsh 插件域**；OS 级启停是壳能力
-  （autostart 插件 + `get_autostart` / `set_autostart` 命令）——属 **Tauri 壳域**。
-  状态与实现分离：插件只读写设置项，实际启停经受控桥接命令执行，两端各做各的。
+- **开机自启设置项归属（示例）**：自启开关与 `startupMode` 由壳侧持久化（应用数据目录的
+  `desktop-settings.json`），bridge client 经 `desktop.get()` / `desktop.set()` 调
+  `get_desktop_settings` / `set_desktop_settings` 读写；OS 级启停由 autostart 插件执行——
+  均属 **Tauri 壳域**。不使用 dsh settings 的 `desktop` 命名空间，因为 dsh Web 配置接口
+  对其返回 `settings-not-exposed`。
 - **外观设置项归属（本计划新增）**：bridge client 面复用上游已注册的 `ui-theme` 命名空间，
   只 bind 不注册，渲染“外观”设置节（主题偏好 / 主题库 / 背景图 / 玻璃透明度 / 自定义主题 /
   排版），快照本地生效并防抖写回 Host——属 **dsh 插件域**；壳侧 `get_ui_theme` /

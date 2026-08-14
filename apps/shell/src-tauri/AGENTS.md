@@ -6,7 +6,7 @@ DSH Desktop 的 Rust 后端。职责：检测 / 一键安装或更新 `dsh`、�
 
 - `src/lib.rs` - 应用生命周期、`AppState` / `DshManager`、IPC 命令、桥接脚本、托盘、窗口事件与主题接线
 - `src/config.rs` - `DshConfig` 结构、`config.json` 的 load/save 与 effective 合并逻辑
-- `src/desktop_settings.rs` - 读取 `settings.yaml` 的 `desktop` 分节（`autostart` / `startupMode`）
+- `src/desktop_settings.rs` - 读取 `settings.yaml` 的 `desktop` 分节与壳侧 `desktop-settings.json`（`startupMode`）
 - `src/embedded.rs` - 内嵌插件 resources 装配、版本键控幂等、开发模式强制重装与 overlay 生成
 - `src/notifications.rs` - `notify-rust` 原生通知与通知动作事件
 - `src/process.rs` - dsh web URL 行解析、文件拖放类型分类与旧实例清理
@@ -39,7 +39,7 @@ DSH Desktop 的 Rust 后端。职责：检测 / 一键安装或更新 `dsh`、�
 
 ## IPC 命令与事件
 
-- 命令：`get_status` / `get_pending_deeplinks` / `ack_deeplink` / `restart` / `install_dsh` / `update_dsh` / `open_log_directory` / `get_config` / `set_config` / `open_external` / `get_autostart` / `set_autostart` / `register_shortcut` / `unregister_shortcut` / `get_shortcuts` / `unregister_all_shortcuts` / `check_update` / `install_update` / `request_notification_permission` / `get_ui_theme` / `window_action` / `open_paths` / `import_paths`
+- 命令：`get_status` / `get_pending_deeplinks` / `ack_deeplink` / `restart` / `install_dsh` / `update_dsh` / `open_log_directory` / `get_config` / `set_config` / `open_external` / `get_autostart` / `set_autostart` / `get_desktop_settings` / `set_desktop_settings` / `register_shortcut` / `unregister_shortcut` / `get_shortcuts` / `unregister_all_shortcuts` / `check_update` / `install_update` / `request_notification_permission` / `get_ui_theme` / `window_action` / `open_paths` / `import_paths`
 - 事件：`dsh-status`（RuntimeSnapshot）、`dsh-log`（单行文本）、`dsh-file-drop`（结构化文件拖放 payload）、`dsh-theme`（系统主题 `light` / `dark`）、`dsh-deeplink`（深链 payload）、`dsh-shortcut`（快捷键字符串）、`dsh-update-available`（新版本号）、`dsh-ui-theme`（`UiThemeSnapshot`）、`dsh-window-state`（`{ maximized }`）、`dsh-notification-action`（通知动作 payload）
 - `get_config` 返回“生效配置”：config.json 有值则用之，未设置的字段回退到环境变量；`set_config` 只写 `config.json`，不会修改环境变量
 - 修改 native 契约时，同步更新 `packages/contracts/src/index.ts`、Rust serde 类型、`apps/shell/src/main.ts` 与根/子模块 AGENTS；桥接命令契约由 `packages/plugins/bridge` 自持，同步更新其 AGENTS 与 `capabilities/bridge.json`
@@ -54,11 +54,11 @@ DSH Desktop 的 Rust 后端。职责：检测 / 一键安装或更新 `dsh`、�
 - **优雅退出**：`cleanup_child()` unix 下先对进程组发 SIGTERM，`GRACE_PERIOD=2s` 宽限后 SIGKILL；Windows 直接 TerminateProcess
 - **残留清理**：启动/重启前经 `process::cleanup_stale_dsh_web` 枚举进程，只清理带应用数据目录 overlay 或 `DSH_DESKTOP_MANAGED` 标记的旧 `dsh web` 实例，不误杀单独启动的 `dsh web`
 - **文件拖放与动作**：main 窗口 `DragDropEvent::Drop` 生成结构化 `dsh-file-drop`；`open_paths` / `import_paths` 命令以 `open` / `import` 动作转发给 dsh web
-- **桥接**：`on_page_load` 对 loopback dsh web 页面注入 `BRIDGE_SCRIPT` 与 `HARNESS_CHROME_SCRIPT`，暴露 `window.__DSH_DESKTOP__`（通知 / 剪贴板 / 对话框 / openExternal / 状态与日志 / 配置 / 文件动作 / 深链 / 通知权限 / 开机自启 / 快捷键 / 更新），权限由 `capabilities/bridge.json` remote 白名单收口
+- **桥接**：`on_page_load` 对 loopback dsh web 页面注入 `BRIDGE_SCRIPT` 与 `HARNESS_CHROME_SCRIPT`，暴露 `window.__DSH_DESKTOP__`（通知 / 剪贴板 / 对话框 / openExternal / 状态与日志 / 配置 / 文件动作 / 深链 / 通知权限 / 开机自启与启动模式 / 快捷键 / 更新），权限由 `capabilities/bridge.json` remote 白名单收口
 - **无边框窗口**：main 窗口无系统边框（macOS 用 Overlay title bar）；`window_action` 支持 minimize / maximize（切换）/ close；`dsh-window-state` 在 setup、窗口 Resized 与 dsh 就绪导航后广播
 - **窗口状态记忆**：window-state 插件保存 main 窗口大小/位置/最大化状态，下次启动恢复
 - **自动更新**：启动后异步查询 GitHub latest release，发现新版本 emit `dsh-update-available`；`check_update` / `install_update` 供桥接“检查更新”使用，静默下载当前平台安装包到 `app_cache_dir()/updates/` 并返回本地路径，由用户手动运行安装
-- **开机自启与启动模式**：autostart 插件注册系统自启；`desktop_settings` 读取 `settings.yaml` 的 `desktop.startupMode`，支持 `normal` / `tray` / `minimized`
+- **开机自启与启动模式**：autostart 插件注册系统自启；`desktop_settings` 优先读取壳侧 `desktop-settings.json` 的 `startupMode`，未配置时回退 `settings.yaml` 的 `desktop.startupMode`，支持 `normal` / `tray` / `minimized`
 - **自定义快捷键**：`register_shortcut` / `unregister_shortcut` / `get_shortcuts` / `unregister_all_shortcuts` 管理全局快捷键，注册表存于 AppState 并持久化到 `config.json.shortcuts`
 - **退出确认**：托盘“退出”先弹确认框，确认后置 `exiting`、发 `Stop` 并退出；取消则无操作
 

@@ -9,7 +9,7 @@
 
 | 面 | 文件 | 职责 |
 | --- | --- | --- |
-| host | `src/index.ts` | 插件入口（`export const name` + `apply(ctx)`）；定义 `DshDesktopBridge` 类型；注册 `desktop` settings 命名空间（`autostart` 默认关闭、`startupMode` 默认 normal）与 `dsh-desktop/health` 健康端点，不实现 dsh 业务 |
+| host | `src/index.ts` | 插件入口（`export const name` + `apply(ctx)`）；定义 `DshDesktopBridge` 类型；注册 `dsh-desktop/health` 健康端点，不实现 dsh 业务 |
 | client | `src/client.tsx` | 在 dsh WebUI 设置面板注册“桌面”设置节（状态 / 配置 / 工具 / 开机自启与启动模式）与“外观”设置节（主题偏好 / 主题库 / 背景图 / 玻璃透明度 / 自定义主题 / 排版）；`ui-theme` 命名空间只 bind 不注册，快照经 `createThemeStore` 防抖写回，变化时 `applyThemeSection` 实时应用 |
 | shared | `src/shared/theme.ts` | 主题家族、token 推导、背景/玻璃/排版边界与默认值 |
 | client UI | `src/client/*` | 桌面/外观设置节组件（`DesktopPanel.tsx`、`AppearanceSection.tsx` 等）、共享控件（`ui/controls.*`）、运行时类型切片（`runtime.ts`）、样式加载（`style-inject.ts`）与主题应用逻辑 |
@@ -38,16 +38,19 @@ client 面依赖 `@deepseek-ai/dsh-client-ui-settings` 等 dsh client 生态（p
 | `getPendingDeepLinks()` / `ackDeepLink(id)` / `onDeepLink(cb)` | `get_pending_deeplinks` / `ack_deeplink` / 事件 `dsh-deeplink` | 深链队列读取、确认与订阅 |
 | `requestNotificationPermission()` / `onNotificationAction(cb)` | `request_notification_permission` / 事件 `dsh-notification-action` | 通知权限申请 / 点击动作 |
 | `autostart.get()` / `autostart.set(enabled)` | `get_autostart` / `set_autostart` | 查询 / 设置开机自启 |
+| `desktop.get()` / `desktop.set(settings)` | `get_desktop_settings` / `set_desktop_settings` | 查询 / 设置开机自启与自启后窗口状态 |
 | `shortcuts.register(s, cb)` / `unregister(s)` / `list()` / `unregisterAll()` | `register_shortcut` / `unregister_shortcut` / `get_shortcuts` / `unregister_all_shortcuts` | 全局快捷键管理 |
 | `onShortcut(cb)` | 事件 `dsh-shortcut` | 订阅快捷键按下 |
 | `update.check()` / `update.install()` | `check_update` / `install_update` | 检查更新 / 静默下载安装包 |
 
 ## 开机自启与启动模式设置项归属
 
-- 设置项**状态**存放于 dsh settings（`desktop.autostart` 默认关闭、`desktop.startupMode` 默认 normal）——属 **dsh 插件域**；
-- OS 级**启停**与窗口启动模式是壳能力（autostart 插件 + `get_autostart` / `set_autostart` 命令 + Rust 读取 `desktop.startupMode`）——属 **Tauri 壳域**；
-- 切换开关时 client 面同时写 settings 与调壳命令，两者解耦（壳不可达时仅写 settings，
-  由下次启动 / 桥接补偿）。
+- 设置项**状态**存放于壳侧应用数据目录的 `desktop-settings.json`（`startupMode` 默认 normal），
+  OS 级启停由 autostart 插件管理——均属 **Tauri 壳域**；
+- bridge client 面经 `desktop.get()` / `desktop.set(settings)` 调 `get_desktop_settings` /
+  `set_desktop_settings` 读写壳状态，不再依赖 dsh settings 的 `desktop` 命名空间；
+- dsh 上游 Web 配置接口对 `desktop` 命名空间返回 `settings-not-exposed`，因此桥接 UI 必须走壳命令，
+  否则开关无法落盘。
 
 ## 外观设置项归属
 
@@ -70,9 +73,8 @@ client 面依赖 `@deepseek-ai/dsh-client-ui-settings` 等 dsh client 生态（p
 
 ## 样式构建约定
 
-- dsh web 只静态托管 client bundle，不托管插件独立 `style.css`；bridge host
-  在 `src/index.ts` 注册 `/dsh-desktop/style.css` 路由，直接返回构建后的
-  `style.css` 文件，client 经 `style-inject.ts` 以 `<link rel="stylesheet">`
-  加载。
+- dsh web 只静态托管 client bundle，不托管插件独立 `style.css`；bridge 按 dsh
+  client module 的样式约定，把构建后的 `style.css` 文本嵌入 `client.js`，
+  `style-inject.ts` 在 factory 物化时以 `<style data-plugin-css>` 注入。
 - 新增/修改 `*.module.css` 时不需要手动引入 CSS；`tsdown` 会自动生成 scoped
   类名并保留 `style.css` 构建产物。不要在 client 组件里直接写全局 DOM/外壳样式。

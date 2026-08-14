@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 /**
  * build-plugins 纯函数冒烟测试（零依赖，仅 node:test / node:assert）
  *
@@ -10,7 +13,7 @@ import assert from "node:assert/strict";
  *   node scripts/build-plugins.test.mjs
  */
 import test from "node:test";
-import { buildDistManifest } from "./build-plugins.mjs";
+import { buildDistManifest, deployToProfile } from "./build-plugins.mjs";
 
 test("dist manifest 剔除依赖并指向 lib", () => {
   const dist = buildDistManifest({
@@ -58,4 +61,25 @@ test("dist manifest 剔除悬空的 types 字段", () => {
   assert.equal(dist.name, "@dsh-desktop/plugin-hello");
   assert.equal(dist.main, "./lib/index.js");
   assert.equal(dist.dshDesktop.id, "hello");
+});
+
+test("deployToProfile 原子复制到 dsh profile", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dsh-deploy-"));
+  const src = path.join(root, "src");
+  const home = path.join(root, "home");
+  fs.mkdirSync(src, { recursive: true });
+  fs.writeFileSync(path.join(src, "client.js"), "// hot");
+
+  const error = deployToProfile(src, "@dsh-desktop/plugin-bridge", home);
+  assert.equal(error, null);
+  const target = path.join(
+    home,
+    "profiles",
+    "node_modules",
+    "@dsh-desktop",
+    "plugin-bridge",
+    "client.js",
+  );
+  assert.equal(fs.readFileSync(target, "utf8"), "// hot");
+  fs.rmSync(root, { recursive: true, force: true });
 });

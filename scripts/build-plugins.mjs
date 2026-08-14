@@ -12,10 +12,13 @@ import { spawnSync } from "node:child_process";
  *   ③ 把 package.json、cordis.patch.yml、lib/（含 .map）拷入
  *      apps/shell/src-tauri/resources/plugins/<name>/（先清空旧目录）
  *   ④ 打印装配清单
+ *   ⑤ 传入 --home <path> 时，再把插件包原子复制进 dsh profile，
+ *      供开发环境的 dsh-client-hmr 热更新
  * 任一步失败 → 非零退出。
  *
  * 运行：
  *   node scripts/build-plugins.mjs
+ *   node scripts/build-plugins.mjs --home /path/to/.dsh
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -47,7 +50,36 @@ export function buildDistManifest(src) {
   return dist;
 }
 
+/** 把已装配的 resources 插件包原子复制到 dsh profile 的模块兜底目录。 */
+export function deployToProfile(srcDir, pkgName, home) {
+  const target = path.join(home, "profiles", "node_modules", pkgName);
+  const tmp = `${target}.tmp`;
+  try {
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.rmSync(tmp, { recursive: true, force: true });
+    fs.cpSync(srcDir, tmp, { recursive: true });
+    fs.rmSync(target, { recursive: true, force: true });
+    fs.renameSync(tmp, target);
+    return null;
+  } catch (error) {
+    fs.rmSync(tmp, { recursive: true, force: true });
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
+function parseArgs(args) {
+  const homeIndex = args.indexOf("--home");
+  if (homeIndex === -1) return { home: null };
+  const homeValue = args[homeIndex + 1];
+  if (!homeValue) {
+    console.error("[build-plugins] --home 需要 dsh home 路径");
+    process.exit(1);
+  }
+  return { home: path.resolve(homeValue) };
+}
+
 function main() {
+  const { home } = parseArgs(process.argv.slice(2));
   if (!fs.existsSync(PLUGINS_DIR)) {
     console.error(`[build-plugins] 找不到插件目录: ${PLUGINS_DIR}`);
     process.exit(1);
@@ -128,6 +160,19 @@ function main() {
     );
     for (const file of files) {
       console.log(`  - ${file}`);
+    }
+
+    // ⑤ 开发热更新：同时把最新插件包复制进 dsh profile，供 dsh-client-hmr 轮询
+    if (home) {
+      const deployError = deployToProfile(target, dist.name, home);
+      if (deployError) {
+        console.error(`[build-plugins] ${srcPkg.name} 热部署到 profile 失败：${deployError}`);
+        failures += 1;
+        continue;
+      }
+      console.log(
+        `[build-plugins] 已热部署 ${srcPkg.name}@${dist.version} → ${path.join(home, "profiles", "node_modules", dist.name)}`,
+      );
     }
   }
 

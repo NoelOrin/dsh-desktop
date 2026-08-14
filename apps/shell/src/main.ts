@@ -1,4 +1,9 @@
-import type { RuntimePhase, RuntimeSnapshot, UiThemeSnapshot } from "@dsh-desktop/contracts";
+import type {
+  RuntimePhase,
+  RuntimeSnapshot,
+  UiThemeSnapshot,
+  WindowState,
+} from "@dsh-desktop/contracts";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
@@ -60,6 +65,31 @@ async function initTheme(): Promise<void> {
   await listen<UiThemeSnapshot>("dsh-ui-theme", (event) => applyUiTheme(event.payload));
 }
 
+function windowAction(action: "minimize" | "maximize" | "close"): void {
+  invoke("window_action", { action }).catch((error) => {
+    console.error("window_action 失败:", error);
+  });
+}
+
+async function initWindowControls(): Promise<void> {
+  if (!isTauri()) return;
+  document.getElementById("win-min")?.addEventListener("click", () => windowAction("minimize"));
+  document.getElementById("win-max")?.addEventListener("click", () => windowAction("maximize"));
+  document.getElementById("win-close")?.addEventListener("click", () => windowAction("close"));
+  await listen<WindowState>("dsh-window-state", (event) => {
+    const icon = document.getElementById("win-max-icon");
+    if (icon !== null) {
+      icon.innerHTML = event.payload.maximized
+        ? '<rect x="3.4" y="2.2" width="6.2" height="6.2" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.15"/><rect x="2.2" y="3.6" width="6.2" height="6.2" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.15"/>'
+        : '<rect x="2.4" y="2.4" width="7.2" height="7.2" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.2"/>';
+    }
+    const button = document.getElementById("win-max");
+    if (button !== null) {
+      button.setAttribute("aria-label", event.payload.maximized ? "还原" : "最大化");
+    }
+  });
+}
+
 async function init(): Promise<void> {
   if (!isTauri()) {
     render({ phase: "detecting", message: "正在检测运行环境..." });
@@ -78,6 +108,7 @@ async function init(): Promise<void> {
   }
 
   await initTheme();
+  await initWindowControls();
   await listen<RuntimeSnapshot>("dsh-status", (event) => render(event.payload));
   await listen<string>("dsh-log", (event) => appendLog(String(event.payload)));
 }

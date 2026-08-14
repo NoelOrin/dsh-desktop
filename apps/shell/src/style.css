@@ -72,10 +72,70 @@ button.primary {
   display: none;
 }
 
+.titlebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-left: 14px;
+  background: var(--theme-bg);
+  color: var(--theme-ink);
+  -webkit-user-select: none;
+  user-select: none;
+  z-index: 10;
+}
+
+.titlebar__title {
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0.8;
+}
+
+.titlebar__controls {
+  display: flex;
+  height: 100%;
+}
+
+.titlebar__controls button {
+  width: 46px;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--theme-ink);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.titlebar__controls button:hover {
+  background: rgba(128, 128, 128, 0.18);
+}
+
+.titlebar__controls #win-close:hover {
+  background: #e81123;
+  color: #fff;
+}
+
+.titlebar__controls svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* 非 Tauri 环境隐藏标题栏 */
+html:not([data-tauri]) .titlebar {
+  display: none;
+}
+
 .shell {
   width: min(92vw, 540px);
   text-align: center;
-  padding: 48px 0;
+  padding: 64px 0 48px;
 }
 
 .eyebrow {

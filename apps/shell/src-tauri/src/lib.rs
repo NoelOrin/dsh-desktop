@@ -101,6 +101,152 @@ const BRIDGE_SCRIPT: &str = r#"(function () {
   };
 })();"#;
 
+/// 注入 dsh web 的自绘标题栏脚本（参考参考仓库 harness-chrome-inject.js，适配 Tauri data-tauri-drag-region）。
+const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
+  "use strict";
+  if (document.getElementById("dsh-shell-controls")) return;
+  var STYLE_ID = "dsh-shell-chrome-style";
+  var CONTROLS_ID = "dsh-shell-controls";
+  var DRAG_ID = "dsh-shell-drag-strip";
+  var EDGE = 8;
+  var SIZE = 32;
+  var GAP = 0;
+
+  var ICON_MIN = '<svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="5.4" width="8" height="1.2" rx="0.6" fill="currentColor"/></svg>';
+  var ICON_MAX = '<svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.4" y="2.4" width="7.2" height="7.2" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>';
+  var ICON_RESTORE = '<svg viewBox="0 0 12 12" aria-hidden="true"><rect x="3.4" y="2.2" width="6.2" height="6.2" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.15"/><rect x="2.2" y="3.6" width="6.2" height="6.2" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.15"/></svg>';
+  var ICON_CLOSE = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 3l6 6M9 3L3 9" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg>';
+
+  function reservedRight() {
+    return EDGE + SIZE * 3 + GAP * 2;
+  }
+
+  function ensureStyle() {
+    var style = document.getElementById(STYLE_ID);
+    if (style) return;
+    style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = [
+      "#" + CONTROLS_ID + " {",
+      "  position: fixed;",
+      "  top: 4px;",
+      "  right: " + EDGE + "px;",
+      "  z-index: 2147483647;",
+      "  display: flex;",
+      "  gap: " + GAP + "px;",
+      "  height: " + SIZE + "px;",
+      "}",
+      "#" + CONTROLS_ID + " button {",
+      "  width: " + SIZE + "px;",
+      "  height: " + SIZE + "px;",
+      "  margin: 0;",
+      "  padding: 0;",
+      "  display: inline-flex;",
+      "  align-items: center;",
+      "  justify-content: center;",
+      "  border: 0;",
+      "  border-radius: 8px;",
+      "  background: transparent;",
+      "  color: var(--dsh-ctrl-fg, #3f3f46);",
+      "  cursor: pointer;",
+      "}",
+      "#" + CONTROLS_ID + " button svg { width: 12px; height: 12px; display: block; }",
+      "#" + CONTROLS_ID + " button:hover { background: var(--dsh-ctrl-hover, rgba(0, 0, 0, 0.08)); }",
+      "#" + CONTROLS_ID + " button[data-act=close]:hover { background: #e81123; color: #fff; }",
+      "#" + DRAG_ID + " {",
+      "  position: fixed;",
+      "  top: 0;",
+      "  left: 0;",
+      "  right: " + reservedRight() + "px;",
+      "  height: 44px;",
+      "  z-index: 2147483644;",
+      "}"
+    ].join("\n");
+    (document.head || document.documentElement).appendChild(style);
+  }
+
+  function findTopBar() {
+    var buttons = document.querySelectorAll("button");
+    for (var i = 0; i < buttons.length; i++) {
+      var label = (buttons[i].getAttribute("aria-label") || "") + " " + (buttons[i].textContent || "");
+      if (/session\s*log/i.test(label)) {
+        var header = buttons[i].closest("header");
+        if (header) return header;
+      }
+    }
+    var nodes = document.querySelectorAll("header, [role=banner]");
+    for (var j = 0; j < nodes.length; j++) {
+      var rect = nodes[j].getBoundingClientRect();
+      if (rect.top <= 8 && rect.height >= 32 && rect.height <= 160) return nodes[j];
+    }
+    return null;
+  }
+
+  function ensureControls() {
+    var host = document.getElementById(CONTROLS_ID);
+    if (host) return host;
+    host = document.createElement("div");
+    host.id = CONTROLS_ID;
+    host.innerHTML = [
+      '<button type="button" data-act="minimize" aria-label="最小化">' + ICON_MIN + "</button>",
+      '<button type="button" data-act="maximize" aria-label="最大化">' + ICON_MAX + "</button>",
+      '<button type="button" data-act="close" aria-label="关闭">' + ICON_CLOSE + "</button>"
+    ].join("");
+    host.addEventListener("click", function (event) {
+      var button = event.target.closest("[data-act]");
+      if (!button || !window.__DSH_DESKTOP__) return;
+      window.__DSH_DESKTOP__.windowAction(button.dataset.act);
+    });
+    (document.body || document.documentElement).appendChild(host);
+    return host;
+  }
+
+  function ensureDragStrip() {
+    var strip = document.getElementById(DRAG_ID);
+    if (!strip) {
+      strip = document.createElement("div");
+      strip.id = DRAG_ID;
+      strip.setAttribute("data-tauri-drag-region", "deep");
+      (document.body || document.documentElement).appendChild(strip);
+    }
+    return strip;
+  }
+
+  function applyControlTheme(host) {
+    var fg = getComputedStyle(document.body).getPropertyValue("--dsw-alias-label-primary").trim();
+    if (!fg) {
+      fg = getComputedStyle(document.body).getPropertyValue("color") || "#3f3f46";
+    }
+    host.style.setProperty("--dsh-ctrl-fg", fg);
+    host.style.setProperty("--dsh-ctrl-hover", "rgba(128, 128, 128, 0.18)");
+  }
+
+  function install() {
+    ensureStyle();
+    var host = ensureControls();
+    var bar = findTopBar();
+    ensureDragStrip();
+    if (bar && bar instanceof HTMLElement) {
+      bar.setAttribute("data-tauri-drag-region", "deep");
+      var prev = parseFloat(bar.style.paddingRight) || 0;
+      bar.style.paddingRight = Math.max(prev, reservedRight()) + "px";
+    }
+    applyControlTheme(host);
+    if (window.__DSH_DESKTOP__ && typeof window.__DSH_DESKTOP__.onWindowState === "function") {
+      window.__DSH_DESKTOP__.onWindowState(function (state) {
+        var maximized = !!(state && state.maximized);
+        var maxBtn = host.querySelector("[data-act=maximize]");
+        if (maxBtn) {
+          maxBtn.innerHTML = maximized ? ICON_RESTORE : ICON_MAX;
+          maxBtn.setAttribute("aria-label", maximized ? "还原" : "最大化");
+        }
+      });
+    }
+  }
+
+  install();
+})();"##;
+
 #[derive(Clone, Default, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum RuntimePhase {
@@ -231,6 +377,7 @@ pub fn run() {
         .on_page_load(|webview, payload| {
             if payload.event() == PageLoadEvent::Finished && is_dsh_web_url(payload.url()) {
                 let _ = webview.eval(BRIDGE_SCRIPT);
+                let _ = webview.eval(HARNESS_CHROME_SCRIPT);
             }
         })
         .setup(move |app| {

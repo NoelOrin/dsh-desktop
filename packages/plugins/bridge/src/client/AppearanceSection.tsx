@@ -2,8 +2,10 @@
 import { useSyncExternalStore } from "react";
 import { DEFAULT_PREFERENCE, THEME_PREFERENCES, type ThemePreference } from "../shared/theme";
 import css from "./appearance.module.css";
+import { CustomThemeEditor } from "./CustomThemeEditor";
 import { GlassSlider } from "./GlassSlider";
 import { ThemeLibrary } from "./ThemeLibrary";
+import { TypographySection } from "./TypographySection";
 import type { ThemeStore } from "./theme-store";
 import { WallpaperRow } from "./WallpaperRow";
 
@@ -68,6 +70,12 @@ export function AppearanceSection({
         value={settings.glassOpacity}
         t={t}
         onChange={(value) => store.setGlassOpacity(value)}
+      />
+      <CustomThemeEditor store={store} t={t} />
+      <TypographySection
+        settings={settings}
+        t={t}
+        onChange={(patch) => store.setTypography(patch)}
       />
     </div>
   );

@@ -18,6 +18,7 @@ use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::TrayIconBuilder;
 use tauri::webview::PageLoadEvent;
 use tauri::{AppHandle, Emitter, Manager as _, RunEvent, State, WindowEvent};
+use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_global_shortcut::{Builder as ShortcutBuilder, Code, Modifiers, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 
@@ -67,6 +68,7 @@ const BRIDGE_SCRIPT: &str = r#"(function () {
     onStatus: function (cb) { return listen("dsh-status", cb); },
     onLog: function (cb) { return listen("dsh-log", cb); },
     onFileDrop: function (cb) { return listen("dsh-file-drop", cb); },
+    onDeepLink: function (cb) { return listen("dsh-deeplink", cb); },
   };
 })();"#;
 
@@ -104,6 +106,8 @@ struct Inner {
     node_found: bool,
     log_dir: Option<PathBuf>,
     logs: VecDeque<String>,
+    /// 尚未被 dsh web 消费的深链（dsh-desktop://）原始 URL，就绪后补发。
+    pending_deeplinks: VecDeque<String>,
 }
 
 impl Inner {
@@ -259,6 +263,21 @@ pub fn run() {
                 log_dir,
                 config_path,
                 exiting: exiting.clone(),
+            });
+
+            // 深链 dsh-desktop://：收到 URL 后暂存（未就绪时由 Ready 分支补发）并立即转发给 dsh web
+            let deep_app = app.handle().clone();
+            let deep_link_app = deep_app.clone();
+            deep_link_app.deep_link().on_open_url(move |event| {
+                for url in event.urls() {
+                    let url = url.to_string();
+                    let state = deep_app.state::<AppState>();
+                    {
+                        let mut inner = state.inner.lock().unwrap();
+                        inner.pending_deeplinks.push_back(url.clone());
+                    }
+                    let _ = deep_app.emit("dsh-deeplink", url);
+                }
             });
 
             let start_tx = tx.clone();
@@ -450,6 +469,13 @@ impl DshManager {
                             format!("DSH 已就绪: {url}"),
                             Some(url.clone()),
                         );
+                        // 就绪后补发就绪前收到的深链（页面 ready 后由桥接 onDeepLink 消费）
+                        {
+                            let mut inner = self.inner.lock().unwrap();
+                            while let Some(link) = inner.pending_deeplinks.pop_front() {
+                                let _ = self.app.emit("dsh-deeplink", link);
+                            }
+                        }
                         self.notify("DSH 已就绪", &format!("DeepSeek Harness 已启动：{url}"));
                         self.open_window(url);
                     }

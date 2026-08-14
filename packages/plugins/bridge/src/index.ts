@@ -34,6 +34,7 @@ export interface DshDesktopBridge {
   onStatus(cb: (snapshot: RuntimeSnapshot) => void): Promise<() => void>;
   onLog(cb: (line: string) => void): Promise<() => void>;
   onFileDrop(cb: (paths: string[]) => void): Promise<() => void>;
+  onDeepLink(cb: (url: string) => void): Promise<() => void>;
 }
 
 /** 读取壳注入的桥接对象；未注入（如纯浏览器）时返回 null。 */

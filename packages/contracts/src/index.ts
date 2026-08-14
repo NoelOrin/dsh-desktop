@@ -38,4 +38,5 @@ export const EVENTS = {
   dshLog: "dsh-log",
   dshFileDrop: "dsh-file-drop",
   dshTheme: "dsh-theme",
+  dshDeeplink: "dsh-deeplink",
 } as const;

@@ -1,4 +1,10 @@
 #!/usr/bin/env node
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import crypto from "node:crypto";
+import http from "node:http";
+import net from "node:net";
+import path from "node:path";
 /**
  * lan-proxy 冒烟测试（零依赖，仅 node:test / node:assert / node:http / node:net）
  *
@@ -10,13 +16,7 @@
  *   /usr/local/bin/node --test scripts/lan-proxy.test.mjs
  */
 import test from "node:test";
-import assert from "node:assert/strict";
-import http from "node:http";
-import net from "node:net";
-import crypto from "node:crypto";
-import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import path from "node:path";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROXY_SCRIPT = path.join(__dirname, "lan-proxy.mjs");
@@ -51,7 +51,10 @@ function waitForPort(port, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
     const attempt = () => {
       const sock = net.connect({ host: "127.0.0.1", port });
-      sock.on("connect", () => { sock.destroy(); resolve(); });
+      sock.on("connect", () => {
+        sock.destroy();
+        resolve();
+      });
       sock.on("error", () => {
         sock.destroy();
         if (Date.now() > deadline) reject(new Error(`端口 ${port} 在 ${timeoutMs}ms 内未就绪`));
@@ -71,7 +74,11 @@ function httpGet(port, { method = "GET", path = "/", token, headers = {}, body }
       const chunks = [];
       res.on("data", (c) => chunks.push(c));
       res.on("end", () =>
-        resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString("utf8") }),
+        resolve({
+          status: res.statusCode,
+          headers: res.headers,
+          body: Buffer.concat(chunks).toString("utf8"),
+        }),
       );
     });
     req.on("error", reject);
@@ -85,7 +92,10 @@ function wsUpgrade(port, token) {
   return new Promise((resolve, reject) => {
     const sock = net.connect({ host: "127.0.0.1", port });
     let buf = "";
-    const timer = setTimeout(() => { sock.destroy(); reject(new Error("WS 升级超时")); }, 5000);
+    const timer = setTimeout(() => {
+      sock.destroy();
+      reject(new Error("WS 升级超时"));
+    }, 5000);
     sock.on("connect", () => {
       const key = crypto.randomBytes(16).toString("base64");
       sock.write(
@@ -108,7 +118,10 @@ function wsUpgrade(port, token) {
         resolve(buf);
       }
     });
-    sock.on("error", (e) => { clearTimeout(timer); reject(e); });
+    sock.on("error", (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
   });
 }
 
@@ -133,10 +146,15 @@ test.before(async () => {
         "Connection: keep-alive\r\n" +
         "Keep-Alive: timeout=5\r\n" +
         "Trailer: X-Checksum\r\n" +
-        "Set-Cookie: a=1; Path=/" + "\r\n" +
-        "Set-Cookie: b=2; Path=/" + "\r\n" +
-        "Content-Length: " + Buffer.byteLength(body) + "\r\n" +
-        "\r\n" + body;
+        "Set-Cookie: a=1; Path=/" +
+        "\r\n" +
+        "Set-Cookie: b=2; Path=/" +
+        "\r\n" +
+        "Content-Length: " +
+        Buffer.byteLength(body) +
+        "\r\n" +
+        "\r\n" +
+        body;
       res.socket.write(raw);
       res.socket.end();
       return;
@@ -155,7 +173,7 @@ test.before(async () => {
     const key = req.headers["sec-websocket-key"] || "";
     const accept = crypto
       .createHash("sha1")
-      .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+      .update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
       .digest("base64");
     socket.write(
       "HTTP/1.1 101 Switching Protocols\r\n" +
@@ -177,7 +195,17 @@ test.before(async () => {
   proxyPort = await freePort();
   proxyProc = spawn(
     process.execPath,
-    [PROXY_SCRIPT, "--bind", "127.0.0.1", "--port", String(proxyPort), "--target", `127.0.0.1:${mockPort}`, "--token", TOKEN],
+    [
+      PROXY_SCRIPT,
+      "--bind",
+      "127.0.0.1",
+      "--port",
+      String(proxyPort),
+      "--target",
+      `127.0.0.1:${mockPort}`,
+      "--token",
+      TOKEN,
+    ],
     { stdio: ["ignore", "pipe", "pipe"] },
   );
   proxyProc.stdout.on("data", () => {});
@@ -224,7 +252,11 @@ test("正确 token POST /api + Origin → 上游看到回环 Host/Origin 且响�
   assert.equal(r.status, 200);
   assert.ok(lastReceivedHeaders, "mock 应记录到请求头");
   assert.equal(lastReceivedHeaders.host, `127.0.0.1:${mockPort}`, "Host 应被改写为回环目标");
-  assert.equal(lastReceivedHeaders.origin, `http://127.0.0.1:${mockPort}`, "Origin 应被改写为回环目标");
+  assert.equal(
+    lastReceivedHeaders.origin,
+    `http://127.0.0.1:${mockPort}`,
+    "Origin 应被改写为回环目标",
+  );
 });
 
 test("Sec-Fetch-Site: cross-site → 403", async () => {
@@ -247,7 +279,11 @@ test("WS 升级经代理 → 客户端收到 101", async () => {
 test("响应剥掉 hop-by-hop 头（connection/keep-alive/trailer）且保留 set-cookie 数组", async () => {
   // 客户端带 Connection: close，让 Node 只加它自己管理的 framing（close + chunked），
   // 从而能确定性地断言上游的 keep-alive/trailer 头没有漏到客户端。
-  const r = await httpGet(proxyPort, { path: "/hopcheck", token: TOKEN, headers: { Connection: "close" } });
+  const r = await httpGet(proxyPort, {
+    path: "/hopcheck",
+    token: TOKEN,
+    headers: { Connection: "close" },
+  });
   assert.equal(r.status, 200);
   assert.equal(r.body, "hop-ok");
   const lk = Object.fromEntries(Object.entries(r.headers).map(([k, v]) => [k.toLowerCase(), v]));
@@ -256,5 +292,8 @@ test("响应剥掉 hop-by-hop 头（connection/keep-alive/trailer）且保留 se
   assert.ok(!("keep-alive" in lk), `不应有 keep-alive 头: ${JSON.stringify(lk)}`);
   assert.ok(!("trailer" in lk), `不应有 trailer 头: ${JSON.stringify(lk)}`);
   // 多值数组（set-cookie）必须原样保留，不得被拍平/丢弃
-  assert.ok(Array.isArray(lk["set-cookie"]) && lk["set-cookie"].length === 2, `set-cookie 应保留为数组: ${JSON.stringify(lk["set-cookie"])}`);
+  assert.ok(
+    Array.isArray(lk["set-cookie"]) && lk["set-cookie"].length === 2,
+    `set-cookie 应保留为数组: ${JSON.stringify(lk["set-cookie"])}`,
+  );
 });

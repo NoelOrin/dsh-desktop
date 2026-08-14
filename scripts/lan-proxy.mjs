@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import crypto from "node:crypto";
 /**
  * dsh-web 局域网反向代理（零依赖，仅 Node 内置模块）
  *
@@ -25,7 +26,6 @@
  */
 import http from "node:http";
 import os from "node:os";
-import crypto from "node:crypto";
 
 const HELP = `dsh-web 局域网反向代理
 
@@ -83,7 +83,12 @@ const TARGET_PORT = TARGET.port || "80";
 // ---- 头改写 ----
 // RFC 2616 §13.5.1 标准 hop-by-hop 头；proxy-* 按前缀覆盖，未来新增的代理头也能兜住
 const HOP_BY_HOP = new Set([
-  "connection", "keep-alive", "te", "trailer", "transfer-encoding", "upgrade",
+  "connection",
+  "keep-alive",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
 ]);
 function isHopByHop(key) {
   const lk = String(key).toLowerCase();
@@ -98,8 +103,14 @@ function rewriteHeaders(headers, { keepUpgrade }) {
   for (const [key, value] of Object.entries(headers)) {
     const lk = key.toLowerCase();
     if (isHopByHop(lk)) continue;
-    if (lk === "host") { out.host = TARGET_HOST; continue; }
-    if (lk === "origin") { out.origin = TARGET_ORIGIN; continue; }
+    if (lk === "host") {
+      out.host = TARGET_HOST;
+      continue;
+    }
+    if (lk === "origin") {
+      out.origin = TARGET_ORIGIN;
+      continue;
+    }
     out[lk] = value;
   }
   if (keepUpgrade) {
@@ -113,8 +124,13 @@ function rewriteHeaders(headers, { keepUpgrade }) {
 // transfer-encoding / content-length / keep-alive / trailer / te / proxy-*），
 // 让 Node 重新管理传输帧。数组值（如 set-cookie）原样保留，不拍平、不 stringify。
 const RESPONSE_EXCLUDE = new Set([
-  "connection", "upgrade", "transfer-encoding", "content-length",
-  "keep-alive", "trailer", "te",
+  "connection",
+  "upgrade",
+  "transfer-encoding",
+  "content-length",
+  "keep-alive",
+  "trailer",
+  "te",
 ]);
 function filterResponseHeaders(headers) {
   const out = {};
@@ -188,16 +204,14 @@ server.on("upgrade", (req, socket, head) => {
     );
     return;
   }
-  const proxyReq = http.request(
-    {
-      hostname: TARGET.hostname,
-      port: TARGET_PORT,
-      method: "GET",
-      path: req.url,
-      headers: rewriteHeaders(req.headers, { keepUpgrade: true }),
-      agent: false, // 每个 WS 独立连接
-    },
-  );
+  const proxyReq = http.request({
+    hostname: TARGET.hostname,
+    port: TARGET_PORT,
+    method: "GET",
+    path: req.url,
+    headers: rewriteHeaders(req.headers, { keepUpgrade: true }),
+    agent: false, // 每个 WS 独立连接
+  });
   proxyReq.on("upgrade", (proxyRes, proxySocket, proxyHead) => {
     const headerLines = Object.entries(proxyRes.headers)
       .filter(([k]) => !RELAY_EXCLUDE.has(k.toLowerCase()) && !isHopByHop(k))
@@ -247,7 +261,7 @@ server.on("upgrade", (req, socket, head) => {
   proxyReq.end();
 });
 
-server.on("clientError", (err, socket) => {
+server.on("clientError", (_err, socket) => {
   if (socket.writable) socket.end("HTTP/1.1 400 Bad Request\r\n\r\n");
 });
 

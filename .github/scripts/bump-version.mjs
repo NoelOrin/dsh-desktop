@@ -1,11 +1,10 @@
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 
 const packagePath = new URL("../../package.json", import.meta.url);
 const changelogPath = new URL("../../CHANGELOG.md", import.meta.url);
 
-const readVersion = () =>
-  JSON.parse(readFileSync(packagePath, "utf8")).version;
+const readVersion = () => JSON.parse(readFileSync(packagePath, "utf8")).version;
 
 function setOutput(key, value) {
   if (process.env.GITHUB_OUTPUT) {
@@ -53,16 +52,14 @@ function increment(version, level) {
 
 function updateChangelog(version, messages) {
   const date = new Date().toISOString().slice(0, 10);
-  const breaking = messages.filter(
-    (message) => /BREAKING CHANGE|^[a-z]+(\([^)]*\))?!:/.test(message),
+  const breaking = messages.filter((message) =>
+    /BREAKING CHANGE|^[a-z]+(\([^)]*\))?!:/.test(message),
   );
   const features = messages.filter(
-    (message) =>
-      /^feat(\([^)]*\))?:/.test(message) && !breaking.includes(message),
+    (message) => /^feat(\([^)]*\))?:/.test(message) && !breaking.includes(message),
   );
   const fixes = messages.filter(
-    (message) =>
-      /^fix(\([^)]*\))?:/.test(message) && !breaking.includes(message),
+    (message) => /^fix(\([^)]*\))?:/.test(message) && !breaking.includes(message),
   );
   const other = messages.filter(
     (message) =>
@@ -87,19 +84,15 @@ function updateChangelog(version, messages) {
   const existing = existsSync(changelogPath)
     ? readFileSync(changelogPath, "utf8")
     : "# Changelog\n";
-  const next =
-    existing.startsWith("# Changelog")
-      ? existing.replace("# Changelog\n", `# Changelog\n\n${block}`)
-      : `# Changelog\n\n${block}${existing}`;
+  const next = existing.startsWith("# Changelog")
+    ? existing.replace("# Changelog\n", `# Changelog\n\n${block}`)
+    : `# Changelog\n\n${block}${existing}`;
   writeFileSync(changelogPath, next);
 }
 
 const isReleasePush =
-  process.env.GITHUB_EVENT_NAME === "push" &&
-  process.env.GITHUB_REF === "refs/heads/release";
-const isAutoBumpCommit = (process.env.HEAD_MESSAGE ?? "").startsWith(
-  "chore: bump version",
-);
+  process.env.GITHUB_EVENT_NAME === "push" && process.env.GITHUB_REF === "refs/heads/release";
+const isAutoBumpCommit = (process.env.HEAD_MESSAGE ?? "").startsWith("chore: bump version");
 
 if (!isReleasePush || isAutoBumpCommit) {
   setOutput("version", readVersion());
@@ -109,9 +102,7 @@ if (!isReleasePush || isAutoBumpCommit) {
 
 const current = readVersion();
 const previous = previousTag();
-const currentTag = run(
-  "git describe --tags --exact-match HEAD 2>/dev/null || true",
-);
+const currentTag = run("git describe --tags --exact-match HEAD 2>/dev/null || true");
 if (!previous) {
   if (currentTag) {
     setOutput("version", current);
@@ -121,10 +112,9 @@ if (!previous) {
 
   updateChangelog(current, commitsSince(""));
   execSync('git config user.name "github-actions[bot]"', { stdio: "inherit" });
-  execSync(
-    'git config user.email "41898282+github-actions[bot]@users.noreply.github.com"',
-    { stdio: "inherit" },
-  );
+  execSync('git config user.email "41898282+github-actions[bot]@users.noreply.github.com"', {
+    stdio: "inherit",
+  });
   execSync("git add CHANGELOG.md", { stdio: "inherit" });
   execSync(`git commit -m "chore: bump version to ${current}"`, {
     stdio: "inherit",
@@ -151,10 +141,9 @@ writeFileSync(packagePath, `${JSON.stringify(pkg, null, 2)}\n`);
 updateChangelog(next, messages);
 
 execSync('git config user.name "github-actions[bot]"', { stdio: "inherit" });
-execSync(
-  'git config user.email "41898282+github-actions[bot]@users.noreply.github.com"',
-  { stdio: "inherit" },
-);
+execSync('git config user.email "41898282+github-actions[bot]@users.noreply.github.com"', {
+  stdio: "inherit",
+});
 execSync("git add package.json CHANGELOG.md", { stdio: "inherit" });
 execSync(`git commit -m "chore: bump version to ${next}"`, {
   stdio: "inherit",

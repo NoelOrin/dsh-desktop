@@ -40,4 +40,5 @@ export const EVENTS = {
   dshTheme: "dsh-theme",
   dshDeeplink: "dsh-deeplink",
   dshShortcut: "dsh-shortcut",
+  dshUpdateAvailable: "dsh-update-available",
 } as const;

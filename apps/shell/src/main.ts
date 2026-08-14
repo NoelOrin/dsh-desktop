@@ -1,21 +1,22 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import type { RuntimePhase, RuntimeSnapshot } from "@dsh-desktop/contracts";
 
-const messageEl = document.getElementById("message");
-const statusEl = document.getElementById("status");
-const installBtn = document.getElementById("install");
-const retryBtn = document.getElementById("retry");
-const openLogsBtn = document.getElementById("open-logs");
-const logsEl = document.getElementById("logs");
+const messageEl = document.getElementById("message") as HTMLSpanElement;
+const statusEl = document.getElementById("status") as HTMLDivElement;
+const installBtn = document.getElementById("install") as HTMLButtonElement;
+const retryBtn = document.getElementById("retry") as HTMLButtonElement;
+const openLogsBtn = document.getElementById("open-logs") as HTMLButtonElement;
+const logsEl = document.getElementById("logs") as HTMLPreElement;
 
-const SHOW_LOGS = new Set(["installing", "starting", "failed"]);
+const SHOW_LOGS = new Set<RuntimePhase>(["installing", "starting", "failed"]);
 
-function isTauri() {
+function isTauri(): boolean {
   return "__TAURI_INTERNALS__" in window;
 }
 
-function render(status) {
-  const phase = status.phase ?? "detecting";
+function render(status: Partial<RuntimeSnapshot>): void {
+  const phase = (status.phase ?? "detecting") as RuntimePhase;
   statusEl.dataset.phase = phase;
   messageEl.textContent = status.message || "DSH 状态未知";
 
@@ -29,19 +30,19 @@ function render(status) {
   }
 }
 
-function appendLog(line) {
+function appendLog(line: string): void {
   logsEl.textContent += `${line}\n`;
   logsEl.scrollTop = logsEl.scrollHeight;
 }
 
-async function init() {
+async function init(): Promise<void> {
   if (!isTauri()) {
     render({ phase: "detecting", message: "正在检测运行环境..." });
     return;
   }
 
   try {
-    const status = await invoke("get_status");
+    const status = await invoke<RuntimeSnapshot>("get_status");
     if (status.logs?.length) {
       logsEl.textContent = status.logs.join("\n");
       logsEl.scrollTop = logsEl.scrollHeight;
@@ -51,8 +52,8 @@ async function init() {
     render({ phase: "failed", message: String(error) });
   }
 
-  await listen("dsh-status", (event) => render(event.payload));
-  await listen("dsh-log", (event) => appendLog(String(event.payload)));
+  await listen<RuntimeSnapshot>("dsh-status", (event) => render(event.payload));
+  await listen<string>("dsh-log", (event) => appendLog(String(event.payload)));
 }
 
 installBtn.addEventListener("click", () => {

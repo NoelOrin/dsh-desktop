@@ -11,7 +11,7 @@
 
 - 触发条件：
   - push 到 `release` 分支：全流程（含自动发布）
-  - PR 中改动 `src/**`、`src-tauri/**`、`package.json`、`yarn.lock`：仅构建验证
+  - PR 中改动 `apps/shell/**`、`apps/control-center/**`、`packages/**`、`package.json`、`yarn.lock`：仅构建验证
   - `workflow_dispatch`：手动触发
 - `prepare`：运行 bump 脚本，输出 `version` / `bumped` 供后续 job 使用
 - `build`：三平台矩阵（macOS arm64 dmg / Windows x64 nsis / Linux x64 deb+appimage），上传构建产物

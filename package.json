@@ -15,6 +15,6 @@
     "build:web": "yarn workspace @dsh-desktop/shell web:build",
     "tauri": "yarn workspace @dsh-desktop/shell tauri",
     "lan-proxy": "node scripts/lan-proxy.mjs",
-    "typecheck": "yarn workspaces foreach -pt run typecheck"
+    "typecheck": "yarn workspaces foreach -A --exclude dsh-desktop -p -t run typecheck"
   }
 }

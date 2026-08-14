@@ -1,11 +1,11 @@
-# AGENTS.md — src（启动页前端）
+# AGENTS.md — apps/shell（启动页前端）
 
-DSH Desktop 的启动页：Vite + 原生 JS/CSS 的单页应用（无框架）。在 Rust 后端就绪前展示 dsh 的检测 / 安装 / 启动状态，就绪后整页跳转到 Harness Web UI。
+DSH Desktop 的 main 窗口启动页：Vite + TypeScript 的单页应用（无框架）。在 Rust 后端就绪前展示 dsh 的检测 / 安装 / 启动状态，就绪后整页跳转到 Harness Web UI。`apps/shell` 同时承载前端（`index.html` / `src/`）与后端（`src-tauri/`）。
 
 ## 文件
 
-- `../index.html` — 入口 HTML：状态点、按钮、日志面板的挂载点
-- `src/main.js` — 全部前端逻辑：Tauri IPC 调用与事件监听
+- `index.html` — 入口 HTML：状态点、按钮、日志面板的挂载点
+- `src/main.ts` — 全部前端逻辑：Tauri IPC 调用与事件监听（Task 3 已从 JS 迁移到 TypeScript）
 - `src/style.css` — 全部样式（CSS 变量 + 轻量动画，含 reduced-motion 适配）
 
 ## 与后端的通信契约
@@ -19,7 +19,7 @@ DSH Desktop 的启动页：Vite + 原生 JS/CSS 的单页应用（无框架）�
 | 监听 | `dsh-status` | 状态快照（phase / message / url / logs 等） |
 | 监听 | `dsh-log` | 追加一行日志文本 |
 
-> 修改 IPC 契约时，必须同步更新本表与 `../src-tauri/AGENTS.md`。
+> 本页只使用上述命令；完整契约（含 `get_config` / `set_config`）与类型定义见 `../packages/contracts`。修改 IPC 契约时，必须同步更新 `../../packages/contracts/src/index.ts`、Rust 端 serde 类型（`apps/shell/src-tauri/src/lib.rs` / `config.rs`）与 `./src-tauri/AGENTS.md` 的契约表。
 
 ## 状态机（前端渲染依据）
 
@@ -39,6 +39,6 @@ phase 取值（snake_case）：`detecting` → `missing`（缺 dsh 或 node）| 
 
 ## 开发调试
 
-- 单独调样式/布局：`yarn dev:web`，浏览器打开 http://localhost:5173（无 IPC，无法走完整链路）
-- 完整链路：`yarn dev`（tauri dev 同时启动 Vite 并注入 Tauri 环境）
-- 构建产物输出到 `dist/`，由 `yarn build:web` 生成
+- 单独调样式/布局：`yarn dev:web`（本 workspace 内为 `vite`），浏览器打开 http://localhost:5173（无 IPC，无法走完整链路）
+- 完整链路：仓库根 `yarn dev`（tauri dev 同时启动 Vite 并注入 Tauri 环境）
+- 构建产物输出到仓库根 `dist/`（`vite.config.ts` 的 `outDir: "../../dist"`），由根 `yarn build:web` 生成

@@ -122,6 +122,7 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
   var EDGE = 8;
   var SIZE = 32;
   var GAP = 0;
+  var MAC_TRAFFIC_WIDTH = 80;
 
   function detectPlatform() {
     var ua = navigator.userAgent || "";
@@ -174,6 +175,7 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
       "#" + CONTROLS_ID + " button:hover { background: var(--dsh-ctrl-hover, rgba(0, 0, 0, 0.08)); }",
       "#" + CONTROLS_ID + " button[data-act=close]:hover { background: #e81123; color: #fff; }",
       "#" + CONTROLS_ID + "[data-platform=macos] { right: auto; }",
+      "#" + CONTROLS_ID + "[data-platform=macos] { display: none; }",
       "#" + CONTROLS_ID + "[data-platform=macos] button { width: 12px; height: 12px; border-radius: 50%; color: transparent; }",
       "#" + CONTROLS_ID + "[data-platform=macos] button svg { display: none; }",
       "#" + CONTROLS_ID + "[data-platform=macos] button[data-act=close] { order: 1; background: #ff5f57; }",
@@ -184,7 +186,7 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
       "#" + DRAG_ID + " {",
       "  position: fixed;",
       "  top: 0;",
-      "  " + (PLATFORM === "macos" ? "left: " + reservedEdge() + "px;" : "left: 0;"),
+      "  " + (PLATFORM === "macos" ? "left: " + MAC_TRAFFIC_WIDTH + "px;" : "left: 0;"),
       "  " + (PLATFORM === "macos" ? "right: 0;" : "right: " + reservedEdge() + "px;"),
       "  height: 44px;",
       "  z-index: 2147483644;",
@@ -252,21 +254,22 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
 
   function install() {
     ensureStyle();
-    var host = ensureControls();
+    var host = PLATFORM === "macos" ? null : ensureControls();
     var bar = findTopBar();
     ensureDragStrip();
     if (bar && bar instanceof HTMLElement) {
       bar.setAttribute("data-tauri-drag-region", "deep");
+      var reserved = PLATFORM === "macos" ? MAC_TRAFFIC_WIDTH : reservedEdge();
       var prev = parseFloat(PLATFORM === "macos" ? bar.style.paddingLeft : bar.style.paddingRight) || 0;
-      var nextPadding = Math.max(prev, reservedEdge()) + "px";
+      var nextPadding = Math.max(prev, reserved) + "px";
       if (PLATFORM === "macos") {
         bar.style.paddingLeft = nextPadding;
       } else {
         bar.style.paddingRight = nextPadding;
       }
     }
-    applyControlTheme(host);
-    if (window.__DSH_DESKTOP__ && typeof window.__DSH_DESKTOP__.onWindowState === "function") {
+    if (host) applyControlTheme(host);
+    if (host && window.__DSH_DESKTOP__ && typeof window.__DSH_DESKTOP__.onWindowState === "function") {
       window.__DSH_DESKTOP__.onWindowState(function (state) {
         var maximized = !!(state && state.maximized);
         var maxBtn = host.querySelector("[data-act=maximize]");

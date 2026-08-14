@@ -1,0 +1,21 @@
+{
+  "name": "dsh-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "yarn@4.17.1",
+  "type": "module",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "dev:web": "vite",
+    "build:web": "vite build",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "vite": "^7.0.0"
+  }
+}

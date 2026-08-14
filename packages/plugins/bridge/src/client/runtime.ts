@@ -14,6 +14,10 @@ export interface BridgeLike {
     get(): Promise<boolean>;
     set(enabled: boolean): Promise<void>;
   };
+  desktop: {
+    get(): Promise<DesktopSettings>;
+    set(settings: DesktopSettings): Promise<void>;
+  };
   openExternal(target: string): Promise<void>;
   update: {
     check(): Promise<string | null>;
@@ -39,13 +43,12 @@ export interface DshConfig {
   dsh_home: string | null;
 }
 
-/** desktop 设置命名空间的快照形状（与 host 侧 z.object 对齐）。 */
-export interface DesktopConfig {
-  autostart?: boolean;
-  startupMode?: "normal" | "tray" | "minimized";
-  dsh_bin?: string | null;
-  dsh_node?: string | null;
-  dsh_home?: string | null;
+export type StartupMode = "normal" | "tray" | "minimized";
+
+/** 壳侧开机自启设置（与 packages/contracts 的 DesktopSettings 对齐）。 */
+export interface DesktopSettings {
+  autostart: boolean;
+  startup_mode: StartupMode;
 }
 
 /** SettingsScope<T> 的最小形状：getSnapshot / subscribe / set。 */

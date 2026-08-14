@@ -1,7 +1,7 @@
 import { AppearanceSection } from "./client/AppearanceSection";
 import { DesktopPanel } from "./client/DesktopPanel";
-import type { DesktopConfig, SettingsScopeLike, Translate } from "./client/runtime";
-import { ensureUiStyle } from "./client/style-inject";
+import type { SettingsScopeLike, Translate } from "./client/runtime";
+import "./client/style-inject";
 import { applyThemeSection, ensurePageStyle } from "./client/theme-apply";
 import { createThemeStore } from "./client/theme-store";
 import { THEME_SETTINGS_NAMESPACE, type ThemeSettings } from "./shared/theme";
@@ -31,11 +31,9 @@ export const inject = ["slots", "locale", "connection", "remote", "settingsScope
 /** client 面入口：注册“桌面”与“外观”设置节。 */
 export function apply(ctx: ClientContextLike): void {
   const NS = "settings.desktop";
-  const namespace = "desktop";
   const t = ctx.locale.bind(NS);
 
   ctx.effect(() => ensurePageStyle(), "bridge: 全局页面样式");
-  ctx.effect(() => ensureUiStyle(), "bridge: 插件 UI 样式");
 
   // ── 主题与背景（ui-theme 命名空间由上游 dsh-client-ui-theme host 注册，这里只 bind）──
   const THEME_NS = "settings.appearance";
@@ -177,7 +175,6 @@ export function apply(ctx: ClientContextLike): void {
     "bridge: English dictionary",
   );
 
-  const settingsScope = ctx.settingsScope.bind<DesktopConfig>({ namespace });
   ctx.slots.inject("settings.section", () =>
     ctx.slots.register(
       {
@@ -188,7 +185,7 @@ export function apply(ctx: ClientContextLike): void {
         locale: NS,
         children: {},
       },
-      () => <DesktopPanel scope={settingsScope} t={t} />,
+      () => <DesktopPanel t={t} />,
     ),
   );
 }

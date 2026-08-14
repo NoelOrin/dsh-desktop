@@ -7,71 +7,74 @@ import {
   Input,
   StateDot,
 } from "@deepseek-ai/dsh-client-ui-primitives";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState } from "react";
 import css from "./desktop.module.css";
 import {
-  type DesktopConfig,
   type DshConfig,
   getBridge,
   type RuntimeSnapshot,
-  type SettingsScopeLike,
+  type StartupMode,
   type Translate,
 } from "./runtime";
 import { SettingsPage, SettingsSection } from "./settings-layout";
 import { SegmentedField, type SegmentOption, ToggleField } from "./ui/controls";
 
-type StartupMode = "normal" | "tray" | "minimized";
-
 const MAX_LOGS = 500;
 const SHOW_LOGS = new Set(["installing", "starting", "failed"]);
 
-function StartupSettings(props: {
-  scope: SettingsScopeLike<DesktopConfig>;
-  t: Translate;
-}): JSX.Element {
-  const snapshot = useSyncExternalStore(
-    (listener) => props.scope.subscribe(listener),
-    () => props.scope.getSnapshot(),
-  );
-  const autostart = snapshot.value?.autostart ?? false;
-  const startupMode = snapshot.value?.startupMode ?? "normal";
-  const [osEnabled, setOsEnabled] = useState<boolean | null>(null);
+function StartupSettings({ t }: { t: Translate }): JSX.Element {
+  const [autostart, setAutostart] = useState(false);
+  const [startupMode, setStartupMode] = useState<StartupMode>("normal");
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    getBridge()
-      ?.autostart.get()
-      .then(setOsEnabled)
-      .catch((e: unknown) => setError(`读取系统自启状态失败: ${String(e)}`));
+    let disposed = false;
+    const bridge = getBridge();
+    if (!bridge) {
+      setError("桌面壳桥接不可用");
+      setLoading(false);
+      return;
+    }
+    bridge.desktop
+      .get()
+      .then((settings) => {
+        if (disposed) return;
+        setAutostart(settings.autostart);
+        setStartupMode(settings.startup_mode);
+      })
+      .catch((e: unknown) => setError(`读取系统自启状态失败: ${String(e)}`))
+      .finally(() => {
+        if (!disposed) setLoading(false);
+      });
+    return () => {
+      disposed = true;
+    };
   }, []);
 
   const apply = async (nextAutostart: boolean, nextMode: StartupMode) => {
-    const previousAutostart = autostart;
     const bridge = getBridge();
-    if (bridge && osEnabled !== null && osEnabled !== nextAutostart) {
-      try {
-        await bridge.autostart.set(nextAutostart);
-      } catch (e) {
-        setError(`系统自启设置失败: ${String(e)}`);
-        return;
-      }
+    if (!bridge) {
+      setError("桌面壳桥接不可用");
+      return;
     }
     try {
-      await props.scope.set("autostart", nextAutostart);
-      await props.scope.set("startupMode", nextMode);
+      await bridge.desktop.set({
+        autostart: nextAutostart,
+        startup_mode: nextMode,
+      });
+      setAutostart(nextAutostart);
+      setStartupMode(nextMode);
       setError(null);
     } catch (e) {
-      setError(`保存桌面设置失败: ${String(e)}`);
-      if (bridge && nextAutostart !== previousAutostart) {
-        await bridge.autostart.set(previousAutostart).catch(() => {});
-      }
+      setError(`系统自启设置失败: ${String(e)}`);
     }
   };
 
   const modeOptions: Array<SegmentOption<StartupMode>> = [
-    { value: "normal", label: props.t("autostart.mode.normal") },
-    { value: "tray", label: props.t("autostart.mode.tray") },
-    { value: "minimized", label: props.t("autostart.mode.minimized") },
+    { value: "normal", label: t("autostart.mode.normal") },
+    { value: "tray", label: t("autostart.mode.tray") },
+    { value: "minimized", label: t("autostart.mode.minimized") },
   ];
 
   return (
@@ -79,16 +82,17 @@ function StartupSettings(props: {
       <ToggleField
         id="startup-enabled"
         checked={autostart}
+        disabled={loading}
         onChange={(next) => void apply(next, startupMode)}
-        title={props.t("autostart.title")}
-        description={props.t("autostart.desc")}
+        title={t("autostart.title")}
+        description={t("autostart.desc")}
       />
       <div className={css.modeBlock}>
         <SegmentedField<StartupMode>
-          label={props.t("autostart.mode")}
+          label={t("autostart.mode")}
           value={startupMode}
           options={modeOptions}
-          disabled={!autostart}
+          disabled={loading}
           onChange={(nextMode) => void apply(autostart, nextMode)}
         />
       </div>
@@ -441,39 +445,36 @@ function ToolsPanel({ t }: { t: Translate }): JSX.Element {
   );
 }
 
-export function DesktopPanel(props: {
-  scope: SettingsScopeLike<DesktopConfig>;
-  t: Translate;
-}): JSX.Element {
+export function DesktopPanel({ t }: { t: Translate }): JSX.Element {
   return (
     <SettingsPage>
       <SettingsSection
         headingId="desktop-status-heading"
-        title={props.t("nav.status")}
-        description={props.t("nav.status.desc")}
+        title={t("nav.status")}
+        description={t("nav.status.desc")}
       >
-        <StatusPanel t={props.t} />
+        <StatusPanel t={t} />
       </SettingsSection>
       <SettingsSection
         headingId="desktop-config-heading"
-        title={props.t("nav.config")}
-        description={props.t("nav.config.desc")}
+        title={t("nav.config")}
+        description={t("nav.config.desc")}
       >
-        <ConfigPanel t={props.t} />
+        <ConfigPanel t={t} />
       </SettingsSection>
       <SettingsSection
         headingId="desktop-tools-heading"
-        title={props.t("nav.tools")}
-        description={props.t("nav.tools.desc")}
+        title={t("nav.tools")}
+        description={t("nav.tools.desc")}
       >
-        <ToolsPanel t={props.t} />
+        <ToolsPanel t={t} />
       </SettingsSection>
       <SettingsSection
         headingId="desktop-autostart-heading"
-        title={props.t("nav.autostart")}
-        description={props.t("nav.autostart.desc")}
+        title={t("nav.autostart")}
+        description={t("nav.autostart.desc")}
       >
-        <StartupSettings scope={props.scope} t={props.t} />
+        <StartupSettings t={t} />
       </SettingsSection>
     </SettingsPage>
   );

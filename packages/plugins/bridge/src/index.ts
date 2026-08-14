@@ -1,8 +1,6 @@
-import { readFileSync } from "node:fs";
 import type { Context } from "@deepseek-ai/cordis";
-import { installSettingsSection, settingsNamespace } from "@deepseek-ai/dsh-settings";
-import z from "@deepseek-ai/schemastery";
 import type {
+  DesktopSettings,
   DshConfig,
   FileDropPayload,
   NotificationActionPayload,
@@ -14,15 +12,6 @@ import type {
 // Rust 侧在 apps/shell/src-tauri/capabilities/bridge.json 声明实现与权限，
 // 白名单见 docs/plugin-tauri-boundary.md。契约与 packages/contracts（native）分离。
 export const name = "bridge";
-
-const STYLE_CSS_URL = new URL("./style.css", import.meta.url);
-
-const desktopSchema = z.object({
-  autostart: z.boolean().default(false),
-  startupMode: z
-    .union([z.const("normal"), z.const("tray"), z.const("minimized")])
-    .default("normal"),
-});
 
 /** 文件对话框选项（对应 dialog 插件 OpenDialogOptions，camelCase）。 */
 export interface BridgeOpenDialogOptions {
@@ -78,6 +67,10 @@ export interface DshDesktopBridge {
     get(): Promise<boolean>;
     set(enabled: boolean): Promise<void>;
   };
+  desktop: {
+    get(): Promise<DesktopSettings>;
+    set(settings: DesktopSettings): Promise<void>;
+  };
   shortcuts: {
     register(shortcut: string, cb: () => void): Promise<void>;
     unregister(shortcut: string): Promise<void>;
@@ -120,16 +113,6 @@ interface BridgeHealthContext {
 }
 
 export function apply(ctx: Context): void {
-  installSettingsSection(
-    ctx,
-    settingsNamespace("desktop"),
-    desktopSchema,
-    { autostart: false, startupMode: "normal" },
-    {
-      setSource() {},
-      onChange() {},
-    },
-  );
   // 固定健康端点由桥接插件提供，壳侧用 HTTP 探测 dsh web 是否真正就绪。
   (ctx as unknown as BridgeHealthContext).inject(["webServer"] as never, (sctx) => {
     sctx.webServer.register({
@@ -138,24 +121,6 @@ export function apply(ctx: Context): void {
       handler(_req, res) {
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify({ ok: true }));
-      },
-    });
-    // dsh web 不托管插件独立 CSS；由 host 直接提供 style.css，client 用 link 加载。
-    sctx.webServer.register({
-      kind: "exact",
-      path: "/dsh-desktop/style.css",
-      handler(_req, res) {
-        try {
-          const css = readFileSync(STYLE_CSS_URL, "utf8");
-          res.writeHead(200, {
-            "content-type": "text/css; charset=utf-8",
-            "cache-control": "no-cache",
-          });
-          res.end(css);
-        } catch {
-          res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
-          res.end("style.css not found");
-        }
       },
     });
   });

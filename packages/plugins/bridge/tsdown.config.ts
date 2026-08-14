@@ -1,3 +1,6 @@
+import { readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "tsdown";
 
 /** 浏览器平台模块表（复制自 deepseek-harness packages/client/web/src/platform.ts）。 */
@@ -18,6 +21,29 @@ const PLATFORM_MODULES = [
 const RUNTIME_STORE_EXEMPTION = "@deepseek-ai/dsh-client-runtime/client";
 
 const CLIENT_EXTERNALS = [...PLATFORM_MODULES, RUNTIME_STORE_EXEMPTION];
+const CLIENT_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "lib");
+const UI_CSS_PLACEHOLDER = JSON.stringify("__DSH_PLUGIN_CSS_PLACEHOLDER__");
+
+/**
+ * 按 dsh client module 的样式约定，把构建后的 style.css 文本嵌入 client bundle；
+ * style-inject.ts 会在 factory 物化时以 <style data-plugin-css> 注入。
+ */
+const injectClientCss = {
+  name: "dsh-client-css-inject",
+  closeBundle() {
+    const clientPath = path.join(CLIENT_DIR, "client.js");
+    const cssPath = path.join(CLIENT_DIR, "style.css");
+    let client: string;
+    try {
+      client = readFileSync(clientPath, "utf8");
+    } catch {
+      return;
+    }
+    if (!client.includes(UI_CSS_PLACEHOLDER)) return;
+    const css = readFileSync(cssPath, "utf8");
+    writeFileSync(clientPath, client.replaceAll(UI_CSS_PLACEHOLDER, JSON.stringify(css)), "utf8");
+  },
+};
 
 export default defineConfig([
   {
@@ -50,6 +76,7 @@ export default defineConfig([
     },
     noExternal: (id: string) => (CLIENT_EXTERNALS.includes(id) ? undefined : true),
     plugins: [
+      injectClientCss,
       {
         // purity gate：非平台模块的 @deepseek-ai 值导入直接构建失败
         name: "dsh-client-bundle-purity",

@@ -80,10 +80,14 @@ const TARGET_ORIGIN = `http://${TARGET_HOST}`;
 const TARGET_PORT = TARGET.port || "80";
 
 // ---- 头改写 ----
+// RFC 2616 §13.5.1 标准 hop-by-hop 头；proxy-* 按前缀覆盖，未来新增的代理头也能兜住
 const HOP_BY_HOP = new Set([
-  "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
-  "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade",
+  "connection", "keep-alive", "te", "trailer", "transfer-encoding", "upgrade",
 ]);
+function isHopByHop(key) {
+  const lk = String(key).toLowerCase();
+  return HOP_BY_HOP.has(lk) || lk.startsWith("proxy-");
+}
 /**
  * 清理并改写转发头：剥掉 hop-by-hop，把 Host/Origin 改写成 loopback 目标，
  * 其余（含 Sec-Fetch-Site、Cookie、X-* 等）原样保留。
@@ -92,7 +96,7 @@ function rewriteHeaders(headers, { keepUpgrade }) {
   const out = {};
   for (const [key, value] of Object.entries(headers)) {
     const lk = key.toLowerCase();
-    if (HOP_BY_HOP.has(lk)) continue;
+    if (isHopByHop(lk)) continue;
     if (lk === "host") { out.host = TARGET_HOST; continue; }
     if (lk === "origin") { out.origin = TARGET_ORIGIN; continue; }
     out[lk] = value;
@@ -115,7 +119,7 @@ function authorized(req) {
 const server = http.createServer((req, res) => {
   if (!authorized(req)) {
     res.writeHead(401, { "Content-Type": "text/plain; charset=utf-8" });
-    res.end("unauthorized");
+    res.end("未授权");
     return;
   }
   const proxyReq = http.request(
@@ -133,16 +137,30 @@ const server = http.createServer((req, res) => {
   );
   proxyReq.on("error", (err) => {
     if (!res.headersSent) res.writeHead(502, { "Content-Type": "text/plain; charset=utf-8" });
-    res.end(`bad gateway: ${err.message}`);
+    res.end(`网关错误: ${err.message}`);
   });
   req.pipe(proxyReq);
 });
 
 // ---- WebSocket 升级转发 ----
+// 转发给客户端时由本机管理的 framing 头（状态行 + Connection/Upgrade 另写），
+// 其余上游头原样回写（含 Sec-WebSocket-Accept / Extensions / Protocol）
+const RELAY_EXCLUDE = new Set(["connection", "upgrade", "transfer-encoding", "content-length"]);
+
 server.on("upgrade", (req, socket, head) => {
   if (!authorized(req)) {
-    socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
-    socket.destroy();
+    // 客户端可能已断开：兜住 error，避免 socket.end() 触发未处理 EPIPE
+    socket.on("error", () => {});
+    // 用 end() 而非 write()+destroy()：确保 401 响应完整送达客户端
+    const body401 = "未授权";
+    socket.end(
+      "HTTP/1.1 401 Unauthorized\r\n" +
+        "Connection: close\r\n" +
+        "Content-Type: text/plain; charset=utf-8\r\n" +
+        `Content-Length: ${Buffer.byteLength(body401)}\r\n` +
+        "\r\n" +
+        body401,
+    );
     return;
   }
   const proxyReq = http.request(
@@ -156,19 +174,48 @@ server.on("upgrade", (req, socket, head) => {
     },
   );
   proxyReq.on("upgrade", (proxyRes, proxySocket, proxyHead) => {
-    const lines = [
+    const headerLines = Object.entries(proxyRes.headers)
+      .filter(([k]) => !RELAY_EXCLUDE.has(k.toLowerCase()) && !isHopByHop(k))
+      .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(", ") : v}`);
+    const head = [
       "HTTP/1.1 101 Switching Protocols",
       `Upgrade: ${proxyRes.headers.upgrade || "websocket"}`,
       "Connection: Upgrade",
-      `Sec-WebSocket-Accept: ${proxyRes.headers["sec-websocket-accept"] || ""}`,
-    ];
-    if (proxyRes.headers["sec-websocket-protocol"]) {
-      lines.push(`Sec-WebSocket-Protocol: ${proxyRes.headers["sec-websocket-protocol"]}`);
-    }
-    socket.write(lines.join("\r\n") + "\r\n\r\n");
+      ...headerLines,
+      "",
+      "",
+    ].join("\r\n");
+    socket.write(head);
     if (proxyHead && proxyHead.length > 0) socket.write(proxyHead);
     proxySocket.pipe(socket);
     socket.pipe(proxySocket);
+    // 任一侧断开（关页/闪断/强杀）都销毁对侧：既避免未处理 EPIPE 击穿进程，也及时释放上游连接
+    socket.on("error", () => proxySocket.destroy());
+    socket.on("close", () => proxySocket.destroy());
+    proxySocket.on("error", () => socket.destroy());
+    proxySocket.on("close", () => socket.destroy());
+  });
+  // 上游拒绝升级（403/404 等）时 Node 触发 response 而非 upgrade：
+  // 必须把真实状态码/头回给局域网客户端，否则客户端会一直空等挂起。
+  proxyReq.on("response", (proxyRes) => {
+    const chunks = [];
+    proxyRes.on("data", (c) => chunks.push(c));
+    proxyRes.on("error", () => socket.destroy());
+    proxyRes.on("end", () => {
+      const body = Buffer.concat(chunks);
+      const headerLines = Object.entries(proxyRes.headers)
+        .filter(([k]) => !RELAY_EXCLUDE.has(k.toLowerCase()) && !isHopByHop(k))
+        .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(", ") : v}`);
+      const head = [
+        `HTTP/1.1 ${proxyRes.statusCode} ${proxyRes.statusMessage || ""}`,
+        ...headerLines,
+        "Connection: close",
+        `Content-Length: ${body.length}`,
+        "",
+        "",
+      ].join("\r\n");
+      socket.end(Buffer.concat([Buffer.from(head, "utf8"), body]));
+    });
   });
   proxyReq.on("error", () => socket.destroy());
   if (head && head.length > 0) proxyReq.write(head); // 客户端预发的帧（一般为空）

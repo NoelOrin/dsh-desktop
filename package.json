@@ -13,6 +13,8 @@
     "dev": "yarn workspace @dsh-desktop/shell dev",
     "build": "yarn workspace @dsh-desktop/shell build",
     "dev:web": "yarn workspace @dsh-desktop/shell web:all",
+    "dev:shell": "node scripts/dev.mjs",
+    "dev:plugins": "node scripts/watch-plugins.mjs",
     "build:web": "yarn workspace @dsh-desktop/shell web:build",
     "tauri": "yarn workspace @dsh-desktop/shell tauri",
     "lan-proxy": "node scripts/lan-proxy.mjs",

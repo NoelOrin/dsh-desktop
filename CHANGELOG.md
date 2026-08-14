@@ -5,3 +5,9 @@
 ### Features
 
 - feat: add Tauri desktop shell for DeepSeek Harness
+
+## [0.1.0] - 2026-08-14
+
+### Features
+
+- feat: add Tauri desktop shell for DeepSeek Harness

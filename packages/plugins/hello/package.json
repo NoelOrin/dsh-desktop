@@ -6,7 +6,6 @@
   "packageManager": "yarn@4.17.1",
   "description": "自定义 dsh 插件示例（骨架）：演示 packages/plugins 下的插件开发结构",
   "main": "./lib/index.js",
-  "types": "./lib/index.d.ts",
   "exports": {
     ".": "./lib/index.js",
     "./cordis.patch.yml": "./cordis.patch.yml",

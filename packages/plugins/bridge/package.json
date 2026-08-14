@@ -6,7 +6,6 @@
   "packageManager": "yarn@4.17.1",
   "description": "桥接 Tauri 壳能力的 dsh 插件（cordis bundle）",
   "main": "./lib/index.js",
-  "types": "./lib/index.d.ts",
   "exports": {
     ".": "./lib/index.js",
     "./client": "./lib/client.js",

@@ -24,6 +24,7 @@
     "allow-register-shortcut",
     "allow-unregister-shortcut",
     "allow-check-update",
-    "allow-install-update"
+    "allow-install-update",
+    "allow-window-action"
   ]
 }

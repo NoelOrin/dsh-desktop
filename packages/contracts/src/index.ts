@@ -40,6 +40,12 @@ export interface UiThemeSnapshot {
   mode: "light" | "dark";
 }
 
+export type WindowAction = "minimize" | "maximize" | "close";
+
+export interface WindowState {
+  maximized: boolean;
+}
+
 export const COMMANDS = {
   getStatus: "get_status",
   installDsh: "install_dsh",
@@ -49,6 +55,7 @@ export const COMMANDS = {
   setConfig: "set_config",
   openExternal: "open_external",
   getUiTheme: "get_ui_theme",
+  windowAction: "window_action",
 } as const;
 
 export const EVENTS = {
@@ -60,4 +67,5 @@ export const EVENTS = {
   dshShortcut: "dsh-shortcut",
   dshUpdateAvailable: "dsh-update-available",
   dshUiTheme: "dsh-ui-theme",
+  dshWindowState: "dsh-window-state",
 } as const;

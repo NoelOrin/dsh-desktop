@@ -21,6 +21,7 @@
     "allow-set-autostart",
     "allow-register-shortcut",
     "allow-unregister-shortcut",
-    "allow-get-ui-theme"
+    "allow-get-ui-theme",
+    "allow-window-action"
   ]
 }

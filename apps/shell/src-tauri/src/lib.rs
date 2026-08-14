@@ -69,6 +69,8 @@ const BRIDGE_SCRIPT: &str = r#"(function () {
       saveFile: function (options) { return invoke("plugin:dialog|save", { options: options || {} }); },
     },
     openExternal: function (target) { return invoke("open_external", { target: target }); },
+    windowAction: function (action) { return invoke("window_action", { action: action }); },
+    onWindowState: function (cb) { return listen("dsh-window-state", cb); },
     getStatus: function () { return invoke("get_status"); },
     restart: function () { return invoke("restart"); },
     installDsh: function () { return invoke("install_dsh"); },
@@ -351,6 +353,8 @@ pub fn run() {
                 }
             });
 
+            emit_window_state(app.handle());
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -367,12 +371,17 @@ pub fn run() {
             unregister_shortcut,
             check_update,
             install_update,
-            get_ui_theme
+            get_ui_theme,
+            window_action
         ])
         .on_window_event(|window, event| {
             let label = window.label().to_string();
             // 文件拖放：把真实路径通过 dsh-file-drop 事件转给前端（dsh web 经桥接订阅）
             if label == "main" {
+                if let WindowEvent::Resized(_) = event {
+                    emit_window_state(window.app_handle());
+                    return;
+                }
                 if let WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
                     let paths: Vec<String> = paths
                         .iter()
@@ -683,6 +692,7 @@ impl DshManager {
             }
             let _ = window.show();
             let _ = window.set_focus();
+            emit_window_state(&self.app);
         }
     }
 
@@ -769,6 +779,40 @@ impl DshManager {
 #[tauri::command]
 fn get_status(state: State<AppState>) -> RuntimeSnapshot {
     state.inner.lock().unwrap().snapshot()
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct WindowStateSnapshot {
+    maximized: bool,
+}
+
+fn emit_window_state(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = app.emit(
+            "dsh-window-state",
+            WindowStateSnapshot {
+                maximized: window.is_maximized().unwrap_or(false),
+            },
+        );
+    }
+}
+
+/// 无边框窗口控制：minimize / maximize（切换）/ close。
+#[tauri::command]
+fn window_action(window: tauri::WebviewWindow, action: String) -> Result<(), String> {
+    match action.as_str() {
+        "minimize" => window.minimize().map_err(|e| e.to_string()),
+        "maximize" => {
+            if window.is_maximized().unwrap_or(false) {
+                window.unmaximize().map_err(|e| e.to_string())
+            } else {
+                window.maximize().map_err(|e| e.to_string())
+            }
+        }
+        "close" => window.close().map_err(|e| e.to_string()),
+        other => Err(format!("未知窗口动作: {other}")),
+    }
 }
 
 /// #rrggbb → tauri::window::Color

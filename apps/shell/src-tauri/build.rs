@@ -17,6 +17,7 @@ fn main() {
             "check_update",
             "install_update",
             "get_ui_theme",
+            "window_action",
         ]));
     if let Err(error) = tauri_build::try_build(attributes) {
         println!("{error}");

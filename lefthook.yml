@@ -7,8 +7,8 @@ pre-commit:
   commands:
     biome:
       glob: "*.{ts,tsx,js,mjs,cjs,json}"
-      # 用 node 直接调用本地二进制，避免依赖 yarn/corepack 是否在 PATH 上（git hooks 环境 PATH 可能很精简）
-      run: node node_modules/@biomejs/biome/bin/biome check --write --staged && git add -u
+      # npx 解析本地 node_modules 的 biome（npx 随 node 提供；本仓库 node 是硬依赖，hook 环境 PATH 精简也可用）
+      run: npx biome check --write --staged && git add -u
 
 pre-push:
   parallel: false

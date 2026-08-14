@@ -12,17 +12,37 @@ export default function Dashboard() {
 
   createEffect(() => {
     let disposed = false;
-    getStatus().then((s) => {
+    getStatus()
+      .then((s) => {
+        if (disposed) return;
+        setSnapshot(s);
+        setLogs((s.logs ?? []).slice(-MAX_LOGS));
+      })
+      .catch((error) => {
+        if (disposed) return;
+        setSnapshot({
+          phase: "failed",
+          message: `无法读取运行状态: ${String(error)}`,
+          url: null,
+          dsh_installed: false,
+          node_found: false,
+          install_dir: null,
+          log_dir: null,
+          logs: [],
+        });
+      });
+    const un1 = onStatus((s) => {
       if (disposed) return;
       setSnapshot(s);
-      setLogs((s.logs ?? []).slice(-MAX_LOGS));
     });
-    const un1 = onStatus((s) => setSnapshot(s));
-    const un2 = onLog((line) => setLogs((prev) => [...prev, line].slice(-MAX_LOGS)));
+    const un2 = onLog((line) => {
+      if (disposed) return;
+      setLogs((prev) => [...prev, line].slice(-MAX_LOGS));
+    });
     onCleanup(() => {
       disposed = true;
-      un1.then((u) => u());
-      un2.then((u) => u());
+      void un1.then((u) => u()).catch(() => {});
+      void un2.then((u) => u()).catch(() => {});
     });
   });
 

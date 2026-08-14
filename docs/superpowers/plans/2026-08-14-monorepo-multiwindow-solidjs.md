@@ -736,7 +736,10 @@ if let Some(control) = app.get_webview_window("control") {
 ```rust
 .on_window_event(|window, event| {
     if window.label() == "control" {
-        if matches!(event, WindowEvent::CloseRequested { .. }) {
+        if let WindowEvent::CloseRequested { api, .. } = event {
+            // 必须先 prevent_close() 再 hide()：仅 hide() 不会阻止 Tauri 2.11 销毁窗口，
+            // 销毁后 get_webview_window("control") 返回 None，菜单/快捷键将失效。
+            api.prevent_close();
             let _ = window.hide();
         }
         return;

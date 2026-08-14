@@ -1,4 +1,4 @@
-import type { RuntimeSnapshot } from "@dsh-desktop/contracts";
+import type { DshConfig, RuntimeSnapshot } from "@dsh-desktop/contracts";
 
 // 桥接 Tauri 壳能力的 dsh 插件（骨架）。
 // 目标：让 dsh web 内的插件/页面能调用 Tauri 壳能力——桥接命令契约由本插件自持，
@@ -31,6 +31,8 @@ export interface DshDesktopBridge {
   restart(): Promise<void>;
   installDsh(): Promise<void>;
   openLogDirectory(): Promise<void>;
+  getConfig(): Promise<DshConfig>;
+  setConfig(config: DshConfig): Promise<void>;
   onStatus(cb: (snapshot: RuntimeSnapshot) => void): Promise<() => void>;
   onLog(cb: (line: string) => void): Promise<() => void>;
   onFileDrop(cb: (paths: string[]) => void): Promise<() => void>;

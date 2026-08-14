@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "DSH Desktop main and control windows（本地页面）",
-  "windows": ["main", "control"],
+  "description": "DSH Desktop main window（本地页面）",
+  "windows": ["main"],
   "permissions": [
     "core:default",
     "global-shortcut:default",
@@ -18,6 +18,8 @@
     "allow-set-config",
     "allow-open-external",
     "allow-get-autostart",
-    "allow-set-autostart"
+    "allow-set-autostart",
+    "allow-register-shortcut",
+    "allow-unregister-shortcut"
   ]
 }

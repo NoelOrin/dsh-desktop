@@ -12,6 +12,8 @@ fn main() {
             "open_external",
             "get_autostart",
             "set_autostart",
+            "register_shortcut",
+            "unregister_shortcut",
         ]));
     if let Err(error) = tauri_build::try_build(attributes) {
         println!("{error}");

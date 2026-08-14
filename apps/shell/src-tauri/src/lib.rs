@@ -1,9 +1,10 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
@@ -14,13 +15,15 @@ mod config;
 use config::DshConfig;
 
 use serde::Serialize;
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::webview::PageLoadEvent;
 use tauri::{AppHandle, Emitter, Manager as _, RunEvent, State, WindowEvent};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_deep_link::DeepLinkExt;
-use tauri_plugin_global_shortcut::{Builder as ShortcutBuilder, Code, Modifiers, ShortcutState};
+use tauri_plugin_global_shortcut::{
+    Builder as ShortcutBuilder, GlobalShortcutExt, Shortcut, ShortcutState,
+};
 use tauri_plugin_notification::NotificationExt;
 
 const READY_TIMEOUT: Duration = Duration::from_secs(120);
@@ -33,7 +36,6 @@ const GRACE_PERIOD: Duration = Duration::from_secs(2);
 
 // 托盘菜单项 id
 const TRAY_SHOW_MAIN: &str = "tray-show-main";
-const TRAY_OPEN_CONTROL: &str = "tray-open-control";
 const TRAY_RESTART: &str = "tray-restart";
 const TRAY_QUIT: &str = "tray-quit";
 
@@ -66,6 +68,8 @@ const BRIDGE_SCRIPT: &str = r#"(function () {
     restart: function () { return invoke("restart"); },
     installDsh: function () { return invoke("install_dsh"); },
     openLogDirectory: function () { return invoke("open_log_directory"); },
+    getConfig: function () { return invoke("get_config"); },
+    setConfig: function (config) { return invoke("set_config", { config: config }); },
     onStatus: function (cb) { return listen("dsh-status", cb); },
     onLog: function (cb) { return listen("dsh-log", cb); },
     onFileDrop: function (cb) { return listen("dsh-file-drop", cb); },
@@ -74,6 +78,15 @@ const BRIDGE_SCRIPT: &str = r#"(function () {
       get: function () { return invoke("get_autostart"); },
       set: function (enabled) { return invoke("set_autostart", { enabled: enabled }); },
     },
+    shortcuts: {
+      register: function (s, cb) {
+        return invoke("register_shortcut", { shortcut: s }).then(function () {
+          return listen("dsh-shortcut", function (e) { if (e.payload === s) cb(); });
+        });
+      },
+      unregister: function (s) { return invoke("unregister_shortcut", { shortcut: s }); },
+    },
+    onShortcut: function (cb) { return listen("dsh-shortcut", cb); },
   };
 })();"#;
 
@@ -140,6 +153,8 @@ struct AppState {
     config_path: PathBuf,
     /// 应用是否正在退出（托盘"退出"置 true，用于关闭到托盘时区分真正退出）。
     exiting: Arc<AtomicBool>,
+    /// 已注册的自定义全局快捷键注册表（快捷键字符串 → Shortcut），供注销时查表。
+    shortcuts: Arc<Mutex<HashMap<String, Shortcut>>>,
 }
 
 enum ManagerMessage {
@@ -165,33 +180,9 @@ struct DshManager {
 }
 
 pub fn run() {
-    // 全局快捷键：macOS 用 Cmd+Shift+C，其他平台用 Ctrl+Shift+C
-    let shortcut = {
-        #[cfg(target_os = "macos")]
-        {
-            tauri_plugin_global_shortcut::Shortcut::new(
-                Some(Modifiers::META | Modifiers::SHIFT),
-                Code::KeyC,
-            )
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            tauri_plugin_global_shortcut::Shortcut::new(
-                Some(Modifiers::CONTROL | Modifiers::SHIFT),
-                Code::KeyC,
-            )
-        }
-    };
-
-    let shortcut_plugin = ShortcutBuilder::new()
-        .with_shortcuts([shortcut])
-        .expect("invalid global shortcut")
-        .with_handler(move |app, _shortcut, event| {
-            if event.state() == ShortcutState::Pressed {
-                open_control_window(app);
-            }
-        })
-        .build();
+    // 全局快捷键插件：预置快捷键（CmdOrCtrl+Shift+C 打开控制中心）已随控制中心移除；
+    // 自定义快捷键由 dsh 插件经 register_shortcut / unregister_shortcut 桥接命令注册。
+    let shortcut_plugin = ShortcutBuilder::new().build();
 
     let exiting = Arc::new(AtomicBool::new(false));
 
@@ -208,8 +199,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
-        // 窗口状态记忆：重启后恢复 main/control 窗口大小/位置/最大化；不保存可见性，
-        // 避免 control 窗口（visible:false）在重启后被插件恢复为可见
+        // 窗口状态记忆：重启后恢复 main 窗口大小/位置/最大化
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_state_flags(
@@ -268,6 +258,7 @@ pub fn run() {
                 log_dir,
                 config_path,
                 exiting: exiting.clone(),
+                shortcuts: Arc::new(Mutex::new(HashMap::new())),
             });
 
             // 深链 dsh-desktop://：收到 URL 后暂存（未就绪时由 Ready 分支补发）并立即转发给 dsh web
@@ -291,22 +282,7 @@ pub fn run() {
                 let _ = start_tx.send(ManagerMessage::Start);
             });
 
-            let menu = build_menu(app.handle())?;
-            app.set_menu(menu)?;
-            app.on_menu_event(|app, event| {
-                if event.id().as_ref() == "open-control" {
-                    open_control_window(app);
-                }
-            });
-
             setup_tray(app.handle(), exiting.clone())?;
-
-            #[cfg(debug_assertions)]
-            if let Some(control) = app.get_webview_window("control") {
-                if let Ok(url) = tauri::Url::parse("http://localhost:5174/control-center/") {
-                    let _ = control.navigate(url);
-                }
-            }
 
             Ok(())
         })
@@ -319,7 +295,9 @@ pub fn run() {
             set_config,
             open_external,
             get_autostart,
-            set_autostart
+            set_autostart,
+            register_shortcut,
+            unregister_shortcut
         ])
         .on_window_event(|window, event| {
             let label = window.label().to_string();
@@ -333,7 +311,7 @@ pub fn run() {
                     let _ = window.emit("dsh-file-drop", paths);
                     return;
                 }
-                // 系统主题变化：透传给前端（启动页 / 控制中心监听 dsh-theme）
+                // 系统主题变化：透传给前端（启动页监听 dsh-theme）
                 if let WindowEvent::ThemeChanged(theme) = event {
                     let theme = match theme {
                         tauri::Theme::Dark => "dark",
@@ -342,13 +320,6 @@ pub fn run() {
                     let _ = window.emit("dsh-theme", theme);
                     return;
                 }
-            }
-            if label == "control" {
-                if let WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                    let _ = window.hide();
-                }
-                return;
             }
             // main 窗口：关闭到托盘（非真正退出时仅隐藏）
             if label == "main" {
@@ -371,40 +342,13 @@ pub fn run() {
         });
 }
 
-fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
-    let menu = Menu::default(app)?;
-    let item = MenuItem::with_id(
-        app,
-        "open-control",
-        "控制中心",
-        true,
-        Some("CmdOrCtrl+Shift+C"),
-    )?;
-    let submenu = Submenu::with_items(app, "DSH", true, &[&item])?;
-    menu.append(&submenu)?;
-    Ok(menu)
-}
-
-fn open_control_window(app: &tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window("control") {
-        if !window.is_visible().unwrap_or(false) {
-            let _ = window.show();
-        }
-        let _ = window.set_focus();
-    }
-}
-
-/// 创建系统托盘：常驻后台，菜单含 显示主窗口 / 控制中心 / 重启 dsh / 退出。
+/// 创建系统托盘：常驻后台，菜单含 显示主窗口 / 重启 dsh / 退出。
 fn setup_tray(app: &tauri::AppHandle, exiting: Arc<AtomicBool>) -> tauri::Result<()> {
     let show_main = MenuItem::with_id(app, TRAY_SHOW_MAIN, "显示主窗口", true, None::<&str>)?;
-    let open_control = MenuItem::with_id(app, TRAY_OPEN_CONTROL, "控制中心", true, None::<&str>)?;
     let restart = MenuItem::with_id(app, TRAY_RESTART, "重启 dsh", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, TRAY_QUIT, "退出", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
-    let menu = Menu::with_items(
-        app,
-        &[&show_main, &open_control, &restart, &separator, &quit],
-    )?;
+    let menu = Menu::with_items(app, &[&show_main, &restart, &separator, &quit])?;
 
     let icon = app
         .default_window_icon()
@@ -424,7 +368,6 @@ fn setup_tray(app: &tauri::AppHandle, exiting: Arc<AtomicBool>) -> tauri::Result
                     let _ = window.set_focus();
                 }
             }
-            TRAY_OPEN_CONTROL => open_control_window(app),
             TRAY_RESTART => {
                 let state = app.state::<AppState>();
                 let _ = state.tx.send(ManagerMessage::Start);
@@ -785,6 +728,35 @@ fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
     } else {
         app.autolaunch().disable().map_err(|e| e.to_string())
     }
+}
+
+/// 注册系统级全局快捷键（如 CmdOrCtrl+Shift+D），按下时 emit `dsh-shortcut`。
+#[tauri::command]
+fn register_shortcut(state: State<AppState>, shortcut: String) -> Result<(), String> {
+    let s = Shortcut::from_str(&shortcut).map_err(|e| e.to_string())?;
+    let app = state.app.clone();
+    let trigger = shortcut.clone();
+    app.global_shortcut()
+        .on_shortcut(s.clone(), move |app, _s, event| {
+            if event.state() == ShortcutState::Pressed {
+                let _ = app.emit("dsh-shortcut", trigger.clone());
+            }
+        })
+        .map_err(|e| e.to_string())?;
+    state.shortcuts.lock().unwrap().insert(shortcut, s);
+    Ok(())
+}
+
+/// 注销已注册的全局快捷键。
+#[tauri::command]
+fn unregister_shortcut(state: State<AppState>, shortcut: String) -> Result<(), String> {
+    let app = state.app.clone();
+    if let Some(s) = state.shortcuts.lock().unwrap().remove(&shortcut) {
+        app.global_shortcut()
+            .unregister(s)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 fn emit_status(app: &AppHandle, inner: &Arc<Mutex<Inner>>) {

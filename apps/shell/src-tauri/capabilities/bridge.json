@@ -20,6 +20,8 @@
     "allow-set-config",
     "allow-open-external",
     "allow-get-autostart",
-    "allow-set-autostart"
+    "allow-set-autostart",
+    "allow-register-shortcut",
+    "allow-unregister-shortcut"
   ]
 }

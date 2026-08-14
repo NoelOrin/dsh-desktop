@@ -127,6 +127,60 @@ button.primary {
   height: 12px;
 }
 
+/* macOS：窗口控制移到左侧，采用红黄绿交通灯样式 */
+html[data-platform="macos"] .titlebar {
+  justify-content: center;
+}
+
+html[data-platform="macos"] .titlebar__title {
+  position: absolute;
+  left: 0;
+  right: 0;
+  text-align: center;
+  pointer-events: none;
+}
+
+html[data-platform="macos"] .titlebar__controls {
+  position: absolute;
+  left: 14px;
+  right: auto;
+}
+
+html[data-platform="macos"] .titlebar__controls button {
+  width: 12px;
+  height: 12px;
+  margin: 0 4px;
+  border-radius: 50%;
+  background: #ff5f57;
+  color: transparent;
+}
+
+html[data-platform="macos"] .titlebar__controls svg {
+  display: none;
+}
+
+html[data-platform="macos"] #win-close {
+  order: 1;
+  background: #ff5f57;
+}
+
+html[data-platform="macos"] #win-min {
+  order: 2;
+  background: #febc2e;
+}
+
+html[data-platform="macos"] #win-max {
+  order: 3;
+  background: #28c840;
+}
+
+html[data-platform="macos"] .titlebar__controls button:hover,
+html[data-platform="macos"] .titlebar__controls #win-close:hover {
+  background: inherit;
+  filter: brightness(0.92);
+  color: transparent;
+}
+
 /* 非 Tauri 环境隐藏标题栏 */
 html:not([data-tauri]) .titlebar {
   display: none;

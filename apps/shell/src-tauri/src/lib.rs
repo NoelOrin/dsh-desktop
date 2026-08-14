@@ -123,12 +123,21 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
   var SIZE = 32;
   var GAP = 0;
 
+  function detectPlatform() {
+    var ua = navigator.userAgent || "";
+    if (/Mac|iPhone|iPad/.test(ua) && !/Windows/.test(ua)) return "macos";
+    if (/Win/.test(ua)) return "windows";
+    return "linux";
+  }
+
+  var PLATFORM = detectPlatform();
+
   var ICON_MIN = '<svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="5.4" width="8" height="1.2" rx="0.6" fill="currentColor"/></svg>';
   var ICON_MAX = '<svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.4" y="2.4" width="7.2" height="7.2" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>';
   var ICON_RESTORE = '<svg viewBox="0 0 12 12" aria-hidden="true"><rect x="3.4" y="2.2" width="6.2" height="6.2" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.15"/><rect x="2.2" y="3.6" width="6.2" height="6.2" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.15"/></svg>';
   var ICON_CLOSE = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 3l6 6M9 3L3 9" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg>';
 
-  function reservedRight() {
+  function reservedEdge() {
     return EDGE + SIZE * 3 + GAP * 2;
   }
 
@@ -141,7 +150,7 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
       "#" + CONTROLS_ID + " {",
       "  position: fixed;",
       "  top: 4px;",
-      "  right: " + EDGE + "px;",
+      "  " + (PLATFORM === "macos" ? "left" : "right") + ": " + EDGE + "px;",
       "  z-index: 2147483647;",
       "  display: flex;",
       "  gap: " + GAP + "px;",
@@ -164,11 +173,19 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
       "#" + CONTROLS_ID + " button svg { width: 12px; height: 12px; display: block; }",
       "#" + CONTROLS_ID + " button:hover { background: var(--dsh-ctrl-hover, rgba(0, 0, 0, 0.08)); }",
       "#" + CONTROLS_ID + " button[data-act=close]:hover { background: #e81123; color: #fff; }",
+      "#" + CONTROLS_ID + "[data-platform=macos] { right: auto; }",
+      "#" + CONTROLS_ID + "[data-platform=macos] button { width: 12px; height: 12px; border-radius: 50%; color: transparent; }",
+      "#" + CONTROLS_ID + "[data-platform=macos] button svg { display: none; }",
+      "#" + CONTROLS_ID + "[data-platform=macos] button[data-act=close] { order: 1; background: #ff5f57; }",
+      "#" + CONTROLS_ID + "[data-platform=macos] button[data-act=minimize] { order: 2; background: #febc2e; }",
+      "#" + CONTROLS_ID + "[data-platform=macos] button[data-act=maximize] { order: 3; background: #28c840; }",
+      "#" + CONTROLS_ID + "[data-platform=macos] button:hover { background: inherit; filter: brightness(0.92); color: transparent; }",
+      "#" + CONTROLS_ID + "[data-platform=macos] button[data-act=close]:hover { background: #ff5f57; color: transparent; }",
       "#" + DRAG_ID + " {",
       "  position: fixed;",
       "  top: 0;",
-      "  left: 0;",
-      "  right: " + reservedRight() + "px;",
+      "  " + (PLATFORM === "macos" ? "left: " + reservedEdge() + "px;" : "left: 0;"),
+      "  " + (PLATFORM === "macos" ? "right: 0;" : "right: " + reservedEdge() + "px;"),
       "  height: 44px;",
       "  z-index: 2147483644;",
       "}"
@@ -203,6 +220,7 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
       '<button type="button" data-act="maximize" aria-label="最大化">' + ICON_MAX + "</button>",
       '<button type="button" data-act="close" aria-label="关闭">' + ICON_CLOSE + "</button>"
     ].join("");
+    host.setAttribute("data-platform", PLATFORM);
     host.addEventListener("click", function (event) {
       var button = event.target.closest("[data-act]");
       if (!button || !window.__DSH_DESKTOP__) return;
@@ -239,8 +257,13 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
     ensureDragStrip();
     if (bar && bar instanceof HTMLElement) {
       bar.setAttribute("data-tauri-drag-region", "deep");
-      var prev = parseFloat(bar.style.paddingRight) || 0;
-      bar.style.paddingRight = Math.max(prev, reservedRight()) + "px";
+      var prev = parseFloat(PLATFORM === "macos" ? bar.style.paddingLeft : bar.style.paddingRight) || 0;
+      var nextPadding = Math.max(prev, reservedEdge()) + "px";
+      if (PLATFORM === "macos") {
+        bar.style.paddingLeft = nextPadding;
+      } else {
+        bar.style.paddingRight = nextPadding;
+      }
     }
     applyControlTheme(host);
     if (window.__DSH_DESKTOP__ && typeof window.__DSH_DESKTOP__.onWindowState === "function") {

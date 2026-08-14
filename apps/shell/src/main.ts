@@ -16,6 +16,17 @@ const logsEl = document.getElementById("logs") as HTMLPreElement;
 
 const SHOW_LOGS = new Set<RuntimePhase>(["installing", "starting", "failed"]);
 
+type DesktopPlatform = "windows" | "linux" | "macos";
+
+function detectPlatform(): DesktopPlatform {
+  const ua = navigator.userAgent;
+  if (/Mac|iPhone|iPad/.test(ua) && !/Windows/.test(ua)) return "macos";
+  if (/Win/.test(ua)) return "windows";
+  return "linux";
+}
+
+document.documentElement.dataset.platform = detectPlatform();
+
 function isTauri(): boolean {
   return "__TAURI_INTERNALS__" in window;
 }

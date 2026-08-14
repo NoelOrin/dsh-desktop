@@ -5,3 +5,6 @@ apps/shell/src-tauri/target
 apps/shell/src-tauri/gen
 .DS_Store
 .idea
+packages/plugins/*/lib
+packages/plugins/*/dist
+apps/shell/src-tauri/resources

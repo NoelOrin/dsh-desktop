@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "corepack yarn web:all",
     "devUrl": "http://localhost:5173",
-    "beforeBuildCommand": "corepack yarn web:build",
+    "beforeBuildCommand": "corepack yarn web:build && corepack yarn build:plugins",
     "frontendDist": "../../../dist"
   },
   "app": {
@@ -22,19 +22,6 @@
         "resizable": true,
         "visible": true,
         "backgroundColor": "#f5f6fa"
-      },
-      {
-        "label": "control",
-        "title": "DSH 控制中心",
-        "url": "/control-center/index.html",
-        "width": 960,
-        "height": 680,
-        "minWidth": 480,
-        "minHeight": 480,
-        "center": true,
-        "resizable": true,
-        "visible": false,
-        "backgroundColor": "#f7f8fa"
       }
     ],
     "security": {
@@ -44,6 +31,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": ["resources/plugins/*"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

@@ -11,7 +11,7 @@ dsh 插件的开发容器：**每个子目录一个 dsh 插件**（cordis bundle
   `packages/contracts`——contracts 只负责 native 内容（边界见 `docs/plugin-tauri-boundary.md`）。
   host 侧注册 `desktop` settings 命名空间（`autostart` 默认关闭）与
   `dsh-desktop/health` 健康端点，不实现 dsh 业务；client 侧在 dsh WebUI 设置面板
-  渲染“桌面”与“外观”设置节，桥接面覆盖二期原生能力（详见 `./bridge/AGENTS.md`）
+  渲染“桌面”与“外观”设置节，桥接面覆盖桌面原生能力（详见 `./bridge/AGENTS.md`）
 - `hello/`（`@dsh-desktop/plugin-hello`）— **自定义插件示例**（骨架），演示开发结构
 
 ## 新增插件
@@ -30,6 +30,8 @@ dsh 插件的开发容器：**每个子目录一个 dsh 插件**（cordis bundle
   cordis `Events` 接口里的键（骨架阶段不要注册未声明的事件）
 - 安装：**内嵌装配（主交付路径）**——`yarn build:plugins` 编译打包进 Tauri resources，`tauri dev` 与 `tauri build` 前都会自动构建，桌面应用启动时自动复制进 `$DSH_HOME/profiles/node_modules/@dsh-desktop/<name>/` 并以 `--patch` overlay 挂载（见 `docs/plugin-tauri-boundary.md` §6）；开发期亦可 `dsh plugin --profile web add <包>` 单独安装
 - 构建与装配：`yarn build:plugins`（根脚本）经 tsdown 编译各插件——host ESM 产出 `lib/index.js`，可选 client UMD 产出 `lib/client.js`——并把自包含 dist 包（`package.json` 白名单字段 + `cordis.patch.yml` + `lib/`）装配进 `apps/shell/src-tauri/resources/plugins/<name>/`；桌面应用启动时 Rust 侧自动装配进 dsh 的 profile 模块兜底目录并以 `--patch` overlay 挂载（机制见 `docs/plugin-tauri-boundary.md` §6）
+- 开发热更新：`yarn dev` 会先跑 `yarn build:plugins`，再经 `scripts/dev.mjs` 同时启动 Vite 与 `scripts/watch-plugins.mjs`；插件源码变化后 watch 脚本重新构建并热部署到 `$DSH_HOME/profiles/node_modules`（未设置 `DSH_HOME` 时用 `~/.dsh`），dsh 自带的 `dsh-client-hmr` 会轮询 client bundle 并在 Web UI 中热替换，无需重启 dsh。也可以只运行 `yarn dev:plugins` 重建并热部署，便于在已启动的 dsh web 中单独调试插件
+  - 适用范围：现有插件的 client bundle 内容变化可热更新；新增插件、修改 `package.json` 的 client 声明或 host 侧结构仍需重启 dsh
 - 注意：dsh 从 Git 安装时跑 `prepare` 而非 `build`，TS 插件需自包含构建产物
   （见官方 publish 文档）
 
@@ -37,6 +39,8 @@ dsh 插件的开发容器：**每个子目录一个 dsh 插件**（cordis bundle
 
 以下内容整理自 deepseek-harness `master` 官方文档（2026-08 核对），作为本包开发 dsh
 插件的固定约束；上游演进后按链接源码/README 更新，而不是凭第三方教程改写。
+
+本仓 client UI 设计范式另见 `./design.md`（含视觉 token、布局、组件、文案与落地检查）。
 
 ### 官方来源
 

@@ -184,8 +184,8 @@ snake_case）。
    （`package.json` 白名单字段 + `cordis.patch.yml` + `lib/`）装配进
    `apps/shell/src-tauri/resources/plugins/<name>/`；`tauri.conf.json` 的
    `bundle.resources: ["resources/plugins/**/*"]` 将其打进安装包，`beforeBuildCommand`
-   链入 `yarn build:plugins`；`beforeDevCommand` 也先执行 `yarn build:plugins` 再启动
-   Vite，保证 `yarn dev` 开发模式同样装配内嵌插件。
+   链入 `yarn build:plugins`；`beforeDevCommand` 现经 `yarn dev:shell`（`scripts/dev.mjs`）先构建插件，
+   再同时启动 Vite 与插件 watch，保证 `yarn dev` 开发模式同样装配内嵌插件。
 2. **装配（Rust `apps/shell/src-tauri/src/embedded.rs`）**：应用启动时
    `embedded::assemble` 遍历 resources 里每个含 `dshDesktop.id` 的插件包，复制进
    `$DSH_HOME/profiles/node_modules/@dsh-desktop/<name>/`（dsh 的 profile 模块兜底目录）——
@@ -193,7 +193,8 @@ snake_case）。
    跳过；随后 `write_overlay` 在应用数据目录生成 `embedded-plugins.patch.yml`（`- insert:`
    行，插件名**必须单引号**——`@` 是 YAML 1.1 保留指示符）。开发模式下 Tauri 的
    `resource_dir()` 指向 `target/<profile>`，因此 Rust 侧经 `plugins_resource_dir()` 显式回退到
-   源码 `apps/shell/src-tauri/resources`，发布模式仍读取应用资源目录。
+   源码 `apps/shell/src-tauri/resources`，发布模式仍读取应用资源目录；开发模式另经
+   `assemble_dev` 忽略版本号、每次启动强制重装，避免插件代码更新但版本号未变时仍加载旧产物。
 3. **挂载**：桌面壳以 `dsh web --patch <overlay> --host 127.0.0.1 --port <port>` 拉起子进程，
    overlay 的 `- insert:` 行向 profile 插入插件行——host 侧经 dsh 的 loader 装载，client 侧由
    dsh-client-modules 扫描插件 `exports["./client"]` 自动注入。**不写 profile manifest、
@@ -203,6 +204,11 @@ snake_case）。
 不挂载它们**，与 `dsh plugin --profile web add` 的 profile 安装相互独立。停用某个内嵌插件只需
 从 resources 移除对应目录（或不再 `--patch`），不修改 profile manifest，dsh 配置里无引用残留
 （已复制的兜底目录为惰性数据，不再被挂载）。
+
+**开发热更新**：`yarn dev` 的 `beforeDevCommand` 现经 `scripts/dev.mjs` 先构建插件，再同时启动
+Vite 与 `scripts/watch-plugins.mjs`。watch 脚本检测插件源码变化后重新执行 `build:plugins --home`，
+把最新插件包原子复制进 dsh profile；dsh 自带的 `dsh-client-hmr` 轮询 client bundle 变化并在
+Web UI 中热替换，无需重启 dsh。新增插件或修改 client 声明仍需要重启 dsh。
 
 **注意（行 id 去重）**：桌面 overlay 的 `- insert:` 行由 `write_overlay` **无条件追加**，
 不校验 profile 中是否已存在同名插件行。若把同一插件既内嵌挂载、又经

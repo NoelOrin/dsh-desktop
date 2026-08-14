@@ -1,17 +1,17 @@
-# AGENTS.md — .github（CI/CD 与发布）
+# AGENTS.md - .github（CI/CD 与发布）
 
 三平台构建 + 自动发布流水线，以及基于 Conventional Commits 的自动版本号管理。
 
 ## 文件
 
-- `workflows/build.yml` — 工作流：`prepare` → `build`（平台矩阵）→ `release`
-- `scripts/bump-version.mjs` — 依据提交信息自动 bump semver、更新 CHANGELOG、打 tag
+- `workflows/build.yml` - 工作流：`prepare` → `build`（平台矩阵）→ `release`
+- `scripts/bump-version.mjs` - 依据提交信息自动 bump semver、更新 CHANGELOG、打 tag
 
 ## 工作流触发与流程
 
 - 触发条件：
   - push 到 `release` 分支：全流程（含自动发布）
-  - PR 中改动 `apps/shell/**`、`apps/control-center/**`、`packages/**`、`package.json`、`yarn.lock`：仅构建验证
+  - PR 中改动 `apps/shell/**`、`packages/**`、`package.json`、`yarn.lock`：仅构建验证
   - `workflow_dispatch`：手动触发
 - `prepare`：运行 bump 脚本，输出 `version` / `bumped` 供后续 job 使用
 - `build`：三平台矩阵（macOS arm64 dmg / Windows x64 nsis / Linux x64 deb+appimage），上传构建产物

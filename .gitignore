@@ -7,4 +7,6 @@ apps/shell/src-tauri/gen
 .idea
 packages/plugins/*/lib
 packages/plugins/*/dist
-apps/shell/src-tauri/resources
+apps/shell/src-tauri/resources/**
+!apps/shell/src-tauri/resources/plugins/
+!apps/shell/src-tauri/resources/plugins/.gitkeep

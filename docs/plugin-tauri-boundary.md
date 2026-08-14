@@ -148,6 +148,10 @@ snake_case）。
   dsh 现成的 cordis 插件（`dsh-host-plugin-inventory` /
   `dsh-client-ui-settings-plugin-inventory` / `dsh-client-ui-settings-plugins`），
   由 `dsh-web-app` 装配，壳侧与本包都不重复实现。
+- **开机自启设置项归属（示例）**：设置项状态存于 dsh settings（`packages/plugins/bridge`
+  的 `desktop` 命名空间，`autostart` 默认关闭）——属 **dsh 插件域**；OS 级启停是壳能力
+  （autostart 插件 + `get_autostart` / `set_autostart` 命令）——属 **Tauri 壳域**。
+  状态与实现分离：插件只读写设置项，实际启停经受控桥接命令执行，两端各做各的。
 - 若未来有第二个需要壳能力的 dsh 插件，能力暴露仍走 §5 的受控桥接流程，不因“是自家的”
   而放宽。
 

@@ -5,10 +5,12 @@ dsh 插件的开发容器：**每个子目录一个 dsh 插件**（cordis bundle
 
 ## 现有插件
 
-- `bridge/`（`@dsh-desktop/plugin-bridge`）— **桥接 Tauri 壳能力的插件**（骨架）：
+- `bridge/`（`@dsh-desktop/plugin-bridge`）— **桥接 Tauri 壳能力的双面插件**（host + client）：
   让 dsh web 内的插件/页面能调用 Tauri 壳能力。**桥接命令契约由本插件自持**
   （Rust 侧在 `apps/shell/src-tauri/capabilities/bridge.json` 声明），不并入
-  `packages/contracts`——contracts 只负责 native 内容（边界见 `docs/plugin-tauri-boundary.md`）
+  `packages/contracts`——contracts 只负责 native 内容（边界见 `docs/plugin-tauri-boundary.md`）。
+  host 侧注册 `desktop` settings 命名空间（`autostart` 默认关闭），client 侧在 dsh WebUI
+  设置面板渲染“开机自启”开关（详见 `./bridge/AGENTS.md`）
 - `hello/`（`@dsh-desktop/plugin-hello`）— **自定义插件示例**（骨架），演示开发结构
 
 ## 新增插件

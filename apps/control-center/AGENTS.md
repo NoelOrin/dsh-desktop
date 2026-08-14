@@ -9,7 +9,7 @@ DSH Desktop 的第二个窗口：SolidJS SPA（Vite 8 + vite-plugin-solid + Type
 - `src/App.tsx` — 三 Tab 布局（无路由库，状态切换）
 - `src/pages/Dashboard.tsx` — 状态 / 日志 / 控制按钮
 - `src/pages/Settings.tsx` — DSH_BIN / DSH_NODE / DSH_HOME 表单（get_config/set_config）
-- `src/pages/Tools.tsx` — 工具入口占位
+- `src/pages/Tools.tsx` — 工具入口（打开日志目录 / 检查更新，检查更新走 `@tauri-apps/plugin-updater` + `@tauri-apps/plugin-process`）
 - `src/lib/ipc.ts` — 全部 Tauri 调用与事件监听的唯一入口
 - `src/styles.css` — 全部样式
 
@@ -21,6 +21,7 @@ DSH Desktop 的第二个窗口：SolidJS SPA（Vite 8 + vite-plugin-solid + Type
 
 ## 通信契约
 
-- IPC 命令：`get_status` / `install_dsh` / `restart` / `open_log_directory` / `get_config` / `set_config` / `open_external`
-- 事件：`dsh-status`（RuntimeSnapshot）、`dsh-log`（文本行）、`dsh-theme`（light/dark，深色适配）
+- IPC 命令：`get_status` / `install_dsh` / `restart` / `open_log_directory` / `get_config` / `set_config` / `open_external` / `get_autostart` / `set_autostart` / `register_shortcut` / `unregister_shortcut`
+- 事件：`dsh-status`（RuntimeSnapshot）、`dsh-log`（文本行）、`dsh-theme`（light/dark，深色适配）、`dsh-deeplink`（`dsh-desktop://` 深链 URL）、`dsh-shortcut`（按下的已注册全局快捷键）、`dsh-update-available`（自动更新发现的新版本号）
+- autostart / shortcut 命令与 deeplink / shortcut 事件主要供 dsh 插件经 `window.__DSH_DESKTOP__` 桥接消费（本地窗口同属 `default.json` 权限集）；自动更新“检查更新”直接走 `@tauri-apps/plugin-updater`（`check` / `downloadAndInstall`）与 `@tauri-apps/plugin-process`（`relaunch`），不经 IPC 命令
 - 类型与常量来自 `@dsh-desktop/contracts`；修改契约须同步 Rust serde 类型与 `apps/shell/src`

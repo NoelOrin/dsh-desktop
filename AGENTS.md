@@ -40,8 +40,9 @@
 
 - 提交信息遵循 [Conventional Commits](https://www.conventionalcommits.org/)（`feat:` / `fix:` / `chore:`），版本号与 CHANGELOG 由 CI 依据提交信息自动生成
 - 用户可见文案与代码注释使用中文
-- 前后端通过固定契约通信：IPC 命令 `get_status` / `install_dsh` / `restart` / `open_log_directory` / `get_config` / `set_config` / `open_external`，事件 `dsh-status` / `dsh-log` / `dsh-file-drop` / `dsh-theme`（类型与常量见 `packages/contracts`，各模块契约表见对应 AGENTS.md）
+- 前后端通过固定契约通信：IPC 命令 `get_status` / `install_dsh` / `restart` / `open_log_directory` / `get_config` / `set_config` / `open_external` / `get_autostart` / `set_autostart` / `register_shortcut` / `unregister_shortcut`，事件 `dsh-status` / `dsh-log` / `dsh-file-drop` / `dsh-theme` / `dsh-deeplink` / `dsh-shortcut` / `dsh-update-available`（类型与常量见 `packages/contracts`，各模块契约表见对应 AGENTS.md）
 - 系统托盘常驻后台（关闭到托盘），关键节点弹原生通知；dsh web 通过受控桥接 `window.__DSH_DESKTOP__` 调用最小能力（白名单见 `apps/shell/src-tauri/capabilities/bridge.json`，边界见 `docs/plugin-tauri-boundary.md`）
+- 原生能力：窗口状态记忆（重启恢复窗口大小/位置）、深链 `dsh-desktop://`、自动更新（后台检查 + 控制中心“检查更新”）、开机自启（dsh 插件设置面板，默认关闭）、自定义全局快捷键（dsh 插件经桥接注册/注销）、托盘“退出”二次确认
 - 后端是唯一状态源，前端只做渲染
 - 代码规范：Biome（`biome.json`）负责 TS/TSX/JSON 的 lint 与格式；Lefthook（`lefthook.yml`）接入 git hooks——`pre-commit` 对暂存文件自动 `biome check --write`，`pre-push` 跑 `yarn typecheck` + `cargo fmt --check` + `cargo clippy`；`package.json` 的 `postinstall` 会在每次 `yarn install` 时自动执行 `lefthook install` 装好 hooks（Yarn 4 默认禁用依赖的 build scripts，需靠它兜底）
 

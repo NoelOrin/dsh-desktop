@@ -7,11 +7,11 @@ DSH Desktop 的 Rust 后端。职责：检测 / 一键安装 `dsh`、以子进�
 - `src/lib.rs` — 全部后端逻辑：状态机、进程管理、IPC 命令、control 窗口打开
 - `src/config.rs` — `DshConfig` 结构、`config.json` 的 load/save 与 effective 合并逻辑
 - `src/main.rs` — 仅入口：调用 `dsh_desktop_lib::run()`
-- `Cargo.toml` — 依赖：`tauri 2`（`tray-icon` / `image-png`）、`tauri-plugin-global-shortcut` / `notification` / `single-instance` / `clipboard-manager` / `dialog`、`libc`（unix 优雅退出）、`serde`、`serde_json`；lib 名为 `dsh_desktop_lib`
+- `Cargo.toml` — 依赖：`tauri 2`（`tray-icon` / `image-png`）、`tauri-plugin-global-shortcut` / `notification` / `single-instance` / `clipboard-manager` / `dialog` / `window-state` / `deep-link` / `updater` / `autostart`、`libc`（unix 优雅退出）、`serde`、`serde_json`；lib 名为 `dsh_desktop_lib`
 - `build.rs` — 用 `AppManifest::commands` 为应用命令生成 `allow-*` ACL 权限（远程桥接与本地窗口共用）
 - `tauri.conf.json` — main / control 窗口配置、构建前后命令、bundle 目标
-- `capabilities/default.json` — 本地窗口（main/control）IPC 权限：`core:default` + `global-shortcut:default` + 插件权限 + 应用命令 `allow-*`
-- `capabilities/bridge.json` — dsh web（remote `http://127.0.0.1:*` 白名单）受控桥接权限，仅授予最小命令切片
+- `capabilities/default.json` — 本地窗口（main/control）IPC 权限：`core:default` + `global-shortcut:default` + `updater:default` + 插件权限 + 应用命令 `allow-*`（含 `get_autostart` / `set_autostart` / `register_shortcut` / `unregister_shortcut`）
+- `capabilities/bridge.json` — dsh web（remote `http://127.0.0.1:*` 白名单）受控桥接权限，仅授予最小命令切片（含 `allow-get-autostart` / `allow-set-autostart` / `allow-register-shortcut` / `allow-unregister-shortcut`）
 - `gen/` — 构建生成的 schema（勿手改，已在 `.gitignore`）
 - `icons/` — 应用图标（由 `tauri icon` 生成，勿手改）
 
@@ -31,8 +31,8 @@ DSH Desktop 的 Rust 后端。职责：检测 / 一键安装 `dsh`、以子进�
 
 ## IPC 命令与事件
 
-- 命令：`get_status` / `restart` / `install_dsh` / `open_log_directory` / `get_config` / `set_config` / `open_external`（系统默认应用打开目标）
-- 事件（向前端 emit）：`dsh-status`（RuntimeSnapshot）、`dsh-log`（单行文本）、`dsh-file-drop`（拖入 main 窗口的真实路径数组）、`dsh-theme`（系统主题 `light`/`dark`）
+- 命令：`get_status` / `restart` / `install_dsh` / `open_log_directory` / `get_config` / `set_config` / `open_external`（系统默认应用打开目标）/ `get_autostart`（查询开机自启状态）/ `set_autostart`（开启/关闭开机自启）/ `register_shortcut`（注册系统级全局快捷键）/ `unregister_shortcut`（注销全局快捷键）
+- 事件（向前端 emit）：`dsh-status`（RuntimeSnapshot）、`dsh-log`（单行文本）、`dsh-file-drop`（拖入 main 窗口的真实路径数组）、`dsh-theme`（系统主题 `light`/`dark`）、`dsh-deeplink`（`dsh-desktop://` 深链原始 URL）、`dsh-shortcut`（按下的已注册快捷键字符串）、`dsh-update-available`（自动更新发现的新版本号）
 - `get_config` 返回“生效配置”：config.json 有值则用之，未设置的字段回退到环境变量；`set_config` 只写 `config.json`，不会修改环境变量
 - 修改契约时，必须同步更新 `../../../AGENTS.md` 的通信契约表与 `../../../packages/contracts/src/index.ts`
 
@@ -45,7 +45,13 @@ DSH Desktop 的 Rust 后端。职责：检测 / 一键安装 `dsh`、以子进�
 - **主题跟随**：CSS `prefers-color-scheme` 深色变量 + Rust `ThemeChanged` 事件 emit `dsh-theme`
 - **优雅退出**：`cleanup_child()` unix 下先对进程组（`process_group(0)` 启动）发 SIGTERM，`GRACE_PERIOD=2s` 宽限后 SIGKILL；Windows 直接 TerminateProcess
 - **拖放**：main 窗口 `DragDropEvent::Drop` 把真实路径 emit `dsh-file-drop`
-- **桥接**：`Builder::on_page_load` 在 dsh web 页面（127.0.0.1）加载完成后 `eval` `BRIDGE_SCRIPT`，注入 `window.__DSH_DESKTOP__`（最小能力：通知 / 剪贴板 / 对话框 / openExternal / 状态事件 / 文件拖放），权限由 `capabilities/bridge.json` remote 白名单收口
+- **桥接**：`Builder::on_page_load` 在 dsh web 页面（127.0.0.1）加载完成后 `eval` `BRIDGE_SCRIPT`，注入 `window.__DSH_DESKTOP__`（最小能力：通知 / 剪贴板 / 对话框 / openExternal / 状态事件 / 文件拖放 / 开机自启 autostart / 快捷键 shortcuts / 深链 onDeepLink），权限由 `capabilities/bridge.json` remote 白名单收口
+- **窗口状态记忆**：window-state 插件在 `RunEvent::Exit`（托盘“退出”）时自动保存 main/control 窗口大小/位置/最大化状态，下次启动恢复——关闭到托盘仅隐藏不销毁，不触发 CloseRequested 保存路径
+- **深链**：`tauri.conf.json` 注册 `dsh-desktop://` scheme；`on_open_url` 收到 URL 后 emit `dsh-deeplink`（原始 URL 字符串），未就绪时暂存 `Inner.pending_deeplinks`、就绪后补发；桥接暴露 `onDeepLink(cb)`
+- **自动更新**：updater 插件（endpoints 指向 GitHub Release 的 `latest.json`）；启动后就绪后异步 `check()`，发现新版本 emit `dsh-update-available`（payload 为新版本号），失败仅记日志；控制中心“检查更新”走 `@tauri-apps/plugin-updater` 的 `downloadAndInstall` + `@tauri-apps/plugin-process` 的 `relaunch`
+- **开机自启**：autostart 插件（macOS LaunchAgent，`--autostart` 参数）注册；`get_autostart` / `set_autostart` 命令经 `autolaunch()` 查/改；桥接暴露 `autostart.get()/set()`；设置项 UI 属 dsh 插件（`packages/plugins/bridge` 的 `desktop` settings 命名空间，默认关闭）
+- **自定义快捷键**：`register_shortcut` / `unregister_shortcut` 命令（内部用 global-shortcut 插件，注册表 `HashMap<String, Shortcut>` 存 AppState），按下时 emit `dsh-shortcut`；桥接暴露 `shortcuts.register/unregister/onShortcut`
+- **退出确认**：托盘“退出”先经 dialog 弹系统确认框（防误触导致 dsh 会话丢失），确认后才置 `exiting`、发 `Stop` 并退出；取消则无操作
 
 ## 窗口与快捷键
 

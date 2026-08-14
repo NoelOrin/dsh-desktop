@@ -1,0 +1,41 @@
+# AGENTS.md — packages/plugins/bridge（桥接 Tauri 壳能力的 dsh 插件）
+
+`@dsh-desktop/plugin-bridge`：让 dsh web 内的插件/页面能调用 Tauri 壳能力的**双面 dsh 插件**
+（cordis bundle）。**桥接命令契约由本插件自持**，Rust 侧在
+`apps/shell/src-tauri/capabilities/bridge.json` 声明实现与权限；不并入
+`packages/contracts`——contracts 只负责 native 内容（边界见 `docs/plugin-tauri-boundary.md`）。
+
+## 双面结构
+
+| 面 | 文件 | 职责 |
+| --- | --- | --- |
+| host | `src/index.ts` | 插件入口（`export const name` + `apply(ctx)`）；定义 `DshDesktopBridge` 类型；注册 `desktop` settings 命名空间（`autostart: z.boolean().default(false)`，默认关闭） |
+| client | `src/client.tsx` | 在 dsh WebUI 设置面板注册“桌面”设置节（`ctx.slots.inject("settings.section")` + `ctx.settingsScope.bind`），渲染“开机自启”开关，切换时经 `window.__DSH_DESKTOP__.autostart.get()/set()` 调壳 |
+
+`package.json` 通过 `dsh.client`（platform web）声明 client 面并导出 `./client`；
+client 面依赖 `@deepseek-ai/dsh-client-ui-settings` 等 dsh client 生态（peer 声明）。
+
+## 桥接对象（window.__DSH_DESKTOP__）
+
+壳侧 `BRIDGE_SCRIPT` 注入到 dsh web 页面的受控 API。与原生能力二期相关的最小切片：
+
+| 成员 | 壳命令 / 事件 | 说明 |
+| --- | --- | --- |
+| `autostart.get()` / `autostart.set(enabled)` | `get_autostart` / `set_autostart` | 查询 / 设置开机自启 |
+| `shortcuts.register(s, cb)` / `shortcuts.unregister(s)` | `register_shortcut` / `unregister_shortcut` | 注册 / 注销系统级全局快捷键 |
+| `onShortcut(cb)` | 事件 `dsh-shortcut` | 订阅快捷键按下（payload 为快捷键字符串） |
+| `onDeepLink(cb)` | 事件 `dsh-deeplink` | 订阅 `dsh-desktop://` 深链（payload 为原始 URL） |
+
+## 开机自启设置项归属
+
+- 设置项**状态**存放于 dsh settings（`desktop.autostart`，默认关闭）——属 **dsh 插件域**；
+- OS 级**启停**是壳能力（autostart 插件 + `get_autostart` / `set_autostart` 命令）——属 **Tauri 壳域**；
+- 切换开关时 client 面同时写 settings 与调壳命令，两者解耦（壳不可达时仅写 settings，
+  由下次启动 / 桥接补偿）。
+
+## 维护约定
+
+- 新增桥接能力必须是**能力的最小切片**，须同步 `apps/shell/src-tauri/capabilities/bridge.json`
+  白名单、`apps/shell/src-tauri/src/lib.rs` 的 `BRIDGE_SCRIPT` 与本文件的桥接对象表
+- 桥接契约不并入 `packages/contracts`（native 契约与桥接契约分离）
+- 事件名必须是 cordis `Events` 接口里的键（骨架阶段不要注册未声明的事件）

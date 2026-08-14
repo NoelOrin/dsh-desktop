@@ -125,6 +125,19 @@ pub fn assemble(resource_dir: &Path, home: &Path, log: &mut dyn FnMut(&str)) -> 
     mounted
 }
 
+/// 返回内嵌插件的 resources 根目录。
+///
+/// 发布模式使用 Tauri 的应用资源目录；开发模式下 Tauri 的 `resource_dir()` 指向
+/// `target/<profile>`，不会包含源码里的 `resources`，因此显式回退到
+/// `CARGO_MANIFEST_DIR/resources`，保证 `yarn dev` 也能装配内嵌插件。
+pub fn plugins_resource_dir(resource_dir: Option<&Path>) -> Option<PathBuf> {
+    if cfg!(debug_assertions) {
+        Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources"))
+    } else {
+        resource_dir.map(Path::to_path_buf)
+    }
+}
+
 /// 读取插件目录的 package.json 并解析为 JSON 值；失败时返回中文日志消息。
 fn read_manifest(dir: &Path) -> Result<serde_json::Value, String> {
     let path = dir.join("package.json");
@@ -221,6 +234,14 @@ mod tests {
     #[test]
     fn write_overlay_none_when_empty() {
         assert!(write_overlay(&temp_dir(), &[]).is_none());
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn dev_plugins_resource_dir_points_to_source_resources() {
+        let path = plugins_resource_dir(None).expect("debug 下应返回源码 resources");
+        assert_eq!(path.file_name().unwrap(), "resources");
+        assert!(path.join("plugins").is_dir());
     }
 
     #[test]

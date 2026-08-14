@@ -7,6 +7,8 @@ pub struct DshConfig {
     pub dsh_bin: Option<String>,
     pub dsh_node: Option<String>,
     pub dsh_home: Option<String>,
+    #[serde(default)]
+    pub shortcuts: Vec<String>,
 }
 
 impl DshConfig {
@@ -16,6 +18,7 @@ impl DshConfig {
             dsh_bin: self.dsh_bin.clone().or_else(|| getenv("DSH_BIN")),
             dsh_node: self.dsh_node.clone().or_else(|| getenv("DSH_NODE")),
             dsh_home: self.dsh_home.clone().or_else(|| getenv("DSH_HOME")),
+            shortcuts: self.shortcuts.clone(),
         }
     }
 }
@@ -42,6 +45,7 @@ mod tests {
             dsh_bin: Some("/stored/bin".into()),
             dsh_node: None,
             dsh_home: None,
+            shortcuts: vec![],
         };
         let effective = config.effective(|k| match k {
             "DSH_BIN" => Some("/env/bin".into()),
@@ -69,6 +73,7 @@ mod tests {
             dsh_bin: Some("/a".into()),
             dsh_node: Some("/b".into()),
             dsh_home: Some("/c".into()),
+            shortcuts: vec!["CmdOrCtrl+Shift+D".into()],
         };
         save(&path, &config).unwrap();
         let loaded = load(&path);

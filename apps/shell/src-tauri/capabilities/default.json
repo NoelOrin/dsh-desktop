@@ -5,6 +5,8 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize",
     "global-shortcut:default",
     "notification:default",
     "clipboard-manager:allow-read-text",
@@ -22,6 +24,14 @@
     "allow-register-shortcut",
     "allow-unregister-shortcut",
     "allow-get-ui-theme",
-    "allow-window-action"
+    "allow-window-action",
+    "allow-get-shortcuts",
+    "allow-unregister-all-shortcuts",
+    "allow-get-pending-deeplinks",
+    "allow-ack-deeplink",
+    "allow-request-notification-permission",
+    "allow-update-dsh",
+    "allow-open-paths",
+    "allow-import-paths"
   ]
 }

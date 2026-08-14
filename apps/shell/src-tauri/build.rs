@@ -18,6 +18,14 @@ fn main() {
             "install_update",
             "get_ui_theme",
             "window_action",
+            "get_shortcuts",
+            "unregister_all_shortcuts",
+            "get_pending_deeplinks",
+            "ack_deeplink",
+            "request_notification_permission",
+            "update_dsh",
+            "open_paths",
+            "import_paths",
         ]));
     if let Err(error) = tauri_build::try_build(attributes) {
         println!("{error}");

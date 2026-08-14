@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "ai.deepseek.dsh-desktop",
   "build": {
-    "beforeDevCommand": "corepack yarn web:all",
+    "beforeDevCommand": "corepack yarn build:plugins && corepack yarn web:all",
     "devUrl": "http://localhost:5173",
     "beforeBuildCommand": "corepack yarn web:build && corepack yarn build:plugins",
     "frontendDist": "../../../dist"

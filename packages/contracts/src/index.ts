@@ -7,12 +7,45 @@ export type RuntimePhase =
   | "failed"
   | "stopped";
 
+export type StartupMode = "normal" | "tray" | "minimized";
+
+export interface DeepLinkPayload {
+  id: string;
+  url: string;
+  raw: string;
+  received_at: string;
+  source: "deep_link" | "second_instance";
+  args: string[];
+  cwd: string;
+}
+
+export interface FileDropPayload {
+  id: string;
+  paths: string[];
+  kind: "file" | "directory" | "mixed";
+  position: { x: number; y: number };
+  action: "open" | "import";
+}
+
+export interface ShortcutSnapshot {
+  shortcut: string;
+  registered: boolean;
+}
+
+export interface NotificationActionPayload {
+  kind: "focus" | "open_session" | "open_update";
+  session_id: string | null;
+  url: string | null;
+  path: string | null;
+}
+
 export interface RuntimeSnapshot {
   phase: RuntimePhase;
   message: string;
   url: string | null;
   dsh_installed: boolean;
   node_found: boolean;
+  dsh_version: string | null;
   log_dir: string | null;
   logs: string[];
 }
@@ -21,6 +54,7 @@ export interface DshConfig {
   dsh_bin: string | null;
   dsh_node: string | null;
   dsh_home: string | null;
+  shortcuts: string[];
 }
 
 export interface UiThemeTokens {
@@ -56,6 +90,14 @@ export const COMMANDS = {
   openExternal: "open_external",
   getUiTheme: "get_ui_theme",
   windowAction: "window_action",
+  getShortcuts: "get_shortcuts",
+  unregisterAllShortcuts: "unregister_all_shortcuts",
+  getPendingDeepLinks: "get_pending_deeplinks",
+  ackDeepLink: "ack_deeplink",
+  requestNotificationPermission: "request_notification_permission",
+  updateDsh: "update_dsh",
+  openPaths: "open_paths",
+  importPaths: "import_paths",
 } as const;
 
 export const EVENTS = {
@@ -68,4 +110,5 @@ export const EVENTS = {
   dshUpdateAvailable: "dsh-update-available",
   dshUiTheme: "dsh-ui-theme",
   dshWindowState: "dsh-window-state",
+  dshNotificationAction: "dsh-notification-action",
 } as const;

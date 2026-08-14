@@ -7,6 +7,8 @@
     "urls": ["http://127.0.0.1:*"]
   },
   "permissions": [
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize",
     "notification:allow-notify",
     "clipboard-manager:allow-read-text",
     "clipboard-manager:allow-write-text",
@@ -25,6 +27,14 @@
     "allow-unregister-shortcut",
     "allow-check-update",
     "allow-install-update",
-    "allow-window-action"
+    "allow-window-action",
+    "allow-get-shortcuts",
+    "allow-unregister-all-shortcuts",
+    "allow-get-pending-deeplinks",
+    "allow-ack-deeplink",
+    "allow-request-notification-permission",
+    "allow-update-dsh",
+    "allow-open-paths",
+    "allow-import-paths"
   ]
 }

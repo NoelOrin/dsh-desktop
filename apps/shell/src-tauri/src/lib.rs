@@ -5,14 +5,17 @@ use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 mod config;
+mod desktop_settings;
 mod embedded;
+mod notifications;
+mod process;
 mod theme;
 
 use config::DshConfig;
@@ -24,6 +27,7 @@ use tauri::tray::TrayIconBuilder;
 use tauri::webview::PageLoadEvent;
 use tauri::{AppHandle, Emitter, Manager as _, RunEvent, State, WindowEvent};
 use tauri_plugin_autostart::ManagerExt;
+use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{
@@ -34,14 +38,21 @@ use tauri_plugin_notification::NotificationExt;
 const READY_TIMEOUT: Duration = Duration::from_secs(120);
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 const MAX_LOGS: usize = 500;
+const MAX_LOG_BYTES: u64 = 2 * 1024 * 1024;
 /// 子进程意外退出后的自动重启上限（看门狗，超过则转 failed）。
 const MAX_AUTO_RESTARTS: u32 = 3;
 /// 优雅退出：SIGTERM 后等待子进程退出的宽限期。
 const GRACE_PERIOD: Duration = Duration::from_secs(2);
 
+static LOG_LOCK: Mutex<()> = Mutex::new(());
+
 // 托盘菜单项 id
+const TRAY_STATUS: &str = "tray-status";
+const TRAY_COPY_URL: &str = "tray-copy-url";
+const TRAY_OPEN_BROWSER: &str = "tray-open-browser";
+const TRAY_STOP_DSH: &str = "tray-stop-dsh";
+const TRAY_RESTART_DSH: &str = "tray-restart-dsh";
 const TRAY_SHOW_MAIN: &str = "tray-show-main";
-const TRAY_RESTART: &str = "tray-restart";
 const TRAY_QUIT: &str = "tray-quit";
 
 /// 注入到 dsh web（loopback 远程页面）的桥接脚本，定义 window.__DSH_DESKTOP__。
@@ -85,13 +96,33 @@ const BRIDGE_SCRIPT: &str = r#"(function () {
     getStatus: function () { return invoke("get_status"); },
     restart: function () { return invoke("restart"); },
     installDsh: function () { return invoke("install_dsh"); },
+    updateDsh: function () { return invoke("update_dsh"); },
     openLogDirectory: function () { return invoke("open_log_directory"); },
+    openPaths: function (paths) { return invoke("open_paths", { paths: paths }); },
+    importPaths: function (paths) { return invoke("import_paths", { paths: paths }); },
     getConfig: function () { return invoke("get_config"); },
     setConfig: function (config) { return invoke("set_config", { config: config }); },
     onStatus: function (cb) { return listen("dsh-status", cb); },
     onLog: function (cb) { return listen("dsh-log", cb); },
     onFileDrop: function (cb) { return listen("dsh-file-drop", cb); },
-    onDeepLink: function (cb) { return listen("dsh-deeplink", cb); },
+    getPendingDeepLinks: function () { return invoke("get_pending_deeplinks"); },
+    ackDeepLink: function (id) { return invoke("ack_deeplink", { id: id }); },
+    onDeepLink: function (cb) {
+      return listen("dsh-deeplink", function (e) {
+        cb(e.payload);
+        invoke("ack_deeplink", { id: e.payload.id }).catch(function () {});
+      }).then(function (unlisten) {
+        return invoke("get_pending_deeplinks").then(function (pending) {
+          pending.forEach(function (p) {
+            cb(p);
+            invoke("ack_deeplink", { id: p.id }).catch(function () {});
+          });
+          return unlisten;
+        }).catch(function () { return unlisten; });
+      });
+    },
+    requestNotificationPermission: function () { return invoke("request_notification_permission"); },
+    onNotificationAction: function (cb) { return listen("dsh-notification-action", function (e) { cb(e.payload); }); },
     autostart: {
       get: function () { return invoke("get_autostart"); },
       set: function (enabled) { return invoke("set_autostart", { enabled: enabled }); },
@@ -103,6 +134,8 @@ const BRIDGE_SCRIPT: &str = r#"(function () {
         });
       },
       unregister: function (s) { return invoke("unregister_shortcut", { shortcut: s }); },
+      list: function () { return invoke("get_shortcuts"); },
+      unregisterAll: function () { return invoke("unregister_all_shortcuts"); },
     },
     onShortcut: function (cb) { return listen("dsh-shortcut", cb); },
     update: {
@@ -123,6 +156,7 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
   var SIZE = 32;
   var GAP = 0;
   var MAC_TRAFFIC_WIDTH = 80;
+  var MAC_DRAG_HEIGHT = 16;
 
   function detectPlatform() {
     var ua = navigator.userAgent || "";
@@ -188,9 +222,10 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
       "  top: 0;",
       "  " + (PLATFORM === "macos" ? "left: " + MAC_TRAFFIC_WIDTH + "px;" : "left: 0;"),
       "  " + (PLATFORM === "macos" ? "right: 0;" : "right: " + reservedEdge() + "px;"),
-      "  height: 44px;",
+      "  height: " + (PLATFORM === "macos" ? MAC_DRAG_HEIGHT : 44) + "px;",
       "  z-index: 2147483644;",
-      "}"
+      "}",
+      (PLATFORM === "macos" ? ".hHd-Xa_root { padding-top: 16px !important; }" : "")
     ].join("\n");
     (document.head || document.documentElement).appendChild(style);
   }
@@ -256,9 +291,13 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
     ensureStyle();
     var host = PLATFORM === "macos" ? null : ensureControls();
     var bar = findTopBar();
-    ensureDragStrip();
+    var strip = ensureDragStrip();
     if (bar && bar instanceof HTMLElement) {
-      bar.setAttribute("data-tauri-drag-region", "deep");
+      if (PLATFORM !== "macos") {
+        // 非 mac 顶部栏自身作为拖拽区，注入条不拦截原按钮交互。
+        strip.style.pointerEvents = "none";
+        bar.setAttribute("data-tauri-drag-region", "deep");
+      }
       var reserved = PLATFORM === "macos" ? MAC_TRAFFIC_WIDTH : reservedEdge();
       var prev = parseFloat(PLATFORM === "macos" ? bar.style.paddingLeft : bar.style.paddingRight) || 0;
       var nextPadding = Math.max(prev, reserved) + "px";
@@ -305,8 +344,21 @@ struct RuntimeSnapshot {
     url: Option<String>,
     dsh_installed: bool,
     node_found: bool,
+    dsh_version: Option<String>,
     log_dir: Option<String>,
     logs: Vec<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct DeepLinkPayload {
+    id: String,
+    url: String,
+    raw: String,
+    received_at: String,
+    source: String,
+    args: Vec<String>,
+    cwd: String,
 }
 
 #[derive(Default)]
@@ -316,10 +368,12 @@ struct Inner {
     url: Option<String>,
     dsh_installed: bool,
     node_found: bool,
+    dsh_version: Option<String>,
     log_dir: Option<PathBuf>,
     logs: VecDeque<String>,
-    /// 尚未被 dsh web 消费的深链（dsh-desktop://）原始 URL，就绪后补发。
-    pending_deeplinks: VecDeque<String>,
+    /// 尚未被 dsh web 消费的深链 payload，由 bridge 主动查询并确认。
+    pending_deeplinks: VecDeque<DeepLinkPayload>,
+    next_deep_link_id: u64,
 }
 
 impl Inner {
@@ -330,6 +384,7 @@ impl Inner {
             url: self.url.clone(),
             dsh_installed: self.dsh_installed,
             node_found: self.node_found,
+            dsh_version: self.dsh_version.clone(),
             log_dir: self
                 .log_dir
                 .as_ref()
@@ -347,8 +402,45 @@ struct AppState {
     config_path: PathBuf,
     /// 应用是否正在退出（托盘"退出"置 true，用于关闭到托盘时区分真正退出）。
     exiting: Arc<AtomicBool>,
+    /// --autostart + settings startupMode=tray 时隐藏主窗口，直到用户从托盘唤起。
+    start_in_tray: Arc<AtomicBool>,
     /// 已注册的自定义全局快捷键注册表（快捷键字符串 → Shortcut），供注销时查表。
     shortcuts: Arc<Mutex<HashMap<String, Shortcut>>>,
+}
+
+fn enqueue_launch_payload(
+    app: &AppHandle,
+    source: String,
+    url: String,
+    raw: String,
+    args: Vec<String>,
+    cwd: String,
+) {
+    let state = app.state::<AppState>();
+    let payload = {
+        let mut inner = state.inner.lock().unwrap();
+        inner.next_deep_link_id += 1;
+        let id = format!("dl-{}", inner.next_deep_link_id);
+        let received_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis().to_string())
+            .unwrap_or_default();
+        let payload = DeepLinkPayload {
+            id,
+            url: url.clone(),
+            raw,
+            received_at,
+            source,
+            args,
+            cwd,
+        };
+        inner.pending_deeplinks.push_back(payload.clone());
+        payload
+    };
+    let ready = matches!(state.inner.lock().unwrap().phase, RuntimePhase::Ready);
+    if ready {
+        let _ = app.emit("dsh-deeplink", payload);
+    }
 }
 
 enum ManagerMessage {
@@ -356,8 +448,9 @@ enum ManagerMessage {
     Stop,
     Shutdown,
     Ready { generation: u64, url: String },
-    ReadyTimeout { generation: u64, port: u16 },
+    ReadyTimeout { generation: u64 },
     InstallFinished { result: Result<(), String> },
+    Unhealthy { generation: u64 },
 }
 
 struct DshManager {
@@ -371,9 +464,11 @@ struct DshManager {
     auto_restarts: u32,
     log_path: PathBuf,
     config_path: PathBuf,
+    start_in_tray: Arc<AtomicBool>,
 }
 
 pub fn run() {
+    let autostart_requested = std::env::args().any(|arg| arg == "--autostart");
     // 全局快捷键插件：预置快捷键（CmdOrCtrl+Shift+C 打开控制中心）已随控制中心移除；
     // 自定义快捷键由 dsh 插件经 register_shortcut / unregister_shortcut 桥接命令注册。
     let shortcut_plugin = ShortcutBuilder::new().build();
@@ -382,11 +477,31 @@ pub fn run() {
 
     tauri::Builder::default()
         // 单实例锁必须最先注册（插件按注册顺序执行）
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            // 二次启动时聚焦已存在的主窗口
+        .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
                 let _ = window.set_focus();
+            }
+            if app.try_state::<AppState>().is_some() {
+                if let Some(url) = args.iter().find(|arg| arg.starts_with("dsh-desktop://")) {
+                    enqueue_launch_payload(
+                        app,
+                        "deep_link".into(),
+                        url.clone(),
+                        url.clone(),
+                        args.clone(),
+                        cwd.clone(),
+                    );
+                } else {
+                    enqueue_launch_payload(
+                        app,
+                        "second_instance".into(),
+                        String::new(),
+                        String::new(),
+                        args.clone(),
+                        cwd.clone(),
+                    );
+                }
             }
         }))
         .plugin(shortcut_plugin)
@@ -431,6 +546,35 @@ pub fn run() {
             }));
 
             let (tx, rx) = mpsc::channel();
+
+            let launch_config = config::load(&config_path).effective(|k| std::env::var(k).ok());
+            let settings_home = launch_config
+                .dsh_home
+                .clone()
+                .or_else(|| std::env::var("DSH_HOME").ok())
+                .or_else(|| std::env::var("HOME").ok().map(|h| format!("{h}/.dsh")));
+            let startup_mode = settings_home
+                .as_deref()
+                .map(Path::new)
+                .map(|home| home.join("settings.yaml"))
+                .map(|path| {
+                    desktop_settings::startup_mode(&desktop_settings::read_desktop_section(&path))
+                })
+                .unwrap_or("normal");
+            let start_in_tray = Arc::new(AtomicBool::new(
+                autostart_requested && startup_mode == "tray",
+            ));
+            if autostart_requested && startup_mode == "minimized" {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.minimize();
+                }
+            }
+            if start_in_tray.load(Ordering::Relaxed) {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+            }
+
             let manager = DshManager {
                 app: app_handle.clone(),
                 inner: inner.clone(),
@@ -441,6 +585,7 @@ pub fn run() {
                 auto_restarts: 0,
                 log_path,
                 config_path: config_path.clone(),
+                start_in_tray: start_in_tray.clone(),
             };
             thread::spawn(move || manager.run());
 
@@ -453,21 +598,32 @@ pub fn run() {
                 log_dir,
                 config_path,
                 exiting: exiting.clone(),
+                start_in_tray: start_in_tray.clone(),
                 shortcuts: Arc::new(Mutex::new(HashMap::new())),
             });
 
-            // 深链 dsh-desktop://：收到 URL 后暂存（未就绪时由 Ready 分支补发）并立即转发给 dsh web
+            // 重启后恢复上次持久化的全局快捷键（注册冲突仅跳过，不阻塞启动）
+            if let Some(state) = app.try_state::<AppState>() {
+                let config = config::load(&state.config_path);
+                for shortcut in config.shortcuts {
+                    let _ = register_shortcut_internal(&state, shortcut);
+                }
+            }
+
+            // 深链 dsh-desktop://：统一入队，就绪时转发给 dsh web，由 bridge 查询并确认
             let deep_app = app.handle().clone();
             let deep_link_app = deep_app.clone();
             deep_link_app.deep_link().on_open_url(move |event| {
                 for url in event.urls() {
                     let url = url.to_string();
-                    let state = deep_app.state::<AppState>();
-                    {
-                        let mut inner = state.inner.lock().unwrap();
-                        inner.pending_deeplinks.push_back(url.clone());
-                    }
-                    let _ = deep_app.emit("dsh-deeplink", url);
+                    enqueue_launch_payload(
+                        &deep_app,
+                        "deep_link".into(),
+                        url.clone(),
+                        url,
+                        Vec::new(),
+                        String::new(),
+                    );
                 }
             });
 
@@ -517,7 +673,8 @@ pub fn run() {
                 }
             });
 
-            setup_tray(app.handle(), exiting.clone())?;
+            let tray_state = setup_tray(app.handle(), exiting.clone())?;
+            app.manage(tray_state);
 
             // 自动更新：后台检查 GitHub Release，发现新版本 emit dsh-update-available（payload 为新版本号），失败仅记日志
             let updater_app = app.handle().clone();
@@ -543,8 +700,11 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_status,
+            get_pending_deeplinks,
+            ack_deeplink,
             restart,
             install_dsh,
+            update_dsh,
             open_log_directory,
             get_config,
             set_config,
@@ -553,10 +713,15 @@ pub fn run() {
             set_autostart,
             register_shortcut,
             unregister_shortcut,
+            get_shortcuts,
+            unregister_all_shortcuts,
             check_update,
             install_update,
+            request_notification_permission,
             get_ui_theme,
-            window_action
+            window_action,
+            open_paths,
+            import_paths
         ])
         .on_window_event(|window, event| {
             let label = window.label().to_string();
@@ -566,12 +731,24 @@ pub fn run() {
                     emit_window_state(window.app_handle());
                     return;
                 }
-                if let WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
-                    let paths: Vec<String> = paths
-                        .iter()
-                        .map(|path| path.to_string_lossy().into_owned())
-                        .collect();
-                    let _ = window.emit("dsh-file-drop", paths);
+                if let WindowEvent::DragDrop(tauri::DragDropEvent::Drop {
+                    paths, position, ..
+                }) = event
+                {
+                    let payload = FileDropPayload {
+                        id: format!("drop-{}", NEXT_DROP_ID.fetch_add(1, Ordering::Relaxed)),
+                        paths: paths
+                            .iter()
+                            .map(|p| p.to_string_lossy().into_owned())
+                            .collect(),
+                        kind: process::classify_drop(paths).to_string(),
+                        position: DropPosition {
+                            x: position.x,
+                            y: position.y,
+                        },
+                        action: "open".to_string(),
+                    };
+                    let _ = window.emit("dsh-file-drop", payload);
                     return;
                 }
                 // 系统主题变化：透传给前端（启动页监听 dsh-theme）
@@ -599,19 +776,48 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building DSH Desktop")
         .run(|app, event| {
+            #[cfg(target_os = "macos")]
+            if let RunEvent::Reopen { .. } = event {
+                // Command+W 关闭到托盘后，点击 Dock 图标重新唤起主窗口。
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+                return;
+            }
+
             if let RunEvent::Exit = event {
                 let _ = app.state::<AppState>().tx.send(ManagerMessage::Shutdown);
             }
         });
 }
 
-/// 创建系统托盘：常驻后台，菜单含 显示主窗口 / 重启 dsh / 退出。
-fn setup_tray(app: &tauri::AppHandle, exiting: Arc<AtomicBool>) -> tauri::Result<()> {
+/// 创建系统托盘：常驻后台，菜单按运行阶段动态更新状态与可用性。
+fn setup_tray(app: &tauri::AppHandle, exiting: Arc<AtomicBool>) -> tauri::Result<TrayState> {
+    let status = MenuItem::with_id(app, TRAY_STATUS, "DSH: 检测中", false, None::<&str>)?;
+    let copy_url = MenuItem::with_id(app, TRAY_COPY_URL, "复制 Web UI 地址", false, None::<&str>)?;
+    let open_browser =
+        MenuItem::with_id(app, TRAY_OPEN_BROWSER, "用浏览器打开", false, None::<&str>)?;
+    let stop_dsh = MenuItem::with_id(app, TRAY_STOP_DSH, "停止 dsh", false, None::<&str>)?;
+    let restart_dsh = MenuItem::with_id(app, TRAY_RESTART_DSH, "重启 dsh", false, None::<&str>)?;
     let show_main = MenuItem::with_id(app, TRAY_SHOW_MAIN, "显示主窗口", true, None::<&str>)?;
-    let restart = MenuItem::with_id(app, TRAY_RESTART, "重启 dsh", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, TRAY_QUIT, "退出", true, None::<&str>)?;
-    let separator = PredefinedMenuItem::separator(app)?;
-    let menu = Menu::with_items(app, &[&show_main, &restart, &separator, &quit])?;
+    let sep1 = PredefinedMenuItem::separator(app)?;
+    let sep2 = PredefinedMenuItem::separator(app)?;
+    let menu = Menu::with_items(
+        app,
+        &[
+            &status,
+            &sep1,
+            &copy_url,
+            &open_browser,
+            &stop_dsh,
+            &restart_dsh,
+            &sep2,
+            &show_main,
+            &quit,
+        ],
+    )?;
 
     let icon = app
         .default_window_icon()
@@ -625,15 +831,35 @@ fn setup_tray(app: &tauri::AppHandle, exiting: Arc<AtomicBool>) -> tauri::Result
         .menu(&menu)
         .show_menu_on_left_click(true)
         .on_menu_event(move |app, event| match event.id().as_ref() {
+            TRAY_COPY_URL => {
+                let state = app.state::<AppState>();
+                let snapshot = state.inner.lock().unwrap().snapshot();
+                if let Some(url) = snapshot.url {
+                    let _ = app.clipboard().write_text(url);
+                }
+            }
+            TRAY_OPEN_BROWSER => {
+                let state = app.state::<AppState>();
+                let snapshot = state.inner.lock().unwrap().snapshot();
+                if let Some(url) = snapshot.url {
+                    let _ = open_with_system(&url);
+                }
+            }
+            TRAY_STOP_DSH => {
+                let state = app.state::<AppState>();
+                let _ = state.tx.send(ManagerMessage::Stop);
+            }
+            TRAY_RESTART_DSH => {
+                let state = app.state::<AppState>();
+                let _ = state.tx.send(ManagerMessage::Start);
+            }
             TRAY_SHOW_MAIN => {
+                let state = app.state::<AppState>();
+                state.start_in_tray.store(false, Ordering::Relaxed);
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
                     let _ = window.set_focus();
                 }
-            }
-            TRAY_RESTART => {
-                let state = app.state::<AppState>();
-                let _ = state.tx.send(ManagerMessage::Start);
             }
             TRAY_QUIT => {
                 let app = app.clone();
@@ -661,13 +887,25 @@ fn setup_tray(app: &tauri::AppHandle, exiting: Arc<AtomicBool>) -> tauri::Result
         })
         .build(app)?;
 
-    // 托盘句柄需要保活，否则图标会被销毁
-    app.manage(ManagedTray(tray));
-    Ok(())
+    Ok(TrayState {
+        tray,
+        status,
+        copy_url,
+        open_browser,
+        stop_dsh,
+        restart_dsh,
+    })
 }
 
-/// 需要持有 TrayIcon 使其保活（Tauri State 要求 Send + Sync）。
-struct ManagedTray(#[allow(dead_code)] tauri::tray::TrayIcon<tauri::Wry>);
+/// 托盘句柄与菜单项需要保活，供状态更新时修改文案与可用性。
+struct TrayState {
+    tray: tauri::tray::TrayIcon<tauri::Wry>,
+    status: tauri::menu::MenuItem<tauri::Wry>,
+    copy_url: tauri::menu::MenuItem<tauri::Wry>,
+    open_browser: tauri::menu::MenuItem<tauri::Wry>,
+    stop_dsh: tauri::menu::MenuItem<tauri::Wry>,
+    restart_dsh: tauri::menu::MenuItem<tauri::Wry>,
+}
 
 /// 判断是否为 dsh web 的 loopback 页面（用于桥接注入）。
 fn is_dsh_web_url(url: &tauri::Url) -> bool {
@@ -697,20 +935,23 @@ impl DshManager {
                             format!("DSH 已就绪: {url}"),
                             Some(url.clone()),
                         );
-                        // 就绪后补发就绪前收到的深链（页面 ready 后由桥接 onDeepLink 消费）
-                        {
-                            let mut inner = self.inner.lock().unwrap();
-                            while let Some(link) = inner.pending_deeplinks.pop_front() {
-                                let _ = self.app.emit("dsh-deeplink", link);
-                            }
-                        }
-                        self.notify("DSH 已就绪", &format!("DeepSeek Harness 已启动：{url}"));
+                        notifications::show(
+                            &self.app,
+                            "DSH 已就绪",
+                            &format!("DeepSeek Harness 已启动：{url}"),
+                            Some(notifications::NotificationAction {
+                                kind: "focus".into(),
+                                session_id: None,
+                                url: Some(url.clone()),
+                                path: None,
+                            }),
+                        );
                         self.open_window(url);
                     }
                 }
-                Ok(ManagerMessage::ReadyTimeout { generation, port }) => {
+                Ok(ManagerMessage::ReadyTimeout { generation }) => {
                     if generation == self.generation {
-                        self.fail(format!("DSH 在端口 {port} 上等待超时"));
+                        self.fail("DSH 未输出 URL line，等待超时".to_string());
                     }
                 }
                 Ok(ManagerMessage::InstallFinished { result }) => match result {
@@ -722,6 +963,11 @@ impl DshManager {
                     }
                     Err(error) => self.fail(format!("DSH 安装失败: {error}")),
                 },
+                Ok(ManagerMessage::Unhealthy { generation }) => {
+                    if generation == self.generation {
+                        self.fail("DSH 健康检查连续失败".to_string());
+                    }
+                }
                 Err(RecvTimeoutError::Timeout) => {
                     if let Some(exit) = self.take_exit() {
                         // 看门狗：运行中（starting/ready）意外退出时自动重启，超过上限才转 failed
@@ -767,6 +1013,24 @@ impl DshManager {
         };
 
         self.update_detection(true, true);
+        let version = Command::new(&node)
+            .arg(&entry)
+            .arg("--version")
+            .output()
+            .ok()
+            .and_then(|output| {
+                let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if text.is_empty() {
+                    String::from_utf8_lossy(&output.stderr)
+                        .trim()
+                        .to_string()
+                        .into()
+                } else {
+                    text.into()
+                }
+            })
+            .filter(|value| !value.is_empty());
+        self.inner.lock().unwrap().dsh_version = version;
         self.set_phase(RuntimePhase::Starting, "正在启动 DSH...".to_string(), None);
         if let Err(error) = self.start(node, entry, config.dsh_home) {
             self.fail(error);
@@ -776,8 +1040,6 @@ impl DshManager {
     fn start(&mut self, node: PathBuf, entry: PathBuf, home: Option<String>) -> Result<(), String> {
         self.cleanup_child();
 
-        let port = reserve_port()?;
-        let url = format!("http://127.0.0.1:{port}");
         let workspace = std::env::var("HOME").unwrap_or_else(|_| ".".into());
 
         self.generation += 1;
@@ -785,13 +1047,14 @@ impl DshManager {
 
         // 装配内嵌插件（best-effort）并生成 --patch overlay：任何失败只记日志，不影响 dsh 启动
         let overlay = {
-            let resource_dir = self.app.path().resource_dir().ok();
+            let plugins_resource =
+                embedded::plugins_resource_dir(self.app.path().resource_dir().ok().as_deref());
             let home_path = home
                 .as_ref()
                 .map(|h| PathBuf::from(h.as_str()))
                 .or_else(|| dirs::home_dir().map(|h| h.join(".dsh")));
             let mut log = |line: &str| self.append_log(line);
-            let mounted = match (resource_dir, home_path) {
+            let mounted = match (plugins_resource, home_path) {
                 (Some(res), Some(home)) => embedded::assemble(&res, &home, &mut log),
                 _ => Vec::new(),
             };
@@ -812,7 +1075,7 @@ impl DshManager {
             "--host".into(),
             "127.0.0.1".into(),
             "--port".into(),
-            port.to_string(),
+            "0".into(),
         ]);
         cmd.arg(&entry)
             .args(&args)
@@ -839,32 +1102,18 @@ impl DshManager {
             .map(|path| format!(" --patch {}", path.to_string_lossy()))
             .unwrap_or_default();
         self.append_log(&format!(
-            "[desktop] 启动 dsh: {} {} web{overlay_log} --host 127.0.0.1 --port {port}",
+            "[desktop] 启动 dsh: {} {} web{overlay_log} --host 127.0.0.1 --port 0",
             node.display(),
             entry.display()
         ));
 
         let stdout = child.stdout.take().expect("stdout 已开启管道");
         let stderr = child.stderr.take().expect("stderr 已开启管道");
-        self.spawn_reader(stdout, "stdout");
+        self.spawn_url_reader(stdout, generation, "stdout");
         self.spawn_reader(stderr, "stderr");
         self.child = Some(child);
 
-        let tx = self.tx.clone();
-        thread::spawn(move || {
-            let started = Instant::now();
-            loop {
-                if is_server_ready(port) {
-                    let _ = tx.send(ManagerMessage::Ready { generation, url });
-                    return;
-                }
-                if started.elapsed() >= READY_TIMEOUT {
-                    let _ = tx.send(ManagerMessage::ReadyTimeout { generation, port });
-                    return;
-                }
-                thread::sleep(POLL_INTERVAL);
-            }
-        });
+        self.spawn_health_checker();
 
         Ok(())
     }
@@ -874,8 +1123,10 @@ impl DshManager {
             if let Ok(url) = tauri::Url::parse(&url) {
                 let _ = window.navigate(url);
             }
-            let _ = window.show();
-            let _ = window.set_focus();
+            if !self.start_in_tray.load(Ordering::Relaxed) {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
             emit_window_state(&self.app);
         }
     }
@@ -928,6 +1179,61 @@ impl DshManager {
         });
     }
 
+    fn spawn_url_reader(
+        &self,
+        stream: impl std::io::Read + Send + 'static,
+        generation: u64,
+        label: &'static str,
+    ) {
+        let app = self.app.clone();
+        let inner = self.inner.clone();
+        let log_path = self.log_path.clone();
+        let tx = self.tx.clone();
+        thread::spawn(move || {
+            let reader = BufReader::new(stream);
+            for line in reader.lines().map_while(Result::ok) {
+                let line = line.trim_end();
+                if let Some(url) = process::parse_dsh_web_url(line) {
+                    let _ = tx.send(ManagerMessage::Ready { generation, url });
+                }
+                append_line(&app, &inner, &log_path, &format!("[{label}] {line}"));
+            }
+        });
+    }
+
+    fn spawn_health_checker(&self) {
+        let inner = self.inner.clone();
+        let tx = self.tx.clone();
+        let generation = self.generation;
+        thread::spawn(move || {
+            let started = Instant::now();
+            let url = loop {
+                if let Some(url) = inner.lock().unwrap().url.clone() {
+                    break url;
+                }
+                if started.elapsed() >= READY_TIMEOUT {
+                    let _ = tx.send(ManagerMessage::ReadyTimeout { generation });
+                    return;
+                }
+                thread::sleep(POLL_INTERVAL);
+            };
+
+            let mut failures = 0u32;
+            loop {
+                if is_health_ready(&url) {
+                    failures = 0;
+                } else {
+                    failures += 1;
+                    if failures >= 3 {
+                        let _ = tx.send(ManagerMessage::Unhealthy { generation });
+                        return;
+                    }
+                }
+                thread::sleep(POLL_INTERVAL);
+            }
+        });
+    }
+
     fn update_detection(&self, node_found: bool, dsh_installed: bool) {
         let mut inner = self.inner.lock().unwrap();
         inner.node_found = node_found;
@@ -950,19 +1256,36 @@ impl DshManager {
 
     /// 发送系统原生通知（就绪 / 失败 / 安装完成等关键节点）。
     fn notify(&self, title: &str, body: &str) {
-        let _ = self
-            .app
-            .notification()
-            .builder()
-            .title(title.to_string())
-            .body(body.to_string())
-            .show();
+        notifications::show(&self.app, title, body, None);
     }
 }
 
 #[tauri::command]
 fn get_status(state: State<AppState>) -> RuntimeSnapshot {
     state.inner.lock().unwrap().snapshot()
+}
+
+#[tauri::command]
+fn get_pending_deeplinks(state: State<AppState>) -> Vec<DeepLinkPayload> {
+    state
+        .inner
+        .lock()
+        .unwrap()
+        .pending_deeplinks
+        .iter()
+        .cloned()
+        .collect()
+}
+
+#[tauri::command]
+fn ack_deeplink(state: State<AppState>, id: String) -> Result<(), String> {
+    state
+        .inner
+        .lock()
+        .unwrap()
+        .pending_deeplinks
+        .retain(|item| item.id != id);
+    Ok(())
 }
 
 #[derive(Clone, Serialize)]
@@ -980,6 +1303,74 @@ fn emit_window_state(app: &AppHandle) {
             },
         );
     }
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct ShortcutSnapshot {
+    shortcut: String,
+    registered: bool,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct DropPosition {
+    x: f64,
+    y: f64,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct FileDropPayload {
+    id: String,
+    paths: Vec<String>,
+    kind: String,
+    position: DropPosition,
+    action: String,
+}
+
+static NEXT_DROP_ID: AtomicU64 = AtomicU64::new(0);
+
+fn emit_file_drop(window: &tauri::WebviewWindow, paths: Vec<PathBuf>, action: &str) {
+    let id = format!("drop-{}", NEXT_DROP_ID.fetch_add(1, Ordering::Relaxed));
+    let kind = process::classify_drop(&paths);
+    let payload = FileDropPayload {
+        id,
+        paths: paths
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect(),
+        kind: kind.to_string(),
+        position: DropPosition { x: 0.0, y: 0.0 },
+        action: action.to_string(),
+    };
+    let _ = window.emit("dsh-file-drop", payload);
+}
+
+#[tauri::command]
+fn open_paths(window: tauri::WebviewWindow, paths: Vec<String>) -> Result<(), String> {
+    if paths.is_empty() {
+        return Err("未提供文件路径".to_string());
+    }
+    emit_file_drop(
+        &window,
+        paths.into_iter().map(PathBuf::from).collect(),
+        "open",
+    );
+    Ok(())
+}
+
+#[tauri::command]
+fn import_paths(window: tauri::WebviewWindow, paths: Vec<String>) -> Result<(), String> {
+    if paths.is_empty() {
+        return Err("未提供目录路径".to_string());
+    }
+    emit_file_drop(
+        &window,
+        paths.into_iter().map(PathBuf::from).collect(),
+        "import",
+    );
+    Ok(())
 }
 
 /// 无边框窗口控制：minimize / maximize（切换）/ close。
@@ -1069,6 +1460,59 @@ fn install_dsh(state: State<AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn update_dsh(state: State<AppState>) -> Result<(), String> {
+    if matches!(state.inner.lock().unwrap().phase, RuntimePhase::Installing) {
+        return Ok(());
+    }
+    let config = config::load(&state.config_path).effective(|k| std::env::var(k).ok());
+    let npm = resolve_npm(&config).ok_or_else(|| "未检测到 npm，无法更新 DSH".to_string())?;
+    {
+        let mut inner = state.inner.lock().unwrap();
+        inner.phase = RuntimePhase::Installing;
+        inner.message = "正在更新 DSH...".to_string();
+    }
+    emit_status(&state.app, &state.inner);
+    let app = state.app.clone();
+    let inner = state.inner.clone();
+    let tx = state.tx.clone();
+    let log_path = state.log_dir.join("update.log");
+    thread::spawn(move || {
+        append_line(
+            &app,
+            &inner,
+            &log_path,
+            "[desktop] 执行: npm install -g @deepseek-ai/dsh@latest",
+        );
+        let child = Command::new(&npm)
+            .args(["install", "-g", "@deepseek-ai/dsh@latest"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| format!("无法启动 npm: {error}"));
+        let result = child.and_then(|mut child| {
+            if let Some(stdout) = child.stdout.take() {
+                append_stream(stdout, &app, &inner, &log_path, "npm");
+            }
+            if let Some(stderr) = child.stderr.take() {
+                append_stream(stderr, &app, &inner, &log_path, "npm");
+            }
+            child
+                .wait()
+                .map_err(|error| format!("npm 更新中断: {error}"))
+                .and_then(|status| {
+                    if status.success() {
+                        Ok(())
+                    } else {
+                        Err(format!("npm 更新失败 (exit {:?})", status.code()))
+                    }
+                })
+        });
+        let _ = tx.send(ManagerMessage::InstallFinished { result });
+    });
+    Ok(())
+}
+
+#[tauri::command]
 fn open_log_directory(state: State<AppState>) -> Result<(), String> {
     open_with_system(&state.log_dir.to_string_lossy())
 }
@@ -1106,10 +1550,25 @@ fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
     }
 }
 
+/// 保存快捷键注册表到 config.json（保留其余配置字段）。
+fn persist_shortcuts(config_path: &Path, shortcuts: &[String]) {
+    let mut config = config::load(config_path);
+    config.shortcuts = shortcuts.to_vec();
+    let _ = config::save(config_path, &config);
+}
+
 /// 注册系统级全局快捷键（如 CmdOrCtrl+Shift+D），按下时 emit `dsh-shortcut`。
-#[tauri::command]
-fn register_shortcut(state: State<AppState>, shortcut: String) -> Result<(), String> {
+fn register_shortcut_internal(
+    state: &AppState,
+    shortcut: String,
+) -> Result<ShortcutSnapshot, String> {
     let s = Shortcut::from_str(&shortcut).map_err(|e| e.to_string())?;
+    if state.shortcuts.lock().unwrap().contains_key(&shortcut) {
+        return Ok(ShortcutSnapshot {
+            shortcut,
+            registered: true,
+        });
+    }
     let app = state.app.clone();
     let trigger = shortcut.clone();
     app.global_shortcut()
@@ -1118,9 +1577,29 @@ fn register_shortcut(state: State<AppState>, shortcut: String) -> Result<(), Str
                 let _ = app.emit("dsh-shortcut", trigger.clone());
             }
         })
-        .map_err(|e| e.to_string())?;
-    state.shortcuts.lock().unwrap().insert(shortcut, s);
-    Ok(())
+        .map_err(|e| {
+            let message = e.to_string();
+            if message.contains("already registered") || message.contains("already in use") {
+                format!("快捷键 {shortcut} 已被其他应用占用")
+            } else {
+                format!("注册快捷键 {shortcut} 失败: {message}")
+            }
+        })?;
+    let shortcuts = {
+        let mut map = state.shortcuts.lock().unwrap();
+        map.insert(shortcut.clone(), s);
+        map.keys().cloned().collect::<Vec<_>>()
+    };
+    persist_shortcuts(&state.config_path, &shortcuts);
+    Ok(ShortcutSnapshot {
+        shortcut,
+        registered: true,
+    })
+}
+
+#[tauri::command]
+fn register_shortcut(state: State<AppState>, shortcut: String) -> Result<ShortcutSnapshot, String> {
+    register_shortcut_internal(&state, shortcut)
 }
 
 /// 注销已注册的全局快捷键。
@@ -1132,6 +1611,52 @@ fn unregister_shortcut(state: State<AppState>, shortcut: String) -> Result<(), S
             .unregister(s)
             .map_err(|e| e.to_string())?;
     }
+    let shortcuts = state
+        .shortcuts
+        .lock()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    persist_shortcuts(&state.config_path, &shortcuts);
+    Ok(())
+}
+
+/// 查询当前已注册的全局快捷键。
+#[tauri::command]
+fn get_shortcuts(state: State<AppState>) -> Vec<ShortcutSnapshot> {
+    state
+        .shortcuts
+        .lock()
+        .unwrap()
+        .keys()
+        .cloned()
+        .map(|shortcut| ShortcutSnapshot {
+            shortcut,
+            registered: true,
+        })
+        .collect()
+}
+
+/// 注销全部已注册的全局快捷键并清空持久化记录。
+#[tauri::command]
+fn unregister_all_shortcuts(state: State<AppState>) -> Result<(), String> {
+    let shortcuts = state
+        .shortcuts
+        .lock()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    if !shortcuts.is_empty() {
+        state
+            .app
+            .global_shortcut()
+            .unregister_all()
+            .map_err(|e| e.to_string())?;
+    }
+    state.shortcuts.lock().unwrap().clear();
+    persist_shortcuts(&state.config_path, &[]);
     Ok(())
 }
 
@@ -1253,15 +1778,96 @@ async fn install_update(app: AppHandle) -> Result<String, String> {
             .map_err(|e| format!("设置执行权限失败: {e}"))?;
     }
 
-    Ok(dest.to_string_lossy().into_owned())
+    let dest_string = dest.to_string_lossy().into_owned();
+    notifications::show(
+        &app,
+        "更新下载完成",
+        &format!("安装包已保存到 {dest_string}"),
+        Some(notifications::NotificationAction {
+            kind: "open_update".into(),
+            session_id: None,
+            url: None,
+            path: Some(dest_string.clone()),
+        }),
+    );
+    Ok(dest_string)
+}
+
+/// 请求系统通知权限，返回 granted / prompt / denied。
+#[tauri::command]
+fn request_notification_permission(app: AppHandle) -> Result<String, String> {
+    use tauri_plugin_notification::PermissionState;
+    let state = app
+        .notification()
+        .request_permission()
+        .map_err(|e| e.to_string())?;
+    Ok(match state {
+        PermissionState::Granted => "granted".to_string(),
+        PermissionState::Prompt => "prompt".to_string(),
+        PermissionState::PromptWithRationale => "prompt".to_string(),
+        PermissionState::Denied => "denied".to_string(),
+    })
 }
 
 fn emit_status(app: &AppHandle, inner: &Arc<Mutex<Inner>>) {
     let snapshot = inner.lock().unwrap().snapshot();
-    let _ = app.emit("dsh-status", snapshot);
+    let _ = app.emit("dsh-status", &snapshot);
+    update_tray(app, &snapshot);
+}
+
+fn tray_phase_label(phase: &RuntimePhase) -> &'static str {
+    match phase {
+        RuntimePhase::Detecting => "检测中",
+        RuntimePhase::MissingDsh => "未安装",
+        RuntimePhase::Installing => "安装中",
+        RuntimePhase::Starting => "启动中",
+        RuntimePhase::Ready => "已就绪",
+        RuntimePhase::Failed => "失败",
+        RuntimePhase::Stopped => "已停止",
+    }
+}
+
+fn update_tray(app: &AppHandle, snapshot: &RuntimeSnapshot) {
+    let Some(state) = app.try_state::<TrayState>() else {
+        return;
+    };
+    let label = tray_phase_label(&snapshot.phase);
+    let _ = state.status.set_text(format!("DSH: {label}"));
+    let ready = matches!(snapshot.phase, RuntimePhase::Ready) && snapshot.url.is_some();
+    let _ = state.copy_url.set_enabled(ready);
+    let _ = state.open_browser.set_enabled(ready);
+    let running = matches!(snapshot.phase, RuntimePhase::Starting | RuntimePhase::Ready);
+    let _ = state.stop_dsh.set_enabled(running);
+    let _ = state
+        .restart_dsh
+        .set_enabled(!matches!(snapshot.phase, RuntimePhase::Installing));
+    let url_hint = snapshot
+        .url
+        .as_deref()
+        .map(|url| format!(" ({url})"))
+        .unwrap_or_default();
+    let _ = state
+        .tray
+        .set_tooltip(Some(format!("DSH Desktop - {label}{url_hint}")));
+}
+
+fn rotate_log_if_needed(log_path: &Path) {
+    let _guard = LOG_LOCK.lock().unwrap();
+    let Ok(meta) = std::fs::metadata(log_path) else {
+        return;
+    };
+    if meta.len() <= MAX_LOG_BYTES {
+        return;
+    }
+    let old = log_path.with_extension("log.1");
+    let older = log_path.with_extension("log.2");
+    let _ = std::fs::remove_file(&older);
+    let _ = std::fs::rename(&old, &older);
+    let _ = std::fs::rename(log_path, &old);
 }
 
 fn append_line(app: &AppHandle, inner: &Arc<Mutex<Inner>>, log_path: &Path, line: &str) {
+    rotate_log_if_needed(log_path);
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(log_path) {
         let _ = writeln!(file, "{line}");
     }
@@ -1419,24 +2025,14 @@ fn find_in_path(name: &str) -> Option<PathBuf> {
     None
 }
 
-fn reserve_port() -> Result<u16, String> {
-    let listener =
-        std::net::TcpListener::bind(("127.0.0.1", 0)).map_err(|error| error.to_string())?;
-    let port = listener
-        .local_addr()
-        .map_err(|error| error.to_string())?
-        .port();
-    drop(listener);
-    Ok(port)
-}
-
-fn is_server_ready(port: u16) -> bool {
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    let mut stream = match TcpStream::connect_timeout(&addr, Duration::from_millis(500)) {
-        Ok(stream) => stream,
-        Err(_) => return false,
+fn is_health_ready(url: &str) -> bool {
+    let Ok(mut stream) = TcpStream::connect_timeout(
+        &SocketAddr::from(([127, 0, 0, 1], parse_port(url))),
+        Duration::from_millis(500),
+    ) else {
+        return false;
     };
-    let request = format!("GET / HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\n\r\n");
+    let request = "GET /dsh-desktop/health HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n";
     if stream.write_all(request.as_bytes()).is_err() {
         return false;
     }
@@ -1446,6 +2042,15 @@ fn is_server_ready(port: u16) -> bool {
         return false;
     }
     line.starts_with("HTTP/1.0 200") || line.starts_with("HTTP/1.1 200")
+}
+
+fn parse_port(url: &str) -> u16 {
+    let authority = url.split('/').nth(2).unwrap_or(url);
+    authority
+        .rsplit(':')
+        .next()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(3080)
 }
 
 fn exit_summary(status: &std::process::ExitStatus) -> String {
@@ -1505,5 +2110,22 @@ mod tests {
                 format!("\"{expected}\"")
             );
         }
+    }
+
+    #[test]
+    fn tray_labels_cover_all_phases() {
+        assert_eq!(tray_phase_label(&RuntimePhase::Detecting), "检测中");
+        assert_eq!(tray_phase_label(&RuntimePhase::Ready), "已就绪");
+        assert_eq!(tray_phase_label(&RuntimePhase::Stopped), "已停止");
+    }
+
+    #[test]
+    fn parse_port_handles_health_url_path() {
+        assert_eq!(parse_port("http://127.0.0.1:62359"), 62359);
+        assert_eq!(
+            parse_port("http://127.0.0.1:62359/dsh-desktop/health"),
+            62359
+        );
+        assert_eq!(parse_port("http://[::1]:62359/dsh-desktop/health"), 62359);
     }
 }

@@ -23,7 +23,7 @@ body {
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Helvetica Neue", sans-serif;
-  background: transparent;
+  background: var(--bg);
   color: var(--ink);
   display: grid;
   place-items: center;

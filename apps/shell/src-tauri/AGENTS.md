@@ -8,9 +8,8 @@ DSH Desktop 的 Rust 后端。职责：检测 / 一键安装 `dsh`、以子进�
 - `src/config.rs` — `DshConfig` 结构、`config.json` 的 load/save 与 effective 合并逻辑
 - `src/main.rs` — 仅入口：调用 `dsh_desktop_lib::run()`
 - `Cargo.toml` — 依赖：`tauri 2`、`tauri-plugin-global-shortcut`、`serde`、`serde_json`；lib 名为 `dsh_desktop_lib`
-- `tauri.conf.json` — control 窗口配置、构建前后命令、bundle 目标（main 窗口在 setup 中手动构建）
+- `tauri.conf.json` — main / control 窗口配置、构建前后命令、bundle 目标
 - `capabilities/default.json` — IPC 权限（`core:default` + `global-shortcut:default`，覆盖 main 与 control 窗口）
-- `resources/titlebar-transparency.js` — macOS 透明标题栏样式注入
 - `build.rs` — 仅调用 `tauri_build::build()`
 - `gen/` — 构建生成的 schema（勿手改，已在 `.gitignore`）
 - `icons/` — 应用图标（由 `tauri icon` 生成，勿手改）
@@ -38,7 +37,7 @@ DSH Desktop 的 Rust 后端。职责：检测 / 一键安装 `dsh`、以子进�
 
 ## 窗口与快捷键
 
-- **main 窗口**：在 `setup` 中手动构建；macOS 启用透明窗口 + Overlay 标题栏 + vibrancy 毛玻璃（注入 `titlebar-transparency.js`），其他平台为普通不透明窗口
+- **main 窗口**：`tauri.conf.json` 中声明（label `main`），普通不透明窗口
 - **control 窗口**：`tauri.conf.json` 中声明（label `control`，`visible: false`）；菜单项“控制中心”与全局快捷键 `CmdOrCtrl+Shift+C` 都调用 `open_control_window()`——已存在则显示并聚焦（重复调用只聚焦）；关闭请求被拦截（`prevent_close`），仅隐藏不销毁
 - 菜单在 `setup` 中通过 `build_menu()` 构建（“DSH” 子菜单），`on_menu_event` 打开 control 窗口
 - dev 模式下 control 窗口导航到 `http://localhost:5174/control-center/`（`debug_assertions`）

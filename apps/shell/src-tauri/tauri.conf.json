@@ -10,8 +10,19 @@
     "frontendDist": "../../../dist"
   },
   "app": {
-    "macOSPrivateApi": true,
     "windows": [
+      {
+        "label": "main",
+        "title": "DSH Desktop",
+        "width": 1280,
+        "height": 860,
+        "minWidth": 480,
+        "minHeight": 600,
+        "center": true,
+        "resizable": true,
+        "visible": true,
+        "backgroundColor": "#f5f6fa"
+      },
       {
         "label": "control",
         "title": "DSH 控制中心",

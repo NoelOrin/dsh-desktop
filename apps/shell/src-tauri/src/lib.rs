@@ -186,44 +186,6 @@ pub fn run() {
                 let _ = start_tx.send(ManagerMessage::Start);
             });
 
-            // 主窗口改为在 setup 中手动构建：macOS 上启用透明窗口 +
-            // Overlay 标题栏 + vibrancy 毛玻璃，并在每次页面加载完成后注入
-            // 样式，让 Harness Web UI 顶部操作 bar 区域透出毛玻璃；其他平台
-            // 保持普通不透明窗口。
-            let builder =
-                tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::default())
-                    .title("DSH Desktop")
-                    .inner_size(1280.0, 860.0)
-                    .min_inner_size(480.0, 600.0)
-                    .center()
-                    .resizable(true)
-                    .visible(true);
-
-            #[cfg(target_os = "macos")]
-            {
-                use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
-
-                let injected = include_str!("../resources/titlebar-transparency.js");
-                let window = builder
-                    .transparent(true)
-                    .title_bar_style(tauri::TitleBarStyle::Overlay)
-                    .hidden_title(true)
-                    .on_page_load(move |window, payload| {
-                        if payload.event() == tauri::webview::PageLoadEvent::Finished {
-                            let _ = window.eval(injected);
-                        }
-                    })
-                    .build()?;
-
-                apply_vibrancy(&window, NSVisualEffectMaterial::HudWindow, None, Some(20.0))
-                    .expect("无法应用 macOS 毛玻璃效果 (apply_vibrancy)");
-            }
-
-            #[cfg(not(target_os = "macos"))]
-            {
-                let _ = builder.build()?;
-            }
-
             let menu = build_menu(app.handle())?;
             app.set_menu(menu)?;
             app.on_menu_event(|app, event| {

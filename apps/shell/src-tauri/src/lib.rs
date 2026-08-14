@@ -157,6 +157,7 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
   var GAP = 0;
   var MAC_TRAFFIC_WIDTH = 80;
   var MAC_DRAG_HEIGHT = 16;
+  var MAC_SIDEBAR_INSET = 20;
 
   function detectPlatform() {
     var ua = navigator.userAgent || "";
@@ -224,10 +225,25 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
       "  " + (PLATFORM === "macos" ? "right: 0;" : "right: " + reservedEdge() + "px;"),
       "  height: " + (PLATFORM === "macos" ? MAC_DRAG_HEIGHT : 44) + "px;",
       "  z-index: 2147483644;",
-      "}",
-      (PLATFORM === "macos" ? ".hHd-Xa_root { padding-top: 16px !important; }" : "")
+      "}"
     ].join("\n");
     (document.head || document.documentElement).appendChild(style);
+  }
+
+  function findSidebarRoot() {
+    // 侧栏根节点用稳定的 data-slot 定位，避免依赖 CSS module 哈希 class。
+    var slot = document.querySelector('[data-slot="sidebar"]');
+    var root = slot && slot.firstElementChild;
+    return root instanceof HTMLElement ? root : null;
+  }
+
+  function applyMacSidebarInset() {
+    if (PLATFORM !== "macos") return true;
+    var sidebar = findSidebarRoot();
+    if (!sidebar) return false;
+    var prevTop = parseFloat(sidebar.style.paddingTop) || 0;
+    sidebar.style.paddingTop = Math.max(prevTop, MAC_SIDEBAR_INSET) + "px";
+    return true;
   }
 
   function findTopBar() {
@@ -292,6 +308,12 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
     var host = PLATFORM === "macos" ? null : ensureControls();
     var bar = findTopBar();
     var strip = ensureDragStrip();
+    if (!applyMacSidebarInset()) {
+      var observer = new MutationObserver(function () {
+        if (applyMacSidebarInset()) observer.disconnect();
+      });
+      observer.observe(document.documentElement || document.body, { childList: true, subtree: true });
+    }
     if (bar && bar instanceof HTMLElement) {
       if (PLATFORM !== "macos") {
         // 非 mac 顶部栏自身作为拖拽区，注入条不拦截原按钮交互。

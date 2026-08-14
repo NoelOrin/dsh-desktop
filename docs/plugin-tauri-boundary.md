@@ -138,7 +138,7 @@ snake_case）。
 | bridge 唯一职责 | 让 dsh 插件/页面能调用 Tauri 壳能力（桥接命令契约由 bridge 自持 + §5 端口白名单） |
 | 消费者 | dsh web 内的插件/页面 |
 | 依赖方向 | 依赖 `@deepseek-ai/cordis` 等 dsh 生态包；**不依赖 `@dsh-desktop/contracts`**（native 契约与桥接契约分离） |
-| 安装 | 每个插件 `dsh plugin --profile web add <包>`（或随桌面应用自动装配） |
+| 安装 | **内嵌装配（主交付路径）**：`yarn build:plugins` 编译打包进 Tauri resources，桌面应用启动时复制到 `$DSH_HOME/profiles/node_modules/` 兜底目录并以 `--patch` overlay 挂载——不写 profile manifest、卸载后 dsh 配置无引用残留；开发期用 `dsh plugin --profile web add <包>` 单独安装 |
 
 **约定**：
 
@@ -154,6 +154,32 @@ snake_case）。
   状态与实现分离：插件只读写设置项，实际启停经受控桥接命令执行，两端各做各的。
 - 若未来有第二个需要壳能力的 dsh 插件，能力暴露仍走 §5 的受控桥接流程，不因“是自家的”
   而放宽。
+
+### 6.1 内嵌插件的装配与挂载（Option B 语义）
+
+桌面壳把 `packages/plugins` 的插件**内嵌随应用分发并自动挂载**，机制分三段：
+
+1. **构建（`yarn build:plugins`）**：`scripts/build-plugins.mjs` 用 tsdown 编译各插件——
+   host ESM 产出 `lib/index.js`，可选 client UMD 产出 `lib/client.js`——并把自包含 dist 包
+   （`package.json` 白名单字段 + `cordis.patch.yml` + `lib/`）装配进
+   `apps/shell/src-tauri/resources/plugins/<name>/`；`tauri.conf.json` 的
+   `bundle.resources: ["resources/plugins/**/*"]` 将其打进安装包，`beforeBuildCommand`
+   链入 `yarn build:plugins`。
+2. **装配（Rust `apps/shell/src-tauri/src/embedded.rs`）**：应用启动时
+   `embedded::assemble` 遍历 resources 里每个含 `dshDesktop.id` 的插件包，复制进
+   `$DSH_HOME/profiles/node_modules/@dsh-desktop/<name>/`（dsh 的 profile 模块兜底目录）——
+   以版本号为键幂等（缺失或版本不同才重装）、临时目录 + rename 原子替换、单包失败只记日志
+   跳过；随后 `write_overlay` 在应用数据目录生成 `embedded-plugins.patch.yml`（`- insert:`
+   行，插件名**必须单引号**——`@` 是 YAML 1.1 保留指示符）。
+3. **挂载**：桌面壳以 `dsh web --patch <overlay> --host 127.0.0.1 --port <port>` 拉起子进程，
+   overlay 的 `- insert:` 行向 profile 插入插件行——host 侧经 dsh 的 loader 装载，client 侧由
+   dsh-client-modules 扫描插件 `exports["./client"]` 自动注入。**不写 profile manifest、
+   不下载依赖**（内嵌包已自包含）。
+
+**Option B 语义**：内嵌插件只随桌面壳的 `--patch` 挂载；**单独运行 `dsh web`（不带 `--patch`）
+不挂载它们**，与 `dsh plugin --profile web add` 的 profile 安装相互独立。停用某个内嵌插件只需
+从 resources 移除对应目录（或不再 `--patch`），不修改 profile manifest，dsh 配置里无引用残留
+（已复制的兜底目录为惰性数据，不再被挂载）。
 
 ## 7. 新增能力走哪条路（变更流程）
 

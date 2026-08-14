@@ -27,7 +27,8 @@ dsh 插件的开发容器：**每个子目录一个 dsh 插件**（cordis bundle
 - `cordis.patch.yml` 是 YAML 配置层：`- insert:` 向 profile 插入插件行（`id` / `name`）
 - 插件源码：`export const name` + `export function apply(ctx, config)`；事件名必须是
   cordis `Events` 接口里的键（骨架阶段不要注册未声明的事件）
-- 安装：`dsh plugin --profile web add <包>`（或随桌面应用装配）
+- 安装：**内嵌装配（主交付路径）**——`yarn build:plugins` 编译打包进 Tauri resources，桌面应用启动时自动复制进 `$DSH_HOME/profiles/node_modules/@dsh-desktop/<name>/` 并以 `--patch` overlay 挂载（见 `docs/plugin-tauri-boundary.md` §6）；开发期亦可 `dsh plugin --profile web add <包>` 单独安装
+- 构建与装配：`yarn build:plugins`（根脚本）经 tsdown 编译各插件——host ESM 产出 `lib/index.js`，可选 client UMD 产出 `lib/client.js`——并把自包含 dist 包（`package.json` 白名单字段 + `cordis.patch.yml` + `lib/`）装配进 `apps/shell/src-tauri/resources/plugins/<name>/`；桌面应用启动时 Rust 侧自动装配进 dsh 的 profile 模块兜底目录并以 `--patch` overlay 挂载（机制见 `docs/plugin-tauri-boundary.md` §6）
 - 注意：dsh 从 Git 安装时跑 `prepare` 而非 `build`，TS 插件需自包含构建产物
   （见官方 publish 文档）
 

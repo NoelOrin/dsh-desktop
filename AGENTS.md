@@ -10,6 +10,7 @@
 | `yarn build` | `tauri build` 打包，产物在 `apps/shell/src-tauri/target/release/bundle/` |
 | `yarn dev:web` | 仅启动前端 dev server（shell :5173） |
 | `yarn build:web` | 构建前端到 `dist/`（Tauri 的 `beforeBuildCommand` 会调用） |
+| `yarn build:plugins` | 编译 `packages/plugins` 各插件并把自包含 dist 包装配进 `apps/shell/src-tauri/resources/plugins/`（Tauri 的 `beforeBuildCommand` 也会调用） |
 | `yarn typecheck` | 对所有 workspace 执行 TypeScript 类型检查（shell / contracts / plugins） |
 | `yarn lint` / `yarn format` / `yarn format:check` | Biome 检查 / 格式化（格式约定见 `biome.json`） |
 | `corepack yarn install` | 安装依赖（Yarn 4 + node-modules，生成 `node_modules` 目录） |
@@ -29,6 +30,7 @@
 3. 未安装 → 前端显示“安装 DSH”按钮，一键执行 `npm install -g @deepseek-ai/dsh`（全局安装）
 4. 子进程端口返回 HTTP 200 即视为就绪，主窗口 `navigate` 到 `http://127.0.0.1:<port>`
 5. **桌面壳设置**：经 `packages/plugins/bridge` 插件在 dsh WebUI 设置面板提供“桌面”页（状态 / 配置 / 工具 / 开机自启），通过 `window.__DSH_DESKTOP__` 桥接调用壳能力；原独立控制中心（SolidJS）已迁移至此并移除
+6. **内嵌插件自动挂载**：`packages/plugins` 各插件经 `yarn build:plugins` 编译打包进 Tauri resources（`resources/plugins/`），应用启动时 Rust 侧把插件包装配到 `$DSH_HOME/profiles/node_modules/@dsh-desktop/<name>/`（版本键控幂等、原子替换、best-effort）并生成 `embedded-plugins.patch.yml` overlay，以 `dsh web --patch <overlay>` 挂载（host 走 loader、client 走 dsh-client-modules）；不写 profile manifest、不下载；单独 `dsh web`（不带 `--patch`）不挂载内嵌插件
 
 ## 配置优先级
 

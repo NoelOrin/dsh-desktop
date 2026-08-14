@@ -44,7 +44,7 @@ DSH Desktop 是 dsh 的桌面套壳：Rust 后端拉起 `dsh web` 子进程，�
 | --- | --- |
 | 运行位置 | Rust 后端（`apps/shell/src-tauri`）+ 两个本地 WebView 窗口 |
 | 职责 | 检测/安装/拉起/监控/停止 dsh 子进程；窗口/菜单/全局快捷键；应用数据目录；`config.json`；原生交互（打开日志目录）；打包分发 |
-| 已声明能力 | capabilities `core:default` + `global-shortcut:default`（覆盖 main/control 窗口） |
+| 已声明能力 | capabilities `core:default` + `global-shortcut:default`（覆盖 main 窗口） |
 | 实现契约 | `get_status` / `install_dsh` / `restart` / `open_log_directory` / `get_config` / `set_config`（类型与常量见 `packages/contracts`） |
 | 配置 | `config.json`（应用数据目录）→ 环境变量（`DSH_BIN`/ `DSH_NODE`/ `DSH_HOME`）→ PATH 检测 |
 
@@ -91,7 +91,7 @@ IPC 命令与事件**。本包只负责 **native 内容**：dsh 运行态的检�
 1. `packages/contracts/src/index.ts` — TS 类型与常量（唯一源头）
 2. `apps/shell/src-tauri/src/lib.rs`（及 `config.rs`）— Rust serde 类型
 3. `apps/shell/src/main.ts` — main 窗口前端
-4. `apps/control-center/src/lib/ipc.ts` — control 窗口前端
+4. `packages/plugins/bridge/src/client.tsx` — bridge 插件 client 面（桌面壳设置 UI）
 
 字段命名统一 snake_case（Rust serde `rename_all = "snake_case"`，TS 侧直接写
 snake_case）。
@@ -106,7 +106,7 @@ snake_case）。
 - 主窗口就绪后整页导航到 `http://127.0.0.1:<port>`，dsh web 是**远端 origin**。
 - Tauri 2 的 IPC 只对本地窗口页面默认开放；远端 origin 没有 `dangerousRemoteDomainIpcAccess`
   声明就拿不到 `window.__TAURI_INTERNALS__`。
-- capabilities 仅覆盖 main/control 两个本地窗口，**dsh web（及其插件）默认永远拿不到
+- capabilities 仅覆盖 main 本地窗口，**dsh web（及其插件）默认永远拿不到
   Tauri 能力**。
 
 这是**有意为之**的安全边界：第三方插件运行在 dsh 的 Node 进程和远端页面里，不授予它们
@@ -165,7 +165,7 @@ snake_case）。
 
 **B. 扩展桌面壳能力**
 → Rust 后端新增逻辑 + `packages/contracts` 声明契约 + capabilities 声明权限 +
-main/control 前端按需调用；dsh 侧无改动。
+main 前端按需调用；dsh 侧经 `packages/plugins/bridge` 桥接调用。
 
 **C. 两端联动（状态/事件/配置）**
 → 只允许通过 `packages/contracts` 已声明（或本次新增并同步四处）的 IPC 命令/事件；

@@ -14,6 +14,8 @@ fn main() {
             "set_autostart",
             "register_shortcut",
             "unregister_shortcut",
+            "check_update",
+            "install_update",
         ]));
     if let Err(error) = tauri_build::try_build(attributes) {
         println!("{error}");

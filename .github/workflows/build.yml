@@ -7,7 +7,6 @@ on:
   pull_request:
     paths:
       - "apps/shell/**"
-      - "apps/control-center/**"
       - "packages/**"
       - "package.json"
       - "yarn.lock"
@@ -186,6 +185,15 @@ jobs:
             printf '# DSH Desktop v%s\n' "${{ steps.version.outputs.VERSION }}" > /tmp/RELEASE_NOTES.md
           fi
 
+      - name: Generate updater artifacts
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          node .github/scripts/generate-updater-artifacts.mjs "$VERSION"
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
@@ -197,3 +205,5 @@ jobs:
             **/*.exe
             **/*.AppImage
             **/*.deb
+            **/*.sig
+            latest.json

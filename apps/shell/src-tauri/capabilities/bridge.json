@@ -22,6 +22,8 @@
     "allow-get-autostart",
     "allow-set-autostart",
     "allow-register-shortcut",
-    "allow-unregister-shortcut"
+    "allow-unregister-shortcut",
+    "allow-check-update",
+    "allow-install-update"
   ]
 }

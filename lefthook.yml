@@ -14,8 +14,11 @@ pre-push:
   parallel: false
   commands:
     typecheck:
-      run: yarn typecheck
+      # 用 npm workspaces 替代 yarn（Node 自带，无需单独安装 yarn）
+      run: npm run typecheck --workspaces --if-present
     cargo-fmt:
-      run: cd apps/shell/src-tauri && cargo fmt --check
+      # 未安装 cargo（Rust 工具链缺失）时跳过，避免无 cargo 环境无法推送
+      run: if command -v cargo >/dev/null 2>&1; then (cd apps/shell/src-tauri && cargo fmt --check); fi
     cargo-clippy:
-      run: cd apps/shell/src-tauri && cargo clippy --all-targets
+      # 未安装 cargo 时跳过
+      run: if command -v cargo >/dev/null 2>&1; then (cd apps/shell/src-tauri && cargo clippy --all-targets); fi

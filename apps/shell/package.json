@@ -10,8 +10,8 @@
     "tauri": "tauri",
     "dev:web": "vite",
     "build:web": "vite build",
-    "web:all": "concurrently -k -n shell,control -c blue,magenta \"yarn dev:web\" \"yarn workspace @dsh-desktop/control-center dev\"",
-    "web:build": "yarn build:web && yarn workspace @dsh-desktop/control-center build",
+    "web:all": "yarn dev:web",
+    "web:build": "yarn build:web",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

@@ -28,6 +28,7 @@ use tauri_plugin_global_shortcut::{
     Builder as ShortcutBuilder, GlobalShortcutExt, Shortcut, ShortcutState,
 };
 use tauri_plugin_notification::NotificationExt;
+use tauri_plugin_updater::UpdaterExt;
 
 const READY_TIMEOUT: Duration = Duration::from_secs(120);
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -90,6 +91,10 @@ const BRIDGE_SCRIPT: &str = r#"(function () {
       unregister: function (s) { return invoke("unregister_shortcut", { shortcut: s }); },
     },
     onShortcut: function (cb) { return listen("dsh-shortcut", cb); },
+    update: {
+      check: function () { return invoke("check_update"); },
+      install: function () { return invoke("install_update"); },
+    },
   };
 })();"#;
 
@@ -300,7 +305,9 @@ pub fn run() {
             get_autostart,
             set_autostart,
             register_shortcut,
-            unregister_shortcut
+            unregister_shortcut,
+            check_update,
+            install_update
         ])
         .on_window_event(|window, event| {
             let label = window.label().to_string();
@@ -805,6 +812,32 @@ fn unregister_shortcut(state: State<AppState>, shortcut: String) -> Result<(), S
             .map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+/// 后台检查 GitHub Release 是否有新版本，返回新版本号（无则 None）。
+/// 仅供 dsh 插件"检查更新"经桥接调用；启动时的自动检查见 run() 内 updater 插件配置。
+#[tauri::command]
+async fn check_update(app: AppHandle) -> Result<Option<String>, String> {
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    match updater.check().await.map_err(|e| e.to_string())? {
+        Some(update) => Ok(Some(update.version)),
+        None => Ok(None),
+    }
+}
+
+/// 下载并安装新版本（含签名验证）。安装完成后由用户重启应用生效。
+#[tauri::command]
+async fn install_update(app: AppHandle) -> Result<(), String> {
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    let update = updater
+        .check()
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "没有可用更新".to_string())?;
+    update
+        .download_and_install(|_downloaded, _total| {}, || {})
+        .await
+        .map_err(|e| e.to_string())
 }
 
 fn emit_status(app: &AppHandle, inner: &Arc<Mutex<Inner>>) {

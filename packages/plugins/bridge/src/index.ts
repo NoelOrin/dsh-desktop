@@ -46,6 +46,10 @@ export interface DshDesktopBridge {
     unregister(shortcut: string): Promise<void>;
   };
   onShortcut(cb: (shortcut: string) => void): Promise<() => void>;
+  update: {
+    check(): Promise<string | null>;
+    install(): Promise<void>;
+  };
 }
 
 /** 读取壳注入的桥接对象；未注入（如纯浏览器）时返回 null。 */

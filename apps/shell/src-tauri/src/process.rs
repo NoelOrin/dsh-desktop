@@ -1,4 +1,112 @@
-use std::path::PathBuf;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::{Duration, Instant};
+
+use sysinfo::{Process, ProcessesToUpdate, System};
+
+/// 应用自管理 dsh web 进程的环境标记，用于崩溃/异常退出后识别残留实例。
+const MANAGED_ENV: &str = "DSH_DESKTOP_MANAGED=1";
+const STALE_CLEANUP_GRACE: Duration = Duration::from_secs(2);
+const STALE_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// 清理启动本应用管理的旧 dsh web 实例，返回识别到的进程数。
+///
+/// 只清理命令中带 `web`，且携带应用数据目录 overlay 或 `DSH_DESKTOP_MANAGED`
+/// 标记的进程，避免误杀用户单独启动的 `dsh web`。
+pub fn cleanup_stale_dsh_web(app_data_dir: &Path) -> usize {
+    let marker = app_data_dir.to_string_lossy();
+    let mut system = System::new_all();
+    let mut pids: Vec<_> = system
+        .processes()
+        .values()
+        .filter(|process| is_managed_dsh_web(process, &marker))
+        .map(|process| process.pid())
+        .collect();
+    pids.sort_unstable();
+    pids.dedup();
+    if pids.is_empty() {
+        return 0;
+    }
+
+    let deadline = Instant::now() + STALE_CLEANUP_GRACE;
+    let mut signalled = false;
+    loop {
+        let alive = pids
+            .iter()
+            .filter_map(|pid| system.process(*pid))
+            .filter(|process| is_managed_dsh_web(process, &marker))
+            .collect::<Vec<_>>();
+        if alive.is_empty() {
+            break;
+        }
+        if Instant::now() >= deadline {
+            for process in alive {
+                force_terminate_process(process);
+            }
+            break;
+        }
+        if !signalled {
+            for process in alive {
+                terminate_process(process);
+            }
+            signalled = true;
+        }
+        thread::sleep(STALE_POLL_INTERVAL);
+        system.refresh_processes(ProcessesToUpdate::Some(&pids), true);
+    }
+
+    pids.len()
+}
+
+fn is_managed_dsh_web(process: &Process, marker: &str) -> bool {
+    is_managed_dsh_cmd(process.cmd(), process.environ(), marker)
+}
+
+fn is_managed_dsh_cmd(cmd: &[OsString], environ: &[OsString], marker: &str) -> bool {
+    if !cmd.iter().any(|arg| arg.to_string_lossy() == "web") {
+        return false;
+    }
+    let has_overlay = cmd.iter().any(|arg| arg.to_string_lossy().contains(marker));
+    let has_managed_env = environ
+        .iter()
+        .any(|value| value.to_string_lossy() == MANAGED_ENV);
+    has_overlay || has_managed_env
+}
+
+#[cfg(unix)]
+fn terminate_process(process: &Process) {
+    if let Some(group) = process.group_id() {
+        let group_id = *group as i32;
+        if group_id > 0 {
+            unsafe { libc::kill(-group_id, libc::SIGTERM) };
+            return;
+        }
+    }
+    let _ = process.kill_with(sysinfo::Signal::Term);
+}
+
+#[cfg(not(unix))]
+fn terminate_process(process: &Process) {
+    process.kill();
+}
+
+#[cfg(unix)]
+fn force_terminate_process(process: &Process) {
+    if let Some(group) = process.group_id() {
+        let group_id = *group as i32;
+        if group_id > 0 {
+            unsafe { libc::kill(-group_id, libc::SIGKILL) };
+            return;
+        }
+    }
+    process.kill();
+}
+
+#[cfg(not(unix))]
+fn force_terminate_process(process: &Process) {
+    process.kill();
+}
 
 pub fn parse_dsh_web_url(line: &str) -> Option<String> {
     const PREFIX: &str = "dsh web: http://127.0.0.1:";
@@ -36,6 +144,33 @@ pub fn classify_drop(paths: &[PathBuf]) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
+
+    #[test]
+    fn identifies_managed_dsh_web_by_overlay() {
+        let cmd = [
+            OsString::from("/usr/local/bin/node"),
+            OsString::from("/opt/homebrew/bin/dsh"),
+            OsString::from("web"),
+            OsString::from("--patch"),
+            OsString::from("/tmp/dsh-desktop/embedded-plugins.patch.yml"),
+        ];
+        assert!(is_managed_dsh_cmd(&cmd, &[], "/tmp/dsh-desktop"));
+        assert!(!is_managed_dsh_cmd(&cmd[..3], &[], "/tmp/dsh-desktop"));
+        assert!(!is_managed_dsh_cmd(&cmd, &[], "/other/dsh-desktop"));
+    }
+
+    #[test]
+    fn identifies_managed_dsh_web_by_env() {
+        let cmd = [
+            OsString::from("node"),
+            OsString::from("dsh"),
+            OsString::from("web"),
+        ];
+        let environ = [OsString::from(MANAGED_ENV)];
+        assert!(is_managed_dsh_cmd(&cmd, &environ, "/tmp"));
+        assert!(!is_managed_dsh_cmd(&cmd, &[], "/tmp"));
+    }
 
     #[test]
     fn parses_url_line() {

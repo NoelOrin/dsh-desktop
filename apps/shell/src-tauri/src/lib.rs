@@ -1018,6 +1018,9 @@ impl DshManager {
     }
 
     fn handle_start(&mut self) {
+        self.cleanup_child();
+        self.cleanup_stale_dsh_web();
+
         let config = config::load(&self.config_path).effective(|k| std::env::var(k).ok());
         let (node, entry) = match resolve_dsh(&config) {
             Some(pair) => pair,
@@ -1077,7 +1080,13 @@ impl DshManager {
                 .or_else(|| dirs::home_dir().map(|h| h.join(".dsh")));
             let mut log = |line: &str| self.append_log(line);
             let mounted = match (plugins_resource, home_path) {
-                (Some(res), Some(home)) => embedded::assemble(&res, &home, &mut log),
+                (Some(res), Some(home)) => {
+                    if cfg!(debug_assertions) {
+                        embedded::assemble_dev(&res, &home, &mut log)
+                    } else {
+                        embedded::assemble(&res, &home, &mut log)
+                    }
+                }
                 _ => Vec::new(),
             };
             self.app
@@ -1115,6 +1124,7 @@ impl DshManager {
         if let Some(home) = &home {
             cmd.env("DSH_HOME", home);
         }
+        cmd.env("DSH_DESKTOP_MANAGED", "1");
 
         let mut child = cmd
             .spawn()
@@ -1183,6 +1193,17 @@ impl DshManager {
             }
             let _ = child.kill();
             let _ = child.wait();
+        }
+    }
+
+    /// 清理崩溃/异常退出后残留的本应用 dsh web 实例。
+    fn cleanup_stale_dsh_web(&self) {
+        let Ok(app_data_dir) = self.app.path().app_data_dir() else {
+            return;
+        };
+        let count = process::cleanup_stale_dsh_web(&app_data_dir);
+        if count > 0 {
+            self.append_log(&format!("[desktop] 已清理 {} 个旧 dsh web 实例", count));
         }
     }
 

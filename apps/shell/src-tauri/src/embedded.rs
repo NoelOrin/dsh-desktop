@@ -17,6 +17,24 @@ pub struct MountedPlugin {
 /// 以版本号为键：目标缺失或版本不同才重装（幂等、自愈）。单包失败只记日志跳过；
 /// plugins 根目录缺失直接返回空。返回装配成功的插件列表。
 pub fn assemble(resource_dir: &Path, home: &Path, log: &mut dyn FnMut(&str)) -> Vec<MountedPlugin> {
+    assemble_inner(resource_dir, home, log, false)
+}
+
+/// 开发模式装配：忽略版本号，每次启动都重装内嵌插件，确保源码改动立即生效。
+pub fn assemble_dev(
+    resource_dir: &Path,
+    home: &Path,
+    log: &mut dyn FnMut(&str),
+) -> Vec<MountedPlugin> {
+    assemble_inner(resource_dir, home, log, true)
+}
+
+fn assemble_inner(
+    resource_dir: &Path,
+    home: &Path,
+    log: &mut dyn FnMut(&str),
+    force: bool,
+) -> Vec<MountedPlugin> {
     let plugins_root = resource_dir.join("plugins");
     let entries = match fs::read_dir(&plugins_root) {
         Ok(entries) => entries,
@@ -75,7 +93,7 @@ pub fn assemble(resource_dir: &Path, home: &Path, log: &mut dyn FnMut(&str)) -> 
 
         let target = home.join("profiles").join("node_modules").join(name);
 
-        if target_has_version(&target, version) {
+        if !force && target_has_version(&target, version) {
             log(&format!(
                 "[desktop] 插件 {name}@{version} 已装配（版本相同），跳过复制"
             ));
@@ -321,6 +339,42 @@ mod tests {
 
         // 5) resources/plugins 不存在 → 空 Vec，不 panic
         assert!(assemble(&root.join("missing"), &home, &mut |_| {}).is_empty());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn assemble_dev_refreshes_same_version() {
+        let root = temp_dir().join(format!("dsh-assemble-dev-test-{}", std::process::id()));
+        let resources = root.join("resources");
+        let plugins = resources.join("plugins");
+        let home = root.join("home");
+        let bridge = plugins.join("bridge");
+        std::fs::create_dir_all(bridge.join("lib")).unwrap();
+        std::fs::write(
+            bridge.join("package.json"),
+            r#"{"name":"@dsh-desktop/plugin-bridge","version":"0.1.0","dshDesktop":{"id":"bridge"}}"#,
+        )
+        .unwrap();
+        std::fs::write(bridge.join("lib/index.js"), "// v1").unwrap();
+
+        let target = home
+            .join("profiles")
+            .join("node_modules")
+            .join("@dsh-desktop/plugin-bridge");
+        assemble_dev(&resources, &home, &mut |_| {});
+        assert_eq!(
+            std::fs::read_to_string(target.join("lib/index.js")).unwrap(),
+            "// v1"
+        );
+
+        // 版本不变时，开发模式仍应重装，避免旧产物继续被加载。
+        std::fs::write(bridge.join("lib/index.js"), "// v1-updated").unwrap();
+        assemble_dev(&resources, &home, &mut |_| {});
+        assert_eq!(
+            std::fs::read_to_string(target.join("lib/index.js")).unwrap(),
+            "// v1-updated"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }

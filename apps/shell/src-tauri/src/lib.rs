@@ -28,7 +28,6 @@ use tauri_plugin_global_shortcut::{
     Builder as ShortcutBuilder, GlobalShortcutExt, Shortcut, ShortcutState,
 };
 use tauri_plugin_notification::NotificationExt;
-use tauri_plugin_updater::UpdaterExt;
 
 const READY_TIMEOUT: Duration = Duration::from_secs(120);
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -224,8 +223,6 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--autostart"]),
         ))
-        // 自动更新：pubkey/endpoints 由 tauri.conf.json 的 plugins.updater 段提供
-        .plugin(tauri_plugin_updater::Builder::new().build())
         // 向 dsh web（loopback 远程页面）注入受控桥接 window.__DSH_DESKTOP__
         .on_page_load(|webview, payload| {
             if payload.event() == PageLoadEvent::Finished && is_dsh_web_url(payload.url()) {
@@ -295,18 +292,17 @@ pub fn run() {
             // 自动更新：后台检查 GitHub Release，发现新版本 emit dsh-update-available（payload 为新版本号），失败仅记日志
             let updater_app = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                match updater_app.updater() {
-                    Ok(updater) => match updater.check().await {
-                        Ok(Some(update)) => {
-                            let _ = updater_app.emit("dsh-update-available", update.version);
+                match latest_release_tag().await {
+                    Ok(tag) => {
+                        let is_new = parse_release_tag(&tag)
+                            .map(|v| v > updater_app.package_info().version)
+                            .unwrap_or(false);
+                        if is_new {
+                            let _ = updater_app.emit("dsh-update-available", tag);
                         }
-                        Ok(None) => {}
-                        Err(e) => {
-                            eprintln!("update check failed: {e}");
-                        }
-                    },
+                    }
                     Err(e) => {
-                        eprintln!("update updater unavailable: {e}");
+                        eprintln!("update check failed: {e}");
                     }
                 }
             });
@@ -837,30 +833,121 @@ fn unregister_shortcut(state: State<AppState>, shortcut: String) -> Result<(), S
     Ok(())
 }
 
-/// 后台检查 GitHub Release 是否有新版本，返回新版本号（无则 None）。
-/// 仅供 dsh 插件"检查更新"经桥接调用；启动时的自动检查见 run() 内 updater 插件配置。
+/// 查询 GitHub 最新 release 的 tag（如 v0.1.0）。失败返回 Err（网络/限流/解析）。
+async fn latest_release_tag() -> Result<String, String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .get("https://api.github.com/repos/NoelOrin/dsh-desktop/releases/latest")
+        .header("User-Agent", "dsh-desktop")
+        .send()
+        .await
+        .map_err(|e| format!("检查更新失败: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("检查更新失败: HTTP {}", resp.status()));
+    }
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("解析发布信息失败: {e}"))?;
+    json.get("tag_name")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| "检查更新失败: 响应缺少 tag_name".to_string())
+}
+
+/// 解析 GitHub release tag（如 v0.1.0）为 semver 版本。
+fn parse_release_tag(tag: &str) -> Result<semver::Version, String> {
+    semver::Version::parse(tag.trim_start_matches('v'))
+        .map_err(|e| format!("解析远程版本 {tag} 失败: {e}"))
+}
+
+/// 检查 GitHub Release 是否有新版本，返回新版本号（无则 None）。
+/// 仅供 dsh 插件"检查更新"经桥接调用。
 #[tauri::command]
 async fn check_update(app: AppHandle) -> Result<Option<String>, String> {
-    let updater = app.updater().map_err(|e| e.to_string())?;
-    match updater.check().await.map_err(|e| e.to_string())? {
-        Some(update) => Ok(Some(update.version)),
-        None => Ok(None),
+    let tag = latest_release_tag().await?;
+    let remote = parse_release_tag(&tag)?;
+    if remote > app.package_info().version {
+        Ok(Some(tag))
+    } else {
+        Ok(None)
     }
 }
 
-/// 下载并安装新版本（含签名验证）。安装完成后由用户重启应用生效。
+/// 静默下载最新版安装包到应用缓存目录，返回本地路径（由用户手动运行安装）。
 #[tauri::command]
-async fn install_update(app: AppHandle) -> Result<(), String> {
-    let updater = app.updater().map_err(|e| e.to_string())?;
-    let update = updater
-        .check()
+async fn install_update(app: AppHandle) -> Result<String, String> {
+    let tag = latest_release_tag().await?;
+    let remote = parse_release_tag(&tag)?;
+    if remote <= app.package_info().version {
+        return Err("没有可用更新".to_string());
+    }
+
+    // 当前平台的安装包扩展名
+    let ext = if cfg!(target_os = "macos") {
+        ".dmg"
+    } else if cfg!(target_os = "windows") {
+        ".exe"
+    } else {
+        ".AppImage"
+    };
+
+    // 取最新 release 的资产下载地址
+    let client = reqwest::Client::new();
+    let resp = client
+        .get("https://api.github.com/repos/NoelOrin/dsh-desktop/releases/latest")
+        .header("User-Agent", "dsh-desktop")
+        .send()
         .await
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "没有可用更新".to_string())?;
-    update
-        .download_and_install(|_downloaded, _total| {}, || {})
+        .map_err(|e| format!("获取发布信息失败: {e}"))?;
+    let json: serde_json::Value = resp
+        .json()
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| format!("解析发布信息失败: {e}"))?;
+    let asset = json["assets"]
+        .as_array()
+        .and_then(|assets| {
+            assets
+                .iter()
+                .find(|a| a["name"].as_str().map(|n| n.ends_with(ext)).unwrap_or(false))
+        })
+        .ok_or_else(|| format!("发布中未找到 {ext} 安装包"))?;
+    let name = asset["name"]
+        .as_str()
+        .ok_or_else(|| "资产缺少 name".to_string())?;
+    let url = asset["browser_download_url"]
+        .as_str()
+        .ok_or_else(|| "资产缺少下载地址".to_string())?;
+
+    // 下载到 app_cache_dir/updates/<name>
+    let cache_dir = app.path().app_cache_dir().map_err(|e| e.to_string())?;
+    let updates_dir = cache_dir.join("updates");
+    std::fs::create_dir_all(&updates_dir).map_err(|e| format!("创建更新目录失败: {e}"))?;
+    let dest = updates_dir.join(name);
+
+    let mut resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("下载失败: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("下载失败: HTTP {}", resp.status()));
+    }
+    let mut file = std::fs::File::create(&dest).map_err(|e| format!("创建文件失败: {e}"))?;
+    while let Some(chunk) = resp.chunk().await.map_err(|e| format!("下载中断: {e}"))? {
+        file.write_all(&chunk).map_err(|e| format!("写入失败: {e}"))?;
+    }
+    file.sync_all().map_err(|e| format!("同步失败: {e}"))?;
+
+    // Linux AppImage 需要可执行权限
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| format!("设置执行权限失败: {e}"))?;
+    }
+
+    Ok(dest.to_string_lossy().into_owned())
 }
 
 fn emit_status(app: &AppHandle, inner: &Arc<Mutex<Inner>>) {

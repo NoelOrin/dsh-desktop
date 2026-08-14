@@ -14,9 +14,10 @@ interface BridgeLike {
     get(): Promise<boolean>;
     set(enabled: boolean): Promise<void>;
   };
+  openExternal(target: string): Promise<void>;
   update: {
     check(): Promise<string | null>;
-    install(): Promise<void>;
+    install(): Promise<string>;
   };
 }
 
@@ -394,12 +395,19 @@ function ToolsPanel({ t }: { t: Translate }): JSX.Element {
         setMsg("当前已是最新版本");
         return;
       }
-      if (window.confirm(`发现新版本 ${version}，是否下载并安装？`)) {
-        await bridge.update.install();
-        setMsg("已安装，请重启应用");
+      if (window.confirm(`发现新版本 ${version}，是否静默下载？`)) {
+        setMsg("正在下载更新，请稍候…");
+        const path = await bridge.update.install();
+        setMsg(`更新已下载：${path}`);
+        if (window.confirm("更新已下载到本地，是否打开安装包？")) {
+          await bridge.openExternal(path);
+          setMsg(`已打开安装包：${path}`);
+        } else {
+          setMsg(`更新已下载（未打开）：${path}`);
+        }
       }
     } catch (e) {
-      setMsg(`检查/安装更新失败: ${String(e)}`);
+      setMsg(`检查/下载更新失败: ${String(e)}`);
     }
   };
 

@@ -48,7 +48,8 @@ export interface DshDesktopBridge {
   onShortcut(cb: (shortcut: string) => void): Promise<() => void>;
   update: {
     check(): Promise<string | null>;
-    install(): Promise<void>;
+    /** 静默下载最新版安装包到本地，返回下载路径（由用户手动运行安装）。 */
+    install(): Promise<string>;
   };
 }
 

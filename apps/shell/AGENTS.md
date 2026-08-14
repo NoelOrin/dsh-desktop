@@ -4,9 +4,9 @@ DSH Desktop 的 main 窗口启动页：Vite + TypeScript 的单页应用（无�
 
 ## 文件
 
-- `index.html` — 入口 HTML：状态点、按钮、日志面板的挂载点
-- `src/main.ts` — 全部前端逻辑：Tauri IPC 调用与事件监听（Task 3 已从 JS 迁移到 TypeScript）
-- `src/style.css` — 全部样式（CSS 变量 + 轻量动画，含 reduced-motion 适配）
+- `index.html` — 入口 HTML：自绘标题栏、状态点、按钮、日志面板的挂载点
+- `src/main.ts` — 全部前端逻辑：Tauri IPC 调用、事件监听、主题应用与窗口控制（Task 3 已从 JS 迁移到 TypeScript）
+- `src/style.css` — 全部样式（CSS 变量 + 轻量动画，含 reduced-motion 适配与 `--theme-*` 主题变量）
 
 ## 与后端的通信契约
 
@@ -16,9 +16,13 @@ DSH Desktop 的 main 窗口启动页：Vite + TypeScript 的单页应用（无�
 | 调用 | `invoke("install_dsh")` | 触发一键安装 dsh |
 | 调用 | `invoke("restart")` | 重新检测并启动 dsh |
 | 调用 | `invoke("open_log_directory")` | 打开日志目录 |
+| 调用 | `invoke("get_ui_theme")` | 拉取壳侧主题快照 `UiThemeSnapshot` |
+| 调用 | `invoke("window_action")` | 无边框窗口控制（minimize / maximize / close） |
 | 监听 | `dsh-status` | 状态快照（phase / message / url / logs 等） |
 | 监听 | `dsh-log` | 追加一行日志文本 |
 | 监听 | `dsh-theme` | 系统主题（light / dark，供启动页深色适配） |
+| 监听 | `dsh-ui-theme` | 壳侧主题快照更新 |
+| 监听 | `dsh-window-state` | 窗口最大化状态（`WindowState`） |
 
 > 本页只使用上述命令；完整契约（含 `get_config` / `set_config`）与类型定义见 `../../packages/contracts`。修改 IPC 契约时，必须同步更新 `../../packages/contracts/src/index.ts`、Rust 端 serde 类型（`apps/shell/src-tauri/src/lib.rs` / `config.rs`）与 `./src-tauri/AGENTS.md` 的契约表。
 
@@ -36,6 +40,7 @@ phase 取值（snake_case）：`detecting` → `missing`（缺 dsh 或 node）| 
 - `isTauri()` 检查 `window.__TAURI_INTERNALS__`；普通浏览器中打开只会渲染“正在检测运行环境...”，不会调用 IPC
 - 前端不做状态管理——后端是唯一状态源，本模块只负责渲染与触发操作
 - 日志区通过 `appendLog` 追加并自动滚动到底部；初始日志来自 `get_status().logs`
+- 自绘标题栏使用 `data-tauri-drag-region="deep"`，按钮经 `window_action` 调用窗口控制；非 Tauri 环境隐藏标题栏
 - UI 文案为中文
 
 ## 开发调试

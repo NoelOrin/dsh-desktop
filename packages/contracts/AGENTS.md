@@ -7,7 +7,9 @@
 - `RuntimePhase` — phase 联合类型（snake_case，与 Rust `RuntimePhase` serde 一致）
 - `RuntimeSnapshot` — `get_status` 返回（phase/message/url/dsh_installed/node_found/log_dir/logs）
 - `DshConfig` — `get_config` / `set_config` 的配置结构（dsh_bin/dsh_node/dsh_home，null 表示未设置）
-- `COMMANDS` / `EVENTS` — IPC 命令名与事件名字符串常量（命令含 `open_external` / `get_autostart` / `set_autostart` / `register_shortcut` / `unregister_shortcut`；事件含 `dsh-file-drop` / `dsh-theme` / `dsh-deeplink` / `dsh-shortcut` / `dsh-update-available`）
+- `UiThemeSnapshot` / `UiThemeTokens` — `get_ui_theme` / `dsh-ui-theme` 的主题快照
+- `WindowState` / `WindowAction` — `window_action` / `dsh-window-state` 的窗口控制契约
+- `COMMANDS` / `EVENTS` — IPC 命令名与事件名字符串常量（命令含 `open_external` / `get_autostart` / `set_autostart` / `register_shortcut` / `unregister_shortcut` / `get_ui_theme` / `window_action`；事件含 `dsh-file-drop` / `dsh-theme` / `dsh-deeplink` / `dsh-shortcut` / `dsh-update-available` / `dsh-ui-theme` / `dsh-window-state`）
 
 ## 边界
 

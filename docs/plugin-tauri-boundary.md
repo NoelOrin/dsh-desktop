@@ -45,7 +45,7 @@ DSH Desktop 是 dsh 的桌面套壳：Rust 后端拉起 `dsh web` 子进程，�
 | 运行位置 | Rust 后端（`apps/shell/src-tauri`）+ 两个本地 WebView 窗口 |
 | 职责 | 检测/安装/拉起/监控/停止 dsh 子进程；窗口/菜单/全局快捷键；应用数据目录；`config.json`；原生交互（打开日志目录）；打包分发 |
 | 已声明能力 | capabilities `core:default` + `global-shortcut:default`（覆盖 main 窗口） |
-| 实现契约 | `get_status` / `install_dsh` / `restart` / `open_log_directory` / `get_config` / `set_config`（类型与常量见 `packages/contracts`） |
+| 实现契约 | `get_status` / `install_dsh` / `restart` / `open_log_directory` / `get_config` / `set_config` / `get_ui_theme` / `window_action`（类型与常量见 `packages/contracts`） |
 | 配置 | `config.json`（应用数据目录）→ 环境变量（`DSH_BIN`/ `DSH_NODE`/ `DSH_HOME`）→ PATH 检测 |
 
 **红线**：Tauri 壳不实现任何 dsh 产品功能——不做 agent、不做工具、不接 LLM、
@@ -85,6 +85,12 @@ IPC 命令与事件**。本包只负责 **native 内容**：dsh 运行态的检�
 > **桥接不经过本契约**：dsh 插件调用 Tauri 壳能力的桥接命令，由 `packages/plugins/bridge`
 > 自持契约，Rust 侧在 `capabilities/bridge.json` 声明（见 §5/§6）。`packages/contracts`
 > 只负责 native 内容，不负责桥接。
+
+`get_ui_theme` 属 **native 契约**：只进 `capabilities/default.json` 与 `packages/contracts`，
+供本地启动页读取 `settings.yaml` 的 `ui-theme` 分节；dsh web 内的外观设置直接经
+`settingsScope.bind("ui-theme")` 读写 dsh settings，不需要壳侧转发。`window_action` /
+`dsh-window-state` 是本地窗口与 dsh web 标题栏都要用的能力，因此同时进
+`capabilities/default.json` 与 `capabilities/bridge.json`。
 
 修改任何 IPC 契约时，必须同步四处（已有约定，此处重申为边界规则）：
 
@@ -152,6 +158,10 @@ snake_case）。
   的 `desktop` 命名空间，`autostart` 默认关闭）——属 **dsh 插件域**；OS 级启停是壳能力
   （autostart 插件 + `get_autostart` / `set_autostart` 命令）——属 **Tauri 壳域**。
   状态与实现分离：插件只读写设置项，实际启停经受控桥接命令执行，两端各做各的。
+- **外观设置项归属（本计划新增）**：bridge client 面复用上游已注册的 `ui-theme` 命名空间，
+  只 bind 不注册，渲染“外观”设置节（主题偏好 / 主题库 / 背景图 / 玻璃透明度 / 自定义主题 /
+  排版），快照本地生效并防抖写回 Host——属 **dsh 插件域**；壳侧 `get_ui_theme` /
+  `dsh-ui-theme` 只负责启动页与窗口背景的只读跟随——属 **Tauri 壳域**。
 - 若未来有第二个需要壳能力的 dsh 插件，能力暴露仍走 §5 的受控桥接流程，不因“是自家的”
   而放宽。
 

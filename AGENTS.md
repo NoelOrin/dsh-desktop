@@ -29,8 +29,9 @@
 2. 已安装 → 保留一个空闲 loopback 端口，以 `dsh web --host 127.0.0.1 --port <port>` 拉起子进程
 3. 未安装 → 前端显示“安装 DSH”按钮，一键执行 `npm install -g @deepseek-ai/dsh`（全局安装）
 4. 子进程端口返回 HTTP 200 即视为就绪，主窗口 `navigate` 到 `http://127.0.0.1:<port>`
-5. **桌面壳设置**：经 `packages/plugins/bridge` 插件在 dsh WebUI 设置面板提供“桌面”页（状态 / 配置 / 工具 / 开机自启），通过 `window.__DSH_DESKTOP__` 桥接调用壳能力；原独立控制中心（SolidJS）已迁移至此并移除
+5. **桌面壳设置**：经 `packages/plugins/bridge` 插件在 dsh WebUI 设置面板提供“桌面”页（状态 / 配置 / 工具 / 开机自启）与“外观”页（主题偏好 / 主题库 / 背景图 / 玻璃透明度 / 自定义主题 / 排版），通过 `window.__DSH_DESKTOP__` 桥接调用壳能力；原独立控制中心（SolidJS）已迁移至此并移除
 6. **内嵌插件自动挂载**：`packages/plugins` 各插件经 `yarn build:plugins` 编译打包进 Tauri resources（`resources/plugins/`），应用启动时 Rust 侧把插件包装配到 `$DSH_HOME/profiles/node_modules/@dsh-desktop/<name>/`（版本键控幂等、原子替换、best-effort）并生成 `embedded-plugins.patch.yml` overlay，以 `dsh web --patch <overlay>` 挂载（host 走 loader、client 走 dsh-client-modules）；不写 profile manifest、不下载；单独 `dsh web`（不带 `--patch`）不挂载内嵌插件
+7. **主题与无边框窗口**：壳侧轮询 `settings.yaml` 的 `ui-theme` 分节，通过 `get_ui_theme` / `dsh-ui-theme` 让启动页和窗口背景跟随；main 窗口无系统边框，启动页与 dsh web 注入自绘标题栏（拖动、双击最大化、窗口控制按钮）
 
 ## 配置优先级
 
@@ -41,9 +42,9 @@
 
 - 提交信息遵循 [Conventional Commits](https://www.conventionalcommits.org/)（`feat:` / `fix:` / `chore:`），版本号与 CHANGELOG 由 CI 依据提交信息自动生成
 - 用户可见文案与代码注释使用中文
-- 前后端通过固定契约通信：IPC 命令 `get_status` / `install_dsh` / `restart` / `open_log_directory` / `get_config` / `set_config` / `open_external` / `get_autostart` / `set_autostart` / `register_shortcut` / `unregister_shortcut`，事件 `dsh-status` / `dsh-log` / `dsh-file-drop` / `dsh-theme` / `dsh-deeplink` / `dsh-shortcut` / `dsh-update-available`（类型与常量见 `packages/contracts`，各模块契约表见对应 AGENTS.md）
+- 前后端通过固定契约通信：IPC 命令 `get_status` / `install_dsh` / `restart` / `open_log_directory` / `get_config` / `set_config` / `open_external` / `get_autostart` / `set_autostart` / `register_shortcut` / `unregister_shortcut` / `get_ui_theme` / `window_action`，事件 `dsh-status` / `dsh-log` / `dsh-file-drop` / `dsh-theme` / `dsh-deeplink` / `dsh-shortcut` / `dsh-update-available` / `dsh-ui-theme` / `dsh-window-state`（类型与常量见 `packages/contracts`，各模块契约表见对应 AGENTS.md）
 - 系统托盘常驻后台（关闭到托盘），关键节点弹原生通知；dsh web 通过受控桥接 `window.__DSH_DESKTOP__` 调用最小能力（白名单见 `apps/shell/src-tauri/capabilities/bridge.json`，边界见 `docs/plugin-tauri-boundary.md`）
-- 原生能力：窗口状态记忆（重启恢复窗口大小/位置）、深链 `dsh-desktop://`、自动更新（后台检查 + “桌面”页“检查更新”，静默下载安装包后由用户手动安装）、开机自启（dsh 插件设置面板，默认关闭）、自定义全局快捷键（dsh 插件经桥接注册/注销）、托盘“退出”二次确认
+- 原生能力：无边框窗口 + 自绘标题栏、窗口状态记忆（重启恢复窗口大小/位置）、主题/背景图跟随、深链 `dsh-desktop://`、自动更新（后台检查 + “桌面”页“检查更新”，静默下载安装包后由用户手动安装）、开机自启（dsh 插件设置面板，默认关闭）、自定义全局快捷键（dsh 插件经桥接注册/注销）、托盘“退出”二次确认
 - 后端是唯一状态源，前端只做渲染
 - 代码规范：Biome（`biome.json`）负责 TS/TSX/JSON 的 lint 与格式；Lefthook（`lefthook.yml`）接入 git hooks——`pre-commit` 对暂存文件自动 `biome check --write`，`pre-push` 跑 `yarn typecheck` + `cargo fmt --check` + `cargo clippy`；`package.json` 的 `postinstall` 会在每次 `yarn install` 时自动执行 `lefthook install` 装好 hooks（Yarn 4 默认禁用依赖的 build scripts，需靠它兜底）
 

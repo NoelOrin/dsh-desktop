@@ -6,12 +6,13 @@ DSH Desktop 的 Rust 后端。职责：检测 / 一键安装 `dsh`、以子进�
 
 - `src/lib.rs` — 全部后端逻辑：状态机、进程管理、IPC 命令、桥接注入
 - `src/config.rs` — `DshConfig` 结构、`config.json` 的 load/save 与 effective 合并逻辑
+- `src/theme.rs` — 读取 `settings.yaml` 的 `ui-theme` 分节并推导启动页/窗口背景 token
 - `src/main.rs` — 仅入口：调用 `dsh_desktop_lib::run()`
-- `Cargo.toml` — 依赖：`tauri 2`（`tray-icon` / `image-png`）、`tauri-plugin-global-shortcut` / `notification` / `single-instance` / `clipboard-manager` / `dialog` / `window-state` / `deep-link` / `autostart`、`reqwest`、`semver`、`libc`（unix 优雅退出）、`serde`、`serde_json`；lib 名为 `dsh_desktop_lib`
+- `Cargo.toml` — 依赖：`tauri 2`（`tray-icon` / `image-png`）、`tauri-plugin-global-shortcut` / `notification` / `single-instance` / `clipboard-manager` / `dialog` / `window-state` / `deep-link` / `autostart`、`reqwest`、`semver`、`libc`（unix 优雅退出）、`serde`、`serde_json`、`serde_yaml`；lib 名为 `dsh_desktop_lib`
 - `build.rs` — 用 `AppManifest::commands` 为应用命令生成 `allow-*` ACL 权限（远程桥接与本地窗口共用）
 - `tauri.conf.json` — main 窗口配置、构建前后命令、bundle 目标
-- `capabilities/default.json` — 本地窗口（main）IPC 权限：`core:default` + `global-shortcut:default` + 插件权限 + 应用命令 `allow-*`（含 `get_autostart` / `set_autostart` / `register_shortcut` / `unregister_shortcut`）
-- `capabilities/bridge.json` — dsh web（remote `http://127.0.0.1:*` 白名单）受控桥接权限，仅授予最小命令切片（含 `allow-get-autostart` / `allow-set-autostart` / `allow-register-shortcut` / `allow-unregister-shortcut`）
+- `capabilities/default.json` — 本地窗口（main）IPC 权限：`core:default` + `global-shortcut:default` + 插件权限 + 应用命令 `allow-*`（含 `get_autostart` / `set_autostart` / `register_shortcut` / `unregister_shortcut` / `get_ui_theme` / `window_action`）
+- `capabilities/bridge.json` — dsh web（remote `http://127.0.0.1:*` 白名单）受控桥接权限，仅授予最小命令切片（含 `allow-get-autostart` / `allow-set-autostart` / `allow-register-shortcut` / `allow-unregister-shortcut` / `allow-window-action`）
 - `gen/` — 构建生成的 schema（勿手改，已在 `.gitignore`）
 - `icons/` — 应用图标（由 `tauri icon` 生成，勿手改）
 
@@ -31,8 +32,8 @@ DSH Desktop 的 Rust 后端。职责：检测 / 一键安装 `dsh`、以子进�
 
 ## IPC 命令与事件
 
-- 命令：`get_status` / `restart` / `install_dsh` / `open_log_directory` / `get_config` / `set_config` / `open_external`（系统默认应用打开目标）/ `get_autostart`（查询开机自启状态）/ `set_autostart`（开启/关闭开机自启）/ `register_shortcut`（注册系统级全局快捷键）/ `unregister_shortcut`（注销全局快捷键）
-- 事件（向前端 emit）：`dsh-status`（RuntimeSnapshot）、`dsh-log`（单行文本）、`dsh-file-drop`（拖入 main 窗口的真实路径数组）、`dsh-theme`（系统主题 `light`/`dark`）、`dsh-deeplink`（`dsh-desktop://` 深链原始 URL）、`dsh-shortcut`（按下的已注册快捷键字符串）、`dsh-update-available`（自动更新发现的新版本号）
+- 命令：`get_status` / `restart` / `install_dsh` / `open_log_directory` / `get_config` / `set_config` / `open_external`（系统默认应用打开目标）/ `get_autostart`（查询开机自启状态）/ `set_autostart`（开启/关闭开机自启）/ `register_shortcut`（注册系统级全局快捷键）/ `unregister_shortcut`（注销全局快捷键）/ `get_ui_theme`（返回 `UiThemeSnapshot`）/ `window_action`（无边框窗口控制，native + bridge）
+- 事件（向前端 emit）：`dsh-status`（RuntimeSnapshot）、`dsh-log`（单行文本）、`dsh-file-drop`（拖入 main 窗口的真实路径数组）、`dsh-theme`（系统主题 `light`/`dark`）、`dsh-deeplink`（`dsh-desktop://` 深链原始 URL）、`dsh-shortcut`（按下的已注册快捷键字符串）、`dsh-update-available`（自动更新发现的新版本号）、`dsh-ui-theme`（`UiThemeSnapshot`）、`dsh-window-state`（`WindowState`）
 - `get_config` 返回“生效配置”：config.json 有值则用之，未设置的字段回退到环境变量；`set_config` 只写 `config.json`，不会修改环境变量
 - 修改契约时，必须同步更新 `../../../AGENTS.md` 的通信契约表与 `../../../packages/contracts/src/index.ts`
 
@@ -42,10 +43,11 @@ DSH Desktop 的 Rust 后端。职责：检测 / 一键安装 `dsh`、以子进�
 - **原生通知**：`DshManager::notify()` 在 就绪 / 失败 / 安装完成 时经 notification 插件发系统通知
 - **单实例锁**：`tauri-plugin-single-instance` 最先注册，二次启动聚焦主窗口
 - **看门狗**：子进程在 `starting`/`ready` 阶段意外退出时自动重启，`MAX_AUTO_RESTARTS=3` 次内连续重试，超限转 `failed`；手动 Start / 安装完成清零计数
-- **主题跟随**：CSS `prefers-color-scheme` 深色变量 + Rust `ThemeChanged` 事件 emit `dsh-theme`
+- **主题跟随**：CSS `prefers-color-scheme` 深色变量 + Rust `ThemeChanged` 事件 emit `dsh-theme`；另轮询 `$DSH_HOME/settings.yaml` 的 `ui-theme` 分节，变化时 emit `dsh-ui-theme` 并更新 main 窗口背景色
 - **优雅退出**：`cleanup_child()` unix 下先对进程组（`process_group(0)` 启动）发 SIGTERM，`GRACE_PERIOD=2s` 宽限后 SIGKILL；Windows 直接 TerminateProcess
 - **拖放**：main 窗口 `DragDropEvent::Drop` 把真实路径 emit `dsh-file-drop`
-- **桥接**：`Builder::on_page_load` 在 dsh web 页面（127.0.0.1）加载完成后 `eval` `BRIDGE_SCRIPT`，注入 `window.__DSH_DESKTOP__`（最小能力：通知 / 剪贴板 / 对话框 / openExternal / 状态事件 / 文件拖放 / 开机自启 autostart / 快捷键 shortcuts / 深链 onDeepLink），权限由 `capabilities/bridge.json` remote 白名单收口
+- **桥接**：`Builder::on_page_load` 在 dsh web 页面（127.0.0.1）加载完成后先 `eval` `BRIDGE_SCRIPT`、再 `eval` `HARNESS_CHROME_SCRIPT`，注入 `window.__DSH_DESKTOP__`（最小能力：通知 / 剪贴板 / 对话框 / openExternal / windowAction / onWindowState / 状态事件 / 文件拖放 / 开机自启 autostart / 快捷键 shortcuts / 深链 onDeepLink）与 dsh web 自绘标题栏，权限由 `capabilities/bridge.json` remote 白名单收口
+- **无边框窗口**：main 窗口 `decorations: false`；`window_action` 支持 minimize / maximize（切换）/ close；`dsh-window-state` 事件在 setup、窗口 Resized 与 dsh 就绪导航后广播最大化状态
 - **窗口状态记忆**：window-state 插件在 `RunEvent::Exit`（托盘“退出”）时自动保存 main 窗口大小/位置/最大化状态，下次启动恢复——关闭到托盘仅隐藏不销毁，不触发 CloseRequested 保存路径
 - **深链**：`tauri.conf.json` 注册 `dsh-desktop://` scheme；`on_open_url` 收到 URL 后 emit `dsh-deeplink`（原始 URL 字符串），未就绪时暂存 `Inner.pending_deeplinks`、就绪后补发；桥接暴露 `onDeepLink(cb)`
 - **自动更新**：不依赖官方 updater / 签名——壳侧经 GitHub API（`releases/latest`，User-Agent 头）查询最新版本，与 `app.package_info().version` 比较；启动后就绪后异步检查，发现新版本 emit `dsh-update-available`（payload 为新版本号），失败仅记日志；`install_update` 命令静默下载当前平台安装包（macOS `.dmg` / Windows `.exe` / Linux `.AppImage`，Linux 附可执行权限）到 `app_cache_dir()/updates/` 并返回本地路径，由用户手动运行安装（桌面壳设置“桌面”页“检查更新”入口）
@@ -55,7 +57,7 @@ DSH Desktop 的 Rust 后端。职责：检测 / 一键安装 `dsh`、以子进�
 
 ## 窗口与快捷键
 
-- **main 窗口**：`tauri.conf.json` 中声明（label `main`），普通不透明窗口
+- **main 窗口**：`tauri.conf.json` 中声明（label `main`），无系统边框（`decorations: false`），启动页与 dsh web 注入自绘标题栏
 
 ## config.json 与配置优先级
 

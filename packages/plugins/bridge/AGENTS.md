@@ -10,7 +10,7 @@
 | 面 | 文件 | 职责 |
 | --- | --- | --- |
 | host | `src/index.ts` | 插件入口（`export const name` + `apply(ctx)`）；定义 `DshDesktopBridge` 类型；注册 `desktop` settings 命名空间（`autostart: z.boolean().default(false)`，默认关闭） |
-| client | `src/client.tsx` | 在 dsh WebUI 设置面板注册“桌面”设置节（`ctx.slots.inject("settings.section")` + `ctx.settingsScope.bind`），渲染“开机自启”开关，切换时经 `window.__DSH_DESKTOP__.autostart.get()/set()` 调壳 |
+| client | `src/client.tsx` | 在 dsh WebUI 设置面板注册“桌面”设置节（状态 / 配置 / 工具 / 开机自启）与“外观”设置节（主题偏好 / 主题库 / 背景图 / 玻璃透明度 / 自定义主题 / 排版）；`ui-theme` 命名空间只 bind 不注册，快照经 `createThemeStore` 防抖写回，变化时 `applyThemeSection` 实时应用 |
 
 `package.json` 通过 `dsh.client`（platform web）声明 client 面并导出 `./client`；
 client 面依赖 `@deepseek-ai/dsh-client-ui-settings` 等 dsh client 生态（peer 声明）。
@@ -25,6 +25,8 @@ client 面依赖 `@deepseek-ai/dsh-client-ui-settings` 等 dsh client 生态（p
 | `shortcuts.register(s, cb)` / `shortcuts.unregister(s)` | `register_shortcut` / `unregister_shortcut` | 注册 / 注销系统级全局快捷键 |
 | `onShortcut(cb)` | 事件 `dsh-shortcut` | 订阅快捷键按下（payload 为快捷键字符串） |
 | `onDeepLink(cb)` | 事件 `dsh-deeplink` | 订阅 `dsh-desktop://` 深链（payload 为原始 URL） |
+| `windowAction(action)` | `window_action` | 无边框窗口控制（minimize / maximize / close） |
+| `onWindowState(cb)` | 事件 `dsh-window-state` | 订阅窗口最大化状态（payload 为 `{ maximized }`） |
 
 ## 开机自启设置项归属
 
@@ -32,6 +34,16 @@ client 面依赖 `@deepseek-ai/dsh-client-ui-settings` 等 dsh client 生态（p
 - OS 级**启停**是壳能力（autostart 插件 + `get_autostart` / `set_autostart` 命令）——属 **Tauri 壳域**；
 - 切换开关时 client 面同时写 settings 与调壳命令，两者解耦（壳不可达时仅写 settings，
   由下次启动 / 桥接补偿）。
+
+## 外观设置项归属
+
+- 外观设置项存于 dsh settings 的 `ui-theme` 命名空间（`preference` / `activeLightThemeId` /
+  `activeDarkThemeId` / `customThemes` / `glassOpacity` / `wallpaperImage` /
+  `wallpaperBlur` / `wallpaperPixelate` / 排版字段），属 **dsh 插件域**；
+- 上游 `dsh-client-ui-theme` host 已注册该命名空间，bridge 只 bind、绝不重复注册；
+- 壳侧为启动页/窗口背景读取同一分节（`get_ui_theme` / `dsh-ui-theme`），属 **Tauri 壳域**；
+- 窗口控制按钮经 `windowAction` / `onWindowState` 受控桥接调用 `window_action` /
+  `dsh-window-state`。
 
 ## 维护约定
 

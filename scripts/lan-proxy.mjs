@@ -25,6 +25,7 @@
  */
 import http from "node:http";
 import os from "node:os";
+import crypto from "node:crypto";
 
 const HELP = `dsh-web 局域网反向代理
 
@@ -108,11 +109,33 @@ function rewriteHeaders(headers, { keepUpgrade }) {
   return out;
 }
 
+// 响应回写前过滤：剥掉 hop-by-hop / framing 头（connection / upgrade /
+// transfer-encoding / content-length / keep-alive / trailer / te / proxy-*），
+// 让 Node 重新管理传输帧。数组值（如 set-cookie）原样保留，不拍平、不 stringify。
+const RESPONSE_EXCLUDE = new Set([
+  "connection", "upgrade", "transfer-encoding", "content-length",
+  "keep-alive", "trailer", "te",
+]);
+function filterResponseHeaders(headers) {
+  const out = {};
+  for (const [key, value] of Object.entries(headers)) {
+    const lk = key.toLowerCase();
+    if (RESPONSE_EXCLUDE.has(lk) || lk.startsWith("proxy-")) continue;
+    out[lk] = value;
+  }
+  return out;
+}
+
 // ---- token 门禁 ----
+// timing-safe 比较：长度不一致先拒绝，等长后按字节比较，避免时序侧信道泄露 token。
 function authorized(req) {
   if (!TOKEN) return true;
   const auth = req.headers.authorization;
-  return typeof auth === "string" && auth === `Bearer ${TOKEN}`;
+  if (typeof auth !== "string") return false;
+  const a = Buffer.from(auth);
+  const b = Buffer.from(`Bearer ${TOKEN}`);
+  if (a.length !== b.length) return false; // 长度不同直接拒绝（也兜住空值）
+  return crypto.timingSafeEqual(a, b);
 }
 
 // ---- HTTP 转发 ----
@@ -131,7 +154,7 @@ const server = http.createServer((req, res) => {
       headers: rewriteHeaders(req.headers, { keepUpgrade: false }),
     },
     (proxyRes) => {
-      res.writeHead(proxyRes.statusCode || 502, proxyRes.headers);
+      res.writeHead(proxyRes.statusCode || 502, filterResponseHeaders(proxyRes.headers));
       proxyRes.pipe(res); // 流式透传（SSE/大响应/分块编码）
     },
   );
@@ -139,6 +162,8 @@ const server = http.createServer((req, res) => {
     if (!res.headersSent) res.writeHead(502, { "Content-Type": "text/plain; charset=utf-8" });
     res.end(`网关错误: ${err.message}`);
   });
+  // 客户端中途断开（关页/闪断）时销毁上游请求：及时释放连接，也避免继续写已关闭的 socket
+  res.on("close", () => proxyReq.destroy());
   req.pipe(proxyReq);
 });
 

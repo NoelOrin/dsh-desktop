@@ -54,18 +54,18 @@
   - token 门禁：HTTP 请求与 WS 握手都要求 `Authorization: Bearer <token>`，不匹配回 401。
   - 启动日志：`os.networkInterfaces()` 探测 IPv4 局域网地址并打印访问 URL；未设 token 时打印醒目警告。
 
-- [ ] **Step 2: 验证**（本机已完成，复测命令见下）
+- [x] **Step 2: 验证**（本机已完成，复测命令见下）（本机/评审已实测）
 
 ## Task 2: 使用与验证
 
-- [ ] **Step 1: 启动反代**
+- [x] **Step 1: 启动反代**
 
 ```bash
 node scripts/lan-proxy.mjs --token "<随机长串>"            # 默认 0.0.0.0:8080 → 127.0.0.1:53553
 node scripts/lan-proxy.mjs --port 9090                    # 换端口；无 token 会有警告
 ```
 
-- [ ] **Step 2: 本机自测**（期望值见注释）
+- [x] **Step 2: 本机自测**（期望值见注释）
 
 ```bash
 # 无 token → 401
@@ -78,7 +78,7 @@ curl -s -o /dev/null -w "%{http_code}\n" -X POST -H "Authorization: Bearer <toke
 curl -s -o /dev/null -w "%{http_code}\n" -X POST -H "Authorization: Bearer <token>" -H "Sec-Fetch-Site: cross-site" -H "Content-Type: application/json" -d '{"type":"client-request","rpcId":"verify-1","method":"settings.describe","payload":{}}' http://127.0.0.1:8080/api/settings.describe
 ```
 
-- [ ] **Step 3: 局域网端到端**
+- [x] **Step 3: 局域网端到端**
   1. 手机/其他设备连同一 Wi-Fi。
   2. 访问启动日志打印的 `http://<局域网IP>:8080`（如 `http://192.168.8.239:8080`）。
   3. 确认：页面加载、会话/流式正常、**设置/凭证/模型发现等特权功能可用**（这是 Host/Origin 改写生效的直接证据）。

@@ -11,6 +11,21 @@
   },
   "app": {
     "macOSPrivateApi": true,
+    "windows": [
+      {
+        "label": "control",
+        "title": "DSH 控制中心",
+        "url": "/control-center/index.html",
+        "width": 960,
+        "height": 680,
+        "minWidth": 480,
+        "minHeight": 480,
+        "center": true,
+        "resizable": true,
+        "visible": false,
+        "backgroundColor": "#f7f8fa"
+      }
+    ],
     "security": {
       "csp": null
     }

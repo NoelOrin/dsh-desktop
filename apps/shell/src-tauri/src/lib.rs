@@ -13,7 +13,9 @@ mod config;
 use config::DshConfig;
 
 use serde::Serialize;
+use tauri::menu::{Menu, MenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Manager as _, RunEvent, State, WindowEvent};
+use tauri_plugin_global_shortcut::{Builder as ShortcutBuilder, Code, Modifiers, ShortcutState};
 
 const READY_TIMEOUT: Duration = Duration::from_secs(120);
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -108,7 +110,36 @@ struct DshManager {
 }
 
 pub fn run() {
+    // 全局快捷键：macOS 用 Cmd+Shift+C，其他平台用 Ctrl+Shift+C
+    let shortcut = {
+        #[cfg(target_os = "macos")]
+        {
+            tauri_plugin_global_shortcut::Shortcut::new(
+                Some(Modifiers::META | Modifiers::SHIFT),
+                Code::KeyC,
+            )
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            tauri_plugin_global_shortcut::Shortcut::new(
+                Some(Modifiers::CONTROL | Modifiers::SHIFT),
+                Code::KeyC,
+            )
+        }
+    };
+
+    let shortcut_plugin = ShortcutBuilder::new()
+        .with_shortcuts([shortcut])
+        .expect("invalid global shortcut")
+        .with_handler(move |app, _shortcut, event| {
+            if event.state() == ShortcutState::Pressed {
+                open_control_window(app);
+            }
+        })
+        .build();
+
     tauri::Builder::default()
+        .plugin(shortcut_plugin)
         .setup(|app| {
             let app_handle = app.handle().clone();
             let app_data = app_handle.path().app_data_dir()?;
@@ -192,6 +223,21 @@ pub fn run() {
                 let _ = builder.build()?;
             }
 
+            let menu = build_menu(app.handle())?;
+            app.set_menu(menu)?;
+            app.on_menu_event(|app, event| {
+                if event.id().as_ref() == "open-control" {
+                    open_control_window(app);
+                }
+            });
+
+            #[cfg(debug_assertions)]
+            if let Some(control) = app.get_webview_window("control") {
+                if let Ok(url) = tauri::Url::parse("http://localhost:5174/control-center/") {
+                    let _ = control.navigate(url);
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -203,6 +249,12 @@ pub fn run() {
             set_config
         ])
         .on_window_event(|window, event| {
+            if window.label() == "control" {
+                if matches!(event, WindowEvent::CloseRequested { .. }) {
+                    let _ = window.hide();
+                }
+                return;
+            }
             if matches!(event, WindowEvent::CloseRequested { .. }) {
                 let app = window.app_handle().clone();
                 thread::spawn(move || {
@@ -220,6 +272,29 @@ pub fn run() {
                 let _ = app.state::<AppState>().tx.send(ManagerMessage::Shutdown);
             }
         });
+}
+
+fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let menu = Menu::default(app)?;
+    let item = MenuItem::with_id(
+        app,
+        "open-control",
+        "控制中心",
+        true,
+        Some("CmdOrCtrl+Shift+C"),
+    )?;
+    let submenu = Submenu::with_items(app, "DSH", true, &[&item])?;
+    menu.append(&submenu)?;
+    Ok(menu)
+}
+
+fn open_control_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("control") {
+        if !window.is_visible().unwrap_or(false) {
+            let _ = window.show();
+        }
+        let _ = window.set_focus();
+    }
 }
 
 impl DshManager {

@@ -1,0 +1,32 @@
+:root {
+  color-scheme: light;
+  --bg: #f7f8fa;
+  --ink: #171c22;
+  --muted: #6d7480;
+  --line: #e3e6eb;
+  --accent: #3f63f4;
+  --ok: #0f9d58;
+  --danger: #d92d20;
+  --mono: ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+}
+.app { display: flex; flex-direction: column; height: 100vh; }
+.app__header {
+  display: flex; align-items: center; gap: 20px;
+  padding: 12px 20px; border-bottom: 1px solid var(--line); background: #fff;
+}
+.app__header h1 { font-size: 16px; margin: 0; }
+.app__main { flex: 1; overflow: auto; padding: 20px; }
+.tab {
+  appearance: none; border: 1px solid var(--line); background: #fff;
+  border-radius: 5px; padding: 6px 14px; font-size: 13px; cursor: pointer;
+}
+.tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.page { max-width: 720px; }

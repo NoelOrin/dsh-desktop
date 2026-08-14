@@ -295,8 +295,8 @@ pub fn run() {
             // 自动更新：后台检查 GitHub Release，发现新版本 emit dsh-update-available（payload 为新版本号），失败仅记日志
             let updater_app = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                if let Ok(updater) = updater_app.updater() {
-                    match updater.check().await {
+                match updater_app.updater() {
+                    Ok(updater) => match updater.check().await {
                         Ok(Some(update)) => {
                             let _ = updater_app.emit("dsh-update-available", update.version);
                         }
@@ -304,6 +304,9 @@ pub fn run() {
                         Err(e) => {
                             eprintln!("update check failed: {e}");
                         }
+                    },
+                    Err(e) => {
+                        eprintln!("update updater unavailable: {e}");
                     }
                 }
             });

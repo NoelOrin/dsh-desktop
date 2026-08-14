@@ -192,7 +192,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
-          node .github/scripts/generate-updater-artifacts.mjs "$VERSION"
+          export RELEASE_NOTES="$(cat /tmp/RELEASE_NOTES.md)"
+          node .github/scripts/generate-updater-artifacts.mjs "$VERSION" apps/shell/src-tauri/target/release/bundle
 
       - name: Publish release
         uses: softprops/action-gh-release@v2

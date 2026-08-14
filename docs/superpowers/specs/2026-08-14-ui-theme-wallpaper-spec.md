@@ -175,3 +175,25 @@ interface ThemeFamily {
 - 集成：`yarn typecheck` + `yarn build:plugins` + `yarn build:web` + `cargo fmt --check` +
   `cargo clippy`；`yarn dev` 起应用，在 dsh WebUI 设置 → 外观 手动验证全部控件与实时生效，
   以及启动页/窗口背景跟随。
+
+## 10. 无边框窗口 + 自绘标题栏（参考仓库 chrome.js / harness-chrome-inject.js / window-controls）
+
+### 10.1 参考仓库做法
+
+- Electron 窗口 `frame: false`；启动页（boot）自带标题栏（`window-controls.css/js`），
+  拖动用 `-webkit-app-region: drag`，窗口控制按钮经 IPC 调 minimize/maximize/close。
+- dsh web 页面注入 `harness-chrome-inject.js`：找到顶栏（含 session log 的 header）作为拖动区、
+  右上角放最小化/最大化/关闭按钮、按页面背景色适配按钮颜色、最大化/还原图标随窗口状态切换。
+
+### 10.2 本仓库（Tauri）落地要点
+
+| 项 | 做法 |
+| --- | --- |
+| 无边框 | `tauri.conf.json` main 窗口 `decorations: false`（关闭到托盘行为不变） |
+| 拖动 | `data-tauri-drag-region="deep"`（Tauri 注入的 drag.js 处理；可点击元素自动阻断拖拽；双击自动最大化，无需 ACL） |
+| 窗口控制命令 | 新增 `window_action`（minimize / maximize 切换 / close），进 `build.rs` commands 与 `default.json` + `bridge.json` 白名单 |
+| 窗口状态事件 | 新增 `dsh-window-state`（`{ maximized }`），Resized / setup / 就绪导航时 emit |
+| 桥接 | `BRIDGE_SCRIPT` 暴露 `windowAction(action)` 与 `onWindowState(cb)` |
+| 启动页标题栏 | `index.html` 顶部 header（`data-tauri-drag-region="deep"`）+ 三按钮；样式用 `--theme-*`（跟随主题）；非 Tauri 环境隐藏 |
+| dsh web 标题栏 | `HARNESS_CHROME_SCRIPT`（Rust 常量，on_page_load 注入）：顶栏/拖动条设 `data-tauri-drag-region="deep"`、右上角控制按钮、按钮色读 `--dsw-alias-label-primary` |
+

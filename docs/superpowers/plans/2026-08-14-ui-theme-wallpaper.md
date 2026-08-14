@@ -2022,4 +2022,962 @@ git add packages/plugins/bridge/src/client.tsx
 git commit -m "feat(bridge): 装配外观设置节与主题应用接线"
 ```
 
-<!-- PLAN-CONTINUES -->
+---
+
+### Task 8: 壳侧——Rust 读取 ui-theme 分节 + 新契约 + 窗口背景
+
+**Files:**
+- Modify: `apps/shell/src-tauri/Cargo.toml`（新增 `serde_yaml`）
+- Create: `apps/shell/src-tauri/src/theme.rs`
+- Modify: `apps/shell/src-tauri/src/lib.rs`（`mod theme`、新命令 `get_ui_theme`、事件 `dsh-ui-theme`、settings.yaml 轮询线程、窗口背景跟随）
+- Modify: `apps/shell/src-tauri/build.rs`（`AppManifest::commands` 加 `get_ui_theme`）
+- Modify: `apps/shell/src-tauri/capabilities/default.json`（加 `allow-get-ui-theme`）
+- Modify: `packages/contracts/src/index.ts`（`UiThemeTokens`/`UiThemeSnapshot` 类型 + `COMMANDS.getUiTheme` + `EVENTS.dshUiTheme`）
+
+**Interfaces:**
+- Consumes: `config::load(...).effective(...)` 解析 `dsh_home`；现有 `AppState`/事件 emit 模式
+- Produces: `get_ui_theme` 命令（返回 `UiThemeSnapshot`）与 `dsh-ui-theme` 事件（payload 同）；窗口背景随主题变化；Task 9 的启动页消费这些契约
+
+- [ ] **Step 1: Cargo.toml 新增 `serde_yaml`**
+
+```toml
+serde_yaml = "0.9"
+```
+
+- [ ] **Step 2: 写 `src/theme.rs`（内置家族种子 + mixHex 推导 + 分节解析）**
+
+```rust
+//! 壳侧主题：读取 settings.yaml 的 ui-theme 分节，解析少量 token 供启动页/窗口背景。
+//! 移植自参考仓库 src/shared/themes.js（家族种子 + mixHex + resolveMode）。
+
+use serde::{Deserialize, Serialize};
+use std::path::Path;
+
+const DEFAULT_FAMILY_ID: &str = "deepseek";
+
+#[derive(Clone, Copy)]
+struct Seeds {
+    accent: &'static str,
+    background: &'static str,
+    foreground: &'static str,
+}
+
+struct Family {
+    id: &'static str,
+    name: &'static str,
+    light: Seeds,
+    dark: Seeds,
+}
+
+const fn seeds(accent: &'static str, background: &'static str, foreground: &'static str) -> Seeds {
+    Seeds { accent, background, foreground }
+}
+
+const FAMILIES: &[Family] = &[
+    Family { id: "deepseek", name: "DeepSeek", light: seeds("#4176e6", "#ffffff", "#0f1115"), dark: seeds("#6ea8ff", "#151517", "#f5f5f5") },
+    Family { id: "midnight", name: "午夜", light: seeds("#3b6fd4", "#f3f6fb", "#1a1f2b"), dark: seeds("#6ea8ff", "#0b0d12", "#e8eef9") },
+    Family { id: "celadon", name: "青瓷", light: seeds("#0f766e", "#f3faf7", "#10211c"), dark: seeds("#3dd6b5", "#071411", "#e7f6f1") },
+    Family { id: "violet", name: "暮紫", light: seeds("#7c3aed", "#f7f3fc", "#1c1524"), dark: seeds("#c4a1ff", "#120e18", "#f3eefc") },
+    Family { id: "amber", name: "琥珀", light: seeds("#b45309", "#fbf6ee", "#1c1915"), dark: seeds("#e2b15c", "#14100b", "#f6efe4") },
+    Family { id: "paper", name: "宣纸", light: seeds("#0f766e", "#f3efe6", "#1c1915"), dark: seeds("#5eead4", "#1a1712", "#f6efe4") },
+    Family { id: "contrast", name: "对比", light: seeds("#111111", "#ffffff", "#050505"), dark: seeds("#ffffff", "#050505", "#f5f5f5") },
+];
+
+/// settings.yaml 的 ui-theme 分节（camelCase 键；缺失字段回退默认）。
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct UiThemeSection {
+    pub preference: Option<String>,
+    pub active_light_theme_id: Option<String>,
+    pub active_dark_theme_id: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct UiThemeTokens {
+    pub bg: String,
+    pub fg: String,
+    pub muted: String,
+    pub accent: String,
+    pub field: String,
+    pub line: String,
+    pub button_fg: String,
+    pub scheme: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct UiThemeSnapshot {
+    pub tokens: UiThemeTokens,
+    pub preference: String,
+    pub mode: String,
+}
+
+fn parse_hex(hex: &str) -> (u8, u8, u8) {
+    let value = hex.trim_start_matches('#');
+    let r = u8::from_str_radix(&value[0..2], 16).unwrap_or(0);
+    let g = u8::from_str_radix(&value[2..4], 16).unwrap_or(0);
+    let b = u8::from_str_radix(&value[4..6], 16).unwrap_or(0);
+    (r, g, b)
+}
+
+fn to_hex(r: u8, g: u8, b: u8) -> String {
+    format!("#{:02x}{:02x}{:02x}", r, g, b)
+}
+
+/// 在 left 与 right 之间按 amount(0..=1) 插值。
+fn mix_hex(left: &str, right: &str, amount: f64) -> String {
+    let (lr, lg, lb) = parse_hex(left);
+    let (rr, rg, rb) = parse_hex(right);
+    let t = amount.clamp(0.0, 1.0);
+    let channel = |a: u8, b: u8| (a as f64 + (b as f64 - a as f64) * t).round() as u8;
+    to_hex(channel(lr, rr), channel(lg, rg), channel(lb, rb))
+}
+
+fn resolve_mode(preference: &str, system_dark: bool) -> &'static str {
+    match preference {
+        "dark" => "dark",
+        "light" => "light",
+        _ => {
+            if system_dark {
+                "dark"
+            } else {
+                "light"
+            }
+        }
+    }
+}
+
+fn find_family(id: &str) -> &'static Family {
+    FAMILIES
+        .iter()
+        .find(|family| family.id == id)
+        .unwrap_or(&FAMILIES[0])
+}
+
+fn tokens_for(section: &UiThemeSection, mode: &str, system_dark: bool) -> UiThemeTokens {
+    let family_id = if mode == "dark" {
+        section.active_dark_theme_id.as_deref().unwrap_or(DEFAULT_FAMILY_ID)
+    } else {
+        section.active_light_theme_id.as_deref().unwrap_or(DEFAULT_FAMILY_ID)
+    };
+    let family = find_family(family_id);
+    let seeds = if mode == "dark" { &family.dark } else { &family.light };
+    let _ = system_dark;
+    let scheme = if mode == "dark" { "dark" } else { "light" };
+    let bg = seeds.background;
+    let fg = seeds.foreground;
+    let muted = mix_hex(fg, bg, 0.42);
+    let field = mix_hex(bg, fg, 0.06);
+    let line = if scheme == "light" { "rgba(15, 17, 21, 0.12)" } else { "rgba(245, 245, 245, 0.10)" };
+    let button_fg = if scheme == "light" { mix_hex(bg, "#000000", 0.08) } else { mix_hex(bg, "#000000", 0.0) };
+    UiThemeTokens {
+        bg: bg.to_string(),
+        fg: fg.to_string(),
+        muted,
+        accent: seeds.accent.to_string(),
+        field,
+        line: line.to_string(),
+        button_fg,
+        scheme: scheme.to_string(),
+    }
+}
+
+/// 解析 settings.yaml 中的 ui-theme 分节；文件缺失/非法时返回默认分节。
+pub fn read_ui_theme_section(settings_path: &Path) -> UiThemeSection {
+    let Ok(raw) = std::fs::read_to_string(settings_path) else {
+        return UiThemeSection::default();
+    };
+    let doc: Result<serde_yaml::Value, _> = serde_yaml::from_str(&raw);
+    let Ok(doc) = doc else {
+        return UiThemeSection::default();
+    };
+    let Some(section) = doc.get("ui-theme") else {
+        return UiThemeSection::default();
+    };
+    serde_yaml::from_value(section.clone()).unwrap_or_default()
+}
+
+/// 组装启动页/窗口背景要用的快照。
+pub fn resolve_ui_theme(section: &UiThemeSection, system_dark: bool) -> UiThemeSnapshot {
+    let mode = resolve_mode(section.preference.as_deref().unwrap_or("system"), system_dark);
+    let preference = section.preference.clone().unwrap_or_else(|| "system".to_string());
+    UiThemeSnapshot {
+        tokens: tokens_for(section, mode, system_dark),
+        preference,
+        mode: mode.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_mode_resolves_system() {
+        assert_eq!(resolve_mode("system", true), "dark");
+        assert_eq!(resolve_mode("system", false), "light");
+        assert_eq!(resolve_mode("light", true), "light");
+        assert_eq!(resolve_mode("dark", false), "dark");
+    }
+
+    #[test]
+    fn missing_section_falls_back_to_deepseek_dark() {
+        let section = UiThemeSection::default();
+        let snapshot = resolve_ui_theme(&section, true);
+        assert_eq!(snapshot.mode, "dark");
+        assert_eq!(snapshot.tokens.scheme, "dark");
+        assert_eq!(snapshot.tokens.bg, "#151517");
+    }
+
+    #[test]
+    fn parses_camel_case_section() {
+        let raw = "ui-theme:\n  preference: light\n  activeDarkThemeId: midnight\n";
+        let path = std::env::temp_dir().join("dsh-desktop-theme-test.yaml");
+        std::fs::write(&path, raw).unwrap();
+        let section = read_ui_theme_section(&path);
+        std::fs::remove_file(&path).ok();
+        assert_eq!(section.preference.as_deref(), Some("light"));
+        assert_eq!(section.active_dark_theme_id.as_deref(), Some("midnight"));
+        let snapshot = resolve_ui_theme(&section, true);
+        assert_eq!(snapshot.tokens.bg, "#f3f6fb");
+    }
+
+    #[test]
+    fn mix_hex_interpolates() {
+        assert_eq!(mix_hex("#000000", "#ffffff", 1.0), "#ffffff");
+        assert_eq!(mix_hex("#000000", "#ffffff", 0.0), "#000000");
+    }
+}
+```
+
+- [ ] **Step 3: lib.rs 接入 theme 模块、新命令与事件**
+
+文件顶部追加：
+
+```rust
+mod theme;
+
+use theme::{read_ui_theme_section, resolve_ui_theme, UiThemeSnapshot};
+```
+
+在 `run()` 的 `.setup()` 里、`start_tx` 线程之后追加轮询线程（settings.yaml 变化时 emit `dsh-ui-theme` 并设置窗口背景）：
+
+```rust
+            // 主题跟随：轮询 settings.yaml 的 ui-theme 分节，变化时发 dsh-ui-theme 并更新窗口背景
+            {
+                let app = app_handle.clone();
+                let config_path_for_theme = config_path.clone();
+                thread::spawn(move || {
+                    let mut last: Option<String> = None;
+                    loop {
+                        thread::sleep(Duration::from_secs(2));
+                        let config = config::load(&config_path_for_theme).effective(|k| std::env::var(k).ok());
+                        let home = config
+                            .dsh_home
+                            .clone()
+                            .or_else(|| std::env::var("DSH_HOME").ok())
+                            .or_else(|| std::env::var("HOME").ok().map(|h| format!("{h}/.dsh")));
+                        let Some(home) = home else { continue };
+                        let settings_path = std::path::Path::new(&home).join("settings.yaml");
+                        let system_dark = app
+                            .get_webview_window("main")
+                            .and_then(|w| w.theme().ok())
+                            .map(|t| t == tauri::Theme::Dark)
+                            .unwrap_or(false);
+                        let section = read_ui_theme_section(&settings_path);
+                        let snapshot = resolve_ui_theme(&section, system_dark);
+                        let key = format!("{}:{}:{}", snapshot.preference, snapshot.mode, snapshot.tokens.bg);
+                        if last.as_deref() == Some(key.as_str()) {
+                            continue;
+                        }
+                        last = Some(key);
+                        let _ = app.emit("dsh-ui-theme", &snapshot);
+                        if let Some(window) = app.get_webview_window("main") {
+                            if let Some(color) = parse_window_color(&snapshot.tokens.bg) {
+                                let _ = window.set_background_color(Some(color));
+                            }
+                        }
+                    }
+                });
+            }
+```
+
+在 `invoke_handler` 列表追加 `get_ui_theme` 并实现（native-only，不暴露给 remote）：
+
+```rust
+/// #rrggbb → tauri::window::Color
+fn parse_window_color(hex: &str) -> Option<tauri::window::Color> {
+    let value = hex.trim_start_matches('#');
+    if value.len() != 6 {
+        return None;
+    }
+    let r = u8::from_str_radix(&value[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&value[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&value[4..6], 16).ok()?;
+    Some(tauri::window::Color(r, g, b, 255))
+}
+
+#[tauri::command]
+fn get_ui_theme(app: AppHandle) -> UiThemeSnapshot {
+    let system_dark = app
+        .get_webview_window("main")
+        .and_then(|w| w.theme().ok())
+        .map(|t| t == tauri::Theme::Dark)
+        .unwrap_or(false);
+    let home = std::env::var("DSH_HOME").ok()
+        .or_else(|| std::env::var("HOME").ok().map(|h| format!("{h}/.dsh")));
+    let section = match home {
+        Some(home) => read_ui_theme_section(&std::path::Path::new(&home).join("settings.yaml")),
+        None => theme::UiThemeSection::default(),
+    };
+    resolve_ui_theme(&section, system_dark)
+}
+```
+
+> 说明：`get_ui_theme` 是 native-only 命令（dsh web 经 settingsScope 直接读 dsh settings，不需要它），所以只进 `default.json` 与 `build.rs` 的 commands 数组，不碰 `bridge.json`。
+
+- [ ] **Step 4: build.rs 与 capabilities/default.json 声明新命令**
+
+`build.rs` 的 `AppManifest::new().commands(&[...])` 数组追加 `"get_ui_theme"`；`capabilities/default.json` 的 permissions 追加 `"allow-get-ui-theme"`。
+
+- [ ] **Step 5: contracts 增加 native 契约**
+
+`packages/contracts/src/index.ts` 追加：
+
+```ts
+export interface UiThemeTokens {
+  bg: string;
+  fg: string;
+  muted: string;
+  accent: string;
+  field: string;
+  line: string;
+  button_fg: string;
+  scheme: "light" | "dark";
+}
+
+export interface UiThemeSnapshot {
+  tokens: UiThemeTokens;
+  preference: "light" | "dark" | "system";
+  mode: "light" | "dark";
+}
+```
+
+`COMMANDS` 追加 `getUiTheme: "get_ui_theme"`；`EVENTS` 追加 `dshUiTheme: "dsh-ui-theme"`。
+
+- [ ] **Step 6: 编译与单测**
+
+Run: `cd apps/shell/src-tauri && cargo fmt && cargo test && cargo check`
+Expected: theme.rs 四个单测通过；`cargo check` 无错误；`cargo clippy` 无警告
+
+- [ ] **Step 7: 提交**
+
+```bash
+git add apps/shell/src-tauri/Cargo.toml apps/shell/src-tauri/src/theme.rs apps/shell/src-tauri/src/lib.rs apps/shell/src-tauri/build.rs apps/shell/src-tauri/capabilities/default.json packages/contracts/src/index.ts
+git commit -m "feat(shell): 壳侧读取 ui-theme 分节（get_ui_theme/dsh-ui-theme + 窗口背景跟随）"
+```
+
+---
+
+### Task 9: 壳侧——启动页跟随主题
+
+**Files:**
+- Modify: `apps/shell/src/main.ts`
+- Modify: `apps/shell/src/style.css`
+
+**Interfaces:**
+- Consumes: Task 8 的 `UiThemeSnapshot`（`packages/contracts`）与 `get_ui_theme`/`dsh-ui-theme`
+- Produces: 启动页初始加载 + 实时更新主题变量（`--theme-*`，映射自 `style.css` 现有变量）
+
+- [ ] **Step 1: 修改 `style.css` 使变量可被 JS 覆盖**
+
+在 `:root` 规则内新增主题占位（保持现有默认值，JS 设置内联变量时优先）：
+
+```css
+  /* 主题跟随（由 main.ts 经 dsh-ui-theme 写入） */
+  --theme-bg: var(--bg);
+  --theme-ink: var(--ink);
+  --theme-muted: var(--muted);
+  --theme-line: var(--line);
+  --theme-accent: var(--accent);
+  --theme-accent-ink: var(--accent-ink);
+```
+
+并把关键引用改为主题变量（默认样式表值保留，作为非 Tauri 环境兜底）：
+
+```css
+body {
+  background: var(--theme-bg);
+  color: var(--theme-ink);
+}
+.eyebrow { color: var(--theme-accent-ink); }
+.status__dot { background: var(--theme-accent); }
+```
+
+（`--muted`/`--line`/按钮边框等按需替换为 `--theme-*` 引用；深色模式 `@media (prefers-color-scheme: dark)` 里的覆盖值保持不动，作为无主题时的兜底。）
+
+- [ ] **Step 2: 修改 `main.ts` 应用主题**
+
+新增：
+
+```ts
+import type { UiThemeSnapshot } from "@dsh-desktop/contracts";
+
+function applyUiTheme(snapshot: UiThemeSnapshot): void {
+  const root = document.documentElement;
+  const tokens = snapshot.tokens;
+  root.style.setProperty("--theme-bg", tokens.bg);
+  root.style.setProperty("--theme-ink", tokens.fg);
+  root.style.setProperty("--theme-muted", tokens.muted);
+  root.style.setProperty("--theme-line", tokens.line);
+  root.style.setProperty("--theme-accent", tokens.accent);
+  root.style.setProperty("--theme-accent-ink", tokens.accent);
+  root.style.colorScheme = tokens.scheme;
+}
+
+async function initTheme(): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    const snapshot = await invoke<UiThemeSnapshot>("get_ui_theme");
+    applyUiTheme(snapshot);
+  } catch {
+    // 忽略：主题不可用时保持样式表默认
+  }
+  await listen<UiThemeSnapshot>("dsh-ui-theme", (event) => applyUiTheme(event.payload));
+}
+```
+
+在 `init()` 内、现有 `get_status` 之后调用 `await initTheme();`。
+
+- [ ] **Step 3: 构建与验证**
+
+Run: `yarn build:web`
+Expected: `dist/` 产物生成；在 `yarn dev` 启动的应用里，启动页背景/强调色随 `settings.yaml` 的 `ui-theme` 变化
+
+- [ ] **Step 4: 提交**
+
+```bash
+git add apps/shell/src/main.ts apps/shell/src/style.css
+git commit -m "feat(shell): 启动页跟随 ui-theme 主题"
+```
+
+---
+
+### Task 10: 无边框窗口 + 窗口控制命令/事件/桥接
+
+**Files:**
+- Modify: `apps/shell/src-tauri/tauri.conf.json`（main 窗口 `decorations: false`）
+- Modify: `apps/shell/src-tauri/src/lib.rs`（`window_action` 命令、`dsh-window-state` 事件、BRIDGE_SCRIPT 扩展）
+- Modify: `apps/shell/src-tauri/build.rs`（commands 加 `window_action`）
+- Modify: `apps/shell/src-tauri/capabilities/default.json` 与 `capabilities/bridge.json`（加 `allow-window-action`）
+- Modify: `packages/contracts/src/index.ts`（`WindowAction`/`WindowState` + 常量）
+- Modify: `packages/plugins/bridge/src/index.ts`（`DshDesktopBridge` 类型加 `windowAction`/`onWindowState`）
+
+**Interfaces:**
+- Consumes: Tauri 2 的 `WebviewWindow` API（`minimize`/`maximize`/`unmaximize`/`close`/`is_maximized`）；现有桥接注入模式
+- Produces: `window_action` 命令（`minimize`/`maximize`/`close`，maximize 为切换）与 `dsh-window-state` 事件（`{ maximized }`）；BRIDGE_SCRIPT 暴露 `windowAction`/`onWindowState`；Task 11/12 的标题栏按钮与图标切换消费
+
+- [ ] **Step 1: tauri.conf.json 设置无边框**
+
+`apps/shell/src-tauri/tauri.conf.json` 的 `app.windows[0]`（label `main`）增加：
+
+```json
+"decorations": false
+```
+
+- [ ] **Step 2: lib.rs 新增命令、事件与桥接扩展**
+
+新增命令与状态事件（`invoke_handler` 列表追加 `window_action`）：
+
+```rust
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct WindowStateSnapshot {
+    maximized: bool,
+}
+
+/// 无边框窗口控制：minimize / maximize（切换）/ close。
+#[tauri::command]
+fn window_action(window: tauri::WebviewWindow, action: String) -> Result<(), String> {
+    match action.as_str() {
+        "minimize" => window.minimize().map_err(|e| e.to_string()),
+        "maximize" => {
+            if window.is_maximized().unwrap_or(false) {
+                window.unmaximize().map_err(|e| e.to_string())
+            } else {
+                window.maximize().map_err(|e| e.to_string())
+            }
+        }
+        "close" => window.close().map_err(|e| e.to_string()),
+        other => Err(format!("未知窗口动作: {other}")),
+    }
+}
+
+fn emit_window_state(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = app.emit(
+            "dsh-window-state",
+            WindowStateSnapshot { maximized: window.is_maximized().unwrap_or(false) },
+        );
+    }
+}
+```
+
+在 `.setup()` 末尾调用一次 `emit_window_state(app.handle())`；在 `.on_window_event` 里对 main 窗口的 `WindowEvent::Resized` 分支调用（最大化/还原都会触发）：
+
+```rust
+                if let WindowEvent::Resized(_) = event {
+                    emit_window_state(window.app_handle());
+                }
+```
+
+在 `DshManager::open_window`（就绪导航后）调用一次 `emit_window_state(&self.app)`。
+
+`BRIDGE_SCRIPT` 的 `window.__DSH_DESKTOP__` 对象追加两个成员：
+
+```js
+    windowAction: function (action) { return invoke("window_action", { action: action }); },
+    onWindowState: function (cb) { return listen("dsh-window-state", cb); },
+```
+
+- [ ] **Step 3: 权限声明**
+
+`build.rs` 的 commands 数组追加 `"window_action"`；`capabilities/default.json` 与 `capabilities/bridge.json` 的 permissions 均追加 `"allow-window-action"`（本地启动页与 dsh web 注入的标题栏都要调用）。
+
+- [ ] **Step 4: contracts 增加契约**
+
+`packages/contracts/src/index.ts` 追加：
+
+```ts
+export type WindowAction = "minimize" | "maximize" | "close";
+
+export interface WindowState {
+  maximized: boolean;
+}
+```
+
+`COMMANDS` 追加 `windowAction: "window_action"`；`EVENTS` 追加 `dshWindowState: "dsh-window-state"`。
+
+- [ ] **Step 5: 更新 bridge 插件的桥接类型**
+
+`packages/plugins/bridge/src/index.ts` 的 `DshDesktopBridge` 接口追加：
+
+```ts
+  windowAction(action: "minimize" | "maximize" | "close"): Promise<void>;
+  onWindowState(cb: (state: { maximized: boolean }) => void): Promise<() => void>;
+```
+
+- [ ] **Step 6: 编译与验证**
+
+Run: `cd apps/shell/src-tauri && cargo fmt && cargo check && cargo clippy`；`yarn typecheck`
+Expected: 无错误；`yarn dev` 启动后窗口无系统边框（关闭到托盘行为不变）
+
+- [ ] **Step 7: 提交**
+
+```bash
+git add apps/shell/src-tauri/tauri.conf.json apps/shell/src-tauri/src/lib.rs apps/shell/src-tauri/build.rs apps/shell/src-tauri/capabilities/default.json apps/shell/src-tauri/capabilities/bridge.json packages/contracts/src/index.ts packages/plugins/bridge/src/index.ts
+git commit -m "feat(shell): 无边框窗口与窗口控制命令/事件（window_action/dsh-window-state）"
+```
+
+---
+
+### Task 11: 启动页自绘标题栏
+
+**Files:**
+- Modify: `apps/shell/index.html`（新增标题栏标记）
+- Modify: `apps/shell/src/style.css`（标题栏样式）
+- Modify: `apps/shell/src/main.ts`（接线窗口控制按钮）
+
+**Interfaces:**
+- Consumes: Task 10 的 `window_action`/`dsh-window-state`（`WindowState`）与 `--theme-*` 变量（Task 9）
+- Produces: 启动页顶部的自绘标题栏：拖动条（`data-tauri-drag-region`）+ 最小化/最大化/关闭按钮，最大化图标随状态切换；非 Tauri 环境隐藏
+
+- [ ] **Step 1: index.html 新增标题栏**
+
+在 `<body>` 顶部、`<main class="shell">` 之前插入：
+
+```html
+    <header class="titlebar" id="titlebar" data-tauri-drag-region="deep">
+      <span class="titlebar__title">DSH Desktop</span>
+      <div class="titlebar__controls">
+        <button type="button" id="win-min" aria-label="最小化" title="最小化">
+          <svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="5.4" width="8" height="1.2" rx="0.6" fill="currentColor"/></svg>
+        </button>
+        <button type="button" id="win-max" aria-label="最大化" title="最大化">
+          <svg viewBox="0 0 12 12" aria-hidden="true" id="win-max-icon"><rect x="2.4" y="2.4" width="7.2" height="7.2" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+        </button>
+        <button type="button" id="win-close" aria-label="关闭" title="关闭">
+          <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 3l6 6M9 3L3 9" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+    </header>
+```
+
+> 说明：`data-tauri-drag-region="deep"` 使标题栏整条可拖；按钮是可点击元素，Tauri 的 drag.js 会自动阻断拖拽（无需额外处理）；双击拖动条由 Tauri 自动最大化（macOS 同样生效）。
+
+- [ ] **Step 2: style.css 新增标题栏样式**
+
+```css
+.titlebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-left: 14px;
+  background: var(--theme-bg);
+  color: var(--theme-ink);
+  -webkit-user-select: none;
+  user-select: none;
+  z-index: 10;
+}
+.titlebar__title {
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0.8;
+}
+.titlebar__controls {
+  display: flex;
+  height: 100%;
+}
+.titlebar__controls button {
+  width: 46px;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--theme-ink);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.titlebar__controls button:hover {
+  background: rgba(128, 128, 128, 0.18);
+}
+.titlebar__controls #win-close:hover {
+  background: #e81123;
+  color: #fff;
+}
+.titlebar__controls svg {
+  width: 12px;
+  height: 12px;
+}
+/* 非 Tauri 环境隐藏标题栏 */
+html:not([data-tauri]) .titlebar {
+  display: none;
+}
+```
+
+启动页主体让出标题栏高度：
+
+```css
+.shell {
+  padding-top: 64px;
+}
+```
+
+- [ ] **Step 3: main.ts 接线窗口控制**
+
+新增（利用既有 `isTauri()` 与 `invoke`/`listen`）：
+
+```ts
+import type { WindowState } from "@dsh-desktop/contracts";
+
+function windowAction(action: "minimize" | "maximize" | "close"): void {
+  invoke("window_action", { action }).catch((error) => {
+    console.error("window_action 失败:", error);
+  });
+}
+
+async function initWindowControls(): Promise<void> {
+  if (!isTauri()) return;
+  document.getElementById("win-min")?.addEventListener("click", () => windowAction("minimize"));
+  document.getElementById("win-max")?.addEventListener("click", () => windowAction("maximize"));
+  document.getElementById("win-close")?.addEventListener("click", () => windowAction("close"));
+  await listen<WindowState>("dsh-window-state", (event) => {
+    const icon = document.getElementById("win-max-icon");
+    if (icon !== null) {
+      icon.innerHTML = event.payload.maximized
+        ? '<rect x="3.4" y="2.2" width="6.2" height="6.2" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.15"/><rect x="2.2" y="3.6" width="6.2" height="6.2" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.15"/>'
+        : '<rect x="2.4" y="2.4" width="7.2" height="7.2" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.2"/>';
+    }
+    const button = document.getElementById("win-max");
+    if (button !== null) {
+      button.setAttribute("aria-label", event.payload.maximized ? "还原" : "最大化");
+    }
+  });
+}
+```
+
+在 `init()` 内调用 `await initWindowControls();`（与 `initTheme()` 并列）。
+
+- [ ] **Step 4: 构建与验证**
+
+Run: `yarn build:web`；`yarn dev` 启动
+Expected: 启动页顶部显示自绘标题栏：可拖动、双击最大化、三个按钮生效、最大化图标随状态切换、标题栏背景跟随主题
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add apps/shell/index.html apps/shell/src/style.css apps/shell/src/main.ts
+git commit -m "feat(shell): 启动页自绘标题栏（拖动/双击最大化/窗口控制）"
+```
+
+---
+
+### Task 12: dsh web 页面自绘标题栏注入（HARNESS_CHROME_SCRIPT）
+
+**Files:**
+- Modify: `apps/shell/src-tauri/src/lib.rs`（新增 `HARNESS_CHROME_SCRIPT` 常量并在 `on_page_load` 注入 dsh web 页面）
+
+**Interfaces:**
+- Consumes: Task 10 的桥接 `windowAction`/`onWindowState`；现有 `BRIDGE_SCRIPT` 注入点（`on_page_load` + `is_dsh_web_url`）
+- Produces: dsh web 页面内注入的自绘标题栏：顶部拖动条（`data-tauri-drag-region="deep"`）+ 右上角窗口控制按钮（参考 harness-chrome-inject.js）；按钮颜色跟随页面主题（读 `--dsw-alias-label-primary`）
+
+- [ ] **Step 1: 新增 `HARNESS_CHROME_SCRIPT` 常量**
+
+在 `BRIDGE_SCRIPT` 之后追加（Rust 原始字符串，JS 内不写模板字面量以免转义）：
+
+```rust
+/// 注入 dsh web 的自绘标题栏脚本（参考参考仓库 harness-chrome-inject.js，适配 Tauri data-tauri-drag-region）。
+const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
+  "use strict";
+  if (document.getElementById("dsh-shell-controls")) return;
+  var STYLE_ID = "dsh-shell-chrome-style";
+  var CONTROLS_ID = "dsh-shell-controls";
+  var DRAG_ID = "dsh-shell-drag-strip";
+  var EDGE = 8;
+  var SIZE = 32;
+  var GAP = 0;
+
+  var ICON_MIN = '<svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="5.4" width="8" height="1.2" rx="0.6" fill="currentColor"/></svg>';
+  var ICON_MAX = '<svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.4" y="2.4" width="7.2" height="7.2" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>';
+  var ICON_RESTORE = '<svg viewBox="0 0 12 12" aria-hidden="true"><rect x="3.4" y="2.2" width="6.2" height="6.2" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.15"/><rect x="2.2" y="3.6" width="6.2" height="6.2" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.15"/></svg>';
+  var ICON_CLOSE = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 3l6 6M9 3L3 9" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg>';
+
+  function reservedRight() {
+    return EDGE + SIZE * 3 + GAP * 2;
+  }
+
+  function ensureStyle() {
+    var style = document.getElementById(STYLE_ID);
+    if (style) return;
+    style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = [
+      "#" + CONTROLS_ID + " {",
+      "  position: fixed;",
+      "  top: 4px;",
+      "  right: " + EDGE + "px;",
+      "  z-index: 2147483647;",
+      "  display: flex;",
+      "  gap: " + GAP + "px;",
+      "  height: " + SIZE + "px;",
+      "}",
+      "#" + CONTROLS_ID + " button {",
+      "  width: " + SIZE + "px;",
+      "  height: " + SIZE + "px;",
+      "  margin: 0;",
+      "  padding: 0;",
+      "  display: inline-flex;",
+      "  align-items: center;",
+      "  justify-content: center;",
+      "  border: 0;",
+      "  border-radius: 8px;",
+      "  background: transparent;",
+      "  color: var(--dsh-ctrl-fg, #3f3f46);",
+      "  cursor: pointer;",
+      "}",
+      "#" + CONTROLS_ID + " button svg { width: 12px; height: 12px; display: block; }",
+      "#" + CONTROLS_ID + " button:hover { background: var(--dsh-ctrl-hover, rgba(0, 0, 0, 0.08)); }",
+      "#" + CONTROLS_ID + " button[data-act=close]:hover { background: #e81123; color: #fff; }",
+      "#" + DRAG_ID + " {",
+      "  position: fixed;",
+      "  top: 0;",
+      "  left: 0;",
+      "  right: " + reservedRight() + "px;",
+      "  height: 44px;",
+      "  z-index: 2147483644;",
+      "}"
+    ].join("\n");
+    (document.head || document.documentElement).appendChild(style);
+  }
+
+  function findTopBar() {
+    var buttons = document.querySelectorAll("button");
+    for (var i = 0; i < buttons.length; i++) {
+      var label = (buttons[i].getAttribute("aria-label") || "") + " " + (buttons[i].textContent || "");
+      if (/session\s*log/i.test(label)) {
+        var header = buttons[i].closest("header");
+        if (header) return header;
+      }
+    }
+    var nodes = document.querySelectorAll("header, [role=banner]");
+    for (var j = 0; j < nodes.length; j++) {
+      var rect = nodes[j].getBoundingClientRect();
+      if (rect.top <= 8 && rect.height >= 32 && rect.height <= 160) return nodes[j];
+    }
+    return null;
+  }
+
+  function ensureControls() {
+    var host = document.getElementById(CONTROLS_ID);
+    if (host) return host;
+    host = document.createElement("div");
+    host.id = CONTROLS_ID;
+    host.innerHTML = [
+      '<button type="button" data-act="minimize" aria-label="最小化">' + ICON_MIN + "</button>",
+      '<button type="button" data-act="maximize" aria-label="最大化">' + ICON_MAX + "</button>",
+      '<button type="button" data-act="close" aria-label="关闭">' + ICON_CLOSE + "</button>"
+    ].join("");
+    host.addEventListener("click", function (event) {
+      var button = event.target.closest("[data-act]");
+      if (!button || !window.__DSH_DESKTOP__) return;
+      window.__DSH_DESKTOP__.windowAction(button.dataset.act);
+    });
+    (document.body || document.documentElement).appendChild(host);
+    return host;
+  }
+
+  function ensureDragStrip() {
+    var strip = document.getElementById(DRAG_ID);
+    if (!strip) {
+      strip = document.createElement("div");
+      strip.id = DRAG_ID;
+      strip.setAttribute("data-tauri-drag-region", "deep");
+      (document.body || document.documentElement).appendChild(strip);
+    }
+    return strip;
+  }
+
+  function applyControlTheme(host) {
+    var fg = getComputedStyle(document.body).getPropertyValue("--dsw-alias-label-primary").trim();
+    if (!fg) {
+      fg = getComputedStyle(document.body).getPropertyValue("color") || "#3f3f46";
+    }
+    host.style.setProperty("--dsh-ctrl-fg", fg);
+    host.style.setProperty("--dsh-ctrl-hover", "rgba(128, 128, 128, 0.18)");
+  }
+
+  function install() {
+    ensureStyle();
+    var host = ensureControls();
+    var bar = findTopBar();
+    ensureDragStrip();
+    if (bar && bar instanceof HTMLElement) {
+      bar.setAttribute("data-tauri-drag-region", "deep");
+      var prev = parseFloat(bar.style.paddingRight) || 0;
+      bar.style.paddingRight = Math.max(prev, reservedRight()) + "px";
+    }
+    applyControlTheme(host);
+    if (window.__DSH_DESKTOP__ && typeof window.__DSH_DESKTOP__.onWindowState === "function") {
+      window.__DSH_DESKTOP__.onWindowState(function (state) {
+        var maximized = !!(state && state.maximized);
+        var maxBtn = host.querySelector("[data-act=maximize]");
+        if (maxBtn) {
+          maxBtn.innerHTML = maximized ? ICON_RESTORE : ICON_MAX;
+          maxBtn.setAttribute("aria-label", maximized ? "还原" : "最大化");
+        }
+      });
+    }
+  }
+
+  install();
+})();"##;
+```
+
+- [ ] **Step 2: 在 `on_page_load` 注入**
+
+把现有注入块改为先注入桥接、再注入标题栏：
+
+```rust
+        .on_page_load(|webview, payload| {
+            if payload.event() == PageLoadEvent::Finished && is_dsh_web_url(payload.url()) {
+                let _ = webview.eval(BRIDGE_SCRIPT);
+                let _ = webview.eval(HARNESS_CHROME_SCRIPT);
+            }
+        })
+```
+
+- [ ] **Step 3: 编译与验证**
+
+Run: `cd apps/shell/src-tauri && cargo fmt && cargo check && cargo clippy`；`yarn dev` 启动进入 dsh web
+Expected: dsh web 顶部可拖动、双击最大化；右上角最小化/最大化/关闭按钮生效（关闭仍走关闭到托盘）；最大化图标随状态切换；按钮颜色跟随页面主题
+
+- [ ] **Step 4: 提交**
+
+```bash
+git add apps/shell/src-tauri/src/lib.rs
+git commit -m "feat(shell): 向 dsh web 注入自绘标题栏（拖动条 + 窗口控制）"
+```
+
+---
+
+### Task 13: 文档同步与全量验证
+
+**Files:**
+- Modify: `AGENTS.md`（根 README 通信契约表）
+- Modify: `apps/shell/AGENTS.md`（启动页通信契约表 + 标题栏）
+- Modify: `apps/shell/src-tauri/AGENTS.md`（IPC 命令/事件表 + 原生能力 + 无边框窗口）
+- Modify: `packages/contracts/AGENTS.md`（契约清单）
+- Modify: `packages/plugins/bridge/AGENTS.md`（client 面职责：外观设置节）
+- Modify: `docs/plugin-tauri-boundary.md`（§6 bridge 插件定位补充外观节说明）
+- Modify: `README.md`（特性列表补“主题与背景图”与“无边框窗口 + 自绘标题栏”）
+
+**Interfaces:**
+- Consumes: Task 1–12 的全部契约与文件
+
+- [ ] **Step 1: 更新契约表**
+
+各 AGENTS.md 的 IPC 契约表补：`get_ui_theme` 命令（`UiThemeSnapshot`）、`window_action` 命令（`WindowAction`）、`dsh-ui-theme` 事件、`dsh-window-state` 事件（`WindowState`）；bridge AGENTS.md 补“外观”设置节与 `ui-theme` 命名空间 bind（不注册）以及 `windowAction`/`onWindowState` 桥接成员。
+
+- [ ] **Step 2: 更新边界文档与 README**
+
+`docs/plugin-tauri-boundary.md`：§6 补充 bridge client 面“外观”设置节复用上游 `ui-theme` 命名空间；壳侧 `get_ui_theme` 属 native 契约（§4），`window_action` 属受控桥接（§5）。`README.md` 特性列表追加“主题与背景图：设置 → 外观（内置 7 主题家族浅/深两半、自定义主题、背景图毛玻璃/像素化/玻璃透明度、排版），启动页与窗口背景跟随”与“无边框窗口 + 自绘标题栏：可拖动、双击最大化，最小化/最大化/关闭按钮齐全，标题栏背景跟随主题”。
+
+- [ ] **Step 3: 全量验证**
+
+Run（仓库根）：
+```bash
+yarn typecheck
+node scripts/build-plugins.mjs
+yarn build:web
+cd apps/shell/src-tauri && cargo fmt --check && cargo clippy && cargo test
+```
+Expected: 全部通过；`yarn lint`（biome check）无错误
+
+- [ ] **Step 4: 端到端手动验证**
+
+`yarn dev` 启动应用，逐一验证：① 设置 → 外观——偏好 cube、主题库点浅/深半、自定义主题新建/复制/编辑（实时预览）/导入/导出、背景图选图与毛玻璃/像素化/玻璃透明度、排版字号；确认 `settings.yaml` 的 `ui-theme` 分节被写入；重启应用后启动页与窗口背景跟随。② 无边框窗口——启动页与 dsh web 都能拖动、双击最大化、三个窗口控制按钮正常、最大化图标切换、关闭到托盘行为不变。
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add AGENTS.md apps/shell/AGENTS.md apps/shell/src-tauri/AGENTS.md packages/contracts/AGENTS.md packages/plugins/bridge/AGENTS.md docs/plugin-tauri-boundary.md README.md
+git commit -m "docs: 同步主题/背景图与无边框标题栏的契约表与文档"
+```
+
+---
+
+## 任务依赖一览
+
+| 任务 | 依赖 | 交付物 |
+| --- | --- | --- |
+| 1 共享模型 | — | `src/shared/theme.ts` + 单测 |
+| 2 主题应用 | 1 | `theme-apply.ts`（`applyThemeSection`/`wallpaperStyleSheet`） |
+| 3 快照存储 | 1 | `theme-store.ts`（`createThemeStore`） |
+| 4 主题库 UI | 3 | `AppearanceSection`/`ThemeLibrary` + css |
+| 5 背景图/玻璃 UI | 1,3 | `WallpaperRow`/`GlassSlider` |
+| 6 自定义主题/排版 UI | 1,3 | `CustomThemeEditor`/`TypographySection` |
+| 7 client 装配 | 2,3,4,5,6 | 外观设置节注册 + 主题应用接线 + 语言包 |
+| 8 Rust 壳侧主题 | — | `theme.rs` + `get_ui_theme`/`dsh-ui-theme` + 契约 + 窗口背景 |
+| 9 启动页跟随主题 | 8 | 启动页主题变量应用 |
+| 10 无边框 + 窗口控制 | — | `decorations:false` + `window_action`/`dsh-window-state` + 桥接扩展 |
+| 11 启动页标题栏 | 10 | 启动页自绘标题栏 |
+| 12 dsh web 标题栏注入 | 10 | `HARNESS_CHROME_SCRIPT` |
+| 13 文档 + 验证 | 全部 | 契约表/边界文档/README 同步 + 全量验证 |

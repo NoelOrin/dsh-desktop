@@ -9,8 +9,9 @@ dsh 插件的开发容器：**每个子目录一个 dsh 插件**（cordis bundle
   让 dsh web 内的插件/页面能调用 Tauri 壳能力。**桥接命令契约由本插件自持**
   （Rust 侧在 `apps/shell/src-tauri/capabilities/bridge.json` 声明），不并入
   `packages/contracts`——contracts 只负责 native 内容（边界见 `docs/plugin-tauri-boundary.md`）。
-  host 侧注册 `desktop` settings 命名空间（`autostart` 默认关闭），client 侧在 dsh WebUI
-  设置面板渲染“开机自启”开关（详见 `./bridge/AGENTS.md`）
+  host 侧注册 `desktop` settings 命名空间（`autostart` 默认关闭）与
+  `dsh-desktop/health` 健康端点，不实现 dsh 业务；client 侧在 dsh WebUI 设置面板
+  渲染“桌面”与“外观”设置节，桥接面覆盖二期原生能力（详见 `./bridge/AGENTS.md`）
 - `hello/`（`@dsh-desktop/plugin-hello`）— **自定义插件示例**（骨架），演示开发结构
 
 ## 新增插件
@@ -27,10 +28,110 @@ dsh 插件的开发容器：**每个子目录一个 dsh 插件**（cordis bundle
 - `cordis.patch.yml` 是 YAML 配置层：`- insert:` 向 profile 插入插件行（`id` / `name`）
 - 插件源码：`export const name` + `export function apply(ctx, config)`；事件名必须是
   cordis `Events` 接口里的键（骨架阶段不要注册未声明的事件）
-- 安装：**内嵌装配（主交付路径）**——`yarn build:plugins` 编译打包进 Tauri resources，桌面应用启动时自动复制进 `$DSH_HOME/profiles/node_modules/@dsh-desktop/<name>/` 并以 `--patch` overlay 挂载（见 `docs/plugin-tauri-boundary.md` §6）；开发期亦可 `dsh plugin --profile web add <包>` 单独安装
+- 安装：**内嵌装配（主交付路径）**——`yarn build:plugins` 编译打包进 Tauri resources，`tauri dev` 与 `tauri build` 前都会自动构建，桌面应用启动时自动复制进 `$DSH_HOME/profiles/node_modules/@dsh-desktop/<name>/` 并以 `--patch` overlay 挂载（见 `docs/plugin-tauri-boundary.md` §6）；开发期亦可 `dsh plugin --profile web add <包>` 单独安装
 - 构建与装配：`yarn build:plugins`（根脚本）经 tsdown 编译各插件——host ESM 产出 `lib/index.js`，可选 client UMD 产出 `lib/client.js`——并把自包含 dist 包（`package.json` 白名单字段 + `cordis.patch.yml` + `lib/`）装配进 `apps/shell/src-tauri/resources/plugins/<name>/`；桌面应用启动时 Rust 侧自动装配进 dsh 的 profile 模块兜底目录并以 `--patch` overlay 挂载（机制见 `docs/plugin-tauri-boundary.md` §6）
 - 注意：dsh 从 Git 安装时跑 `prepare` 而非 `build`，TS 插件需自包含构建产物
   （见官方 publish 文档）
+
+## dsh 官方开发规范（固定）
+
+以下内容整理自 deepseek-harness `master` 官方文档（2026-08 核对），作为本包开发 dsh
+插件的固定约束；上游演进后按链接源码/README 更新，而不是凭第三方教程改写。
+
+### 官方来源
+
+- 插件开发入门 / 配置 / 工具 / 发布：[docs/user/develop/basic](https://github.com/deepseek-ai/deepseek-harness/tree/master/docs/user/develop/basic)
+- 生命周期、事件与服务：[docs/user/develop/framework](https://github.com/deepseek-ai/deepseek-harness/tree/master/docs/user/develop/framework)
+- 设置 seam：[docs/subsystems/settings.zh.md](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/settings.zh.md)
+- client 模块装载：[docs/subsystems/client-modules.zh.md](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/client-modules.zh.md)
+- 设置 slot / 工具 slot / 主题 / UI 原语 / schema form：
+  [ui-settings](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/client/ui-settings/README.zh.md)、
+  [ui-tool](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/client/ui-tool/README.zh.md)、
+  [ui-theme](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/client/ui-theme/README.zh.md)、
+  [ui-primitives](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/client/ui-primitives/README.zh.md)、
+  [schema-form](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/client/schema-form/README.zh.md)
+- 工具 UI 卡片：[docs/cookbook/adding-a-tool.zh.md](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/cookbook/adding-a-tool.zh.md)
+
+### 插件模型与生命周期
+
+- 插件是导出 `name` 和 `apply(ctx, config)` 的 TypeScript 模块；需要其他服务时用
+  `inject` 声明，`apply` 执行时这些服务保证已就绪。
+- `ctx.on()`、`ctx.*.register()`、`ctx.effect()` 都是 effect，插件卸载时自动清理；
+  手动资源必须放进 `ctx.effect()` 返回的 disposer。多个异步 disposer 会并发执行，
+  顺序依赖必须放在同一个 effect 的 disposer 里。
+- Cordis 事件模式分 `emit` / `bail` / `serial` / `waterfall`；`waterfall` 监听器
+  必须调用 `next()`，否则会故意短路流水线。事件类型用 `declare module
+  '@deepseek-ai/cordis' { interface Events { ... } }` 扩展，禁止注册未声明的键。
+- 事件遵循 `namespace/action` 命名；`turn/*`、`step/*`、`tool/call`、`tool/result`、
+  `compaction/*` 是持久化会话事件类型，不是同名 Cordis 事件，观察它们要走
+  `session/event`。
+- 插件配置必须导出同名 `Config` 类型与 Schemastery schema，默认值写在 schema 中；
+  凡部署可能需要不同的参数都不许硬编码。schema 校验失败会让插件加载失败；
+  配置变更触发整实例 HMR 替换，旧注册会随 effect 清理。
+- 对外提供服务用 `Service` 基类，并用声明合并补 `Context` 类型；可选依赖在用到处
+  用 `ctx.get()`，不要放进 `inject`。
+
+### bundle 与配置层
+
+- 组合包（bundle）与 profile 是两种 manifest，不会同时是两者：`dsh.bundle.patch`
+  回答“这个包贡献什么”，`dsh.profile.bundles` 回答“这套配置由哪些包按什么顺序组成”。
+- patch 生效顺序是 profile bundles → profile `cordis.patch.yml` → `$DSH_HOME` →
+  `--patch` overlay；后应用层按行胜出，**覆盖整行 config 而不是深合并**。
+- 从 Git 安装跑 `prepare` 而非 `build`，TS 插件必须提供自包含构建产物；发布 npm 或
+  tarball 则交付预构建产物，不需要构建授权。
+
+### client 面与 UI 接缝
+
+- client 面经 `package.json` 的 `dsh.client`（`platform: "web"`）与
+  `exports["./client"]` 进入 Web UI；host 扫描后组装 `window.__DSH_BOOT__` 图，
+  经 `/plugins/<id>/client.js` 提供 bundle。
+- UI 扩展使用 `@deepseek-ai/dsh-client-ui-slots` 的声明式 slot：
+  先通过 `ctx.slots.inject()` 等待目标 slot 声明，再用 `ctx.slots.register()` 挂载；
+  禁止绕过 slot 直接改 shell DOM、把组件硬塞进其他包页面。
+- 重要 slot 归主：`sidebar.settings` 是设置入口；`settings.section` 是每个功能一页；
+  `settings.plugins.tab` 是插件分区页；`settings.general.item` 是“通用”单行偏好；
+  `tool.call.toolview` 是按 wire 工具名分发的原子工具卡片；`conversation.chat.node`
+  是对话节点渲染。
+- 外壳组件所有权在 `ui-layout` / `ui-sidebar` / `ui-workspace` /
+  `ui-settings-general`，功能插件只贡献自己的 section、item 或 tab，不复制外壳。
+
+### 设置规范
+
+- host 侧设置 namespace 必须小写 kebab-case，用 `ctx.settings.register(ns, schema,
+  options)` 注册；`base` 是组合层，`applies` 是 `live` / `restart`，跨字段约束放
+  `validate()`，不放 schema。
+- 用户层、组合 base、schema 默认值按“默认值 → base → user”解析；`replace` 才是删除/
+  重置路径，`update` 只稀疏合并 user 层。
+- 对外传输设置描述必须 `redactSecrets: true`，secret 用 path op 写回，绝不能把
+  redacted descriptor 重建后 `replace`（会静默删除所有 secret）。
+- client 面经 `@deepseek-ai/dsh-client-ui-settings` 的 `settingsScope.bind()` 读写，
+  写入带 `expectedRevision`，避免覆盖并发变更；字段是否被用户覆盖按“是否出现在 user
+  层”判断，不按值比较。
+- bridge 只注册/维护自己的 `desktop` 设置 namespace；`ui-theme` 由上游
+  `dsh-client-ui-theme` host 注册，client 只 bind，绝不重复注册。
+
+### 主题与样式
+
+- 自定义 UI 一律使用 `--dsw-*` token（基础样式表 + 语义别名层），不要直接写产品色值；
+  token 样式表是颜色值的唯一权威来源。需要新色值先走语义 token，不做局部补色。
+- 主题偏好由 `ctx.theme` 统一解析 `light` / `dark` / `system`，外部只消费不可变
+  `ThemeSnapshot`；监听 `theme/change`，不要自己维护第二份主题状态。
+- 自定义滚动表面遵守 `--dsh-scrollbar-*` 约定，高层面板在自己的容器上重新绑定 l2
+  token；不要把 UI 外壳和第三方主题的 overlay 当成产品主题实现。
+
+### 组件使用
+
+- 基础 React 原子用 `@deepseek-ai/dsh-client-ui-primitives`：Button、Pill、Menu、
+  Modal、Input、Toast、StateDot、Tooltip、TerminalBlock、DiffBlock、ReadBlock、
+  SearchBlock、WebBlock、MarkdownText 等；这些原子零 Cordis，本地化文案走 label
+  props，不要在组件内读全局 locale。
+- 设置表单先用 `@deepseek-ai/dsh-client-schema-form` 的 schema 重水合/草稿/校验工具，
+  再按功能画自己的控件；官方不提供通用 renderer，禁止自行用字符串拼表单。
+- 新增工具展示走 `tool.call.toolview` keyed slot；工具本体仍返回一个规范 JSON 值，
+  `output.render` 负责模型面文案，`presentCall` / `presentResult` 只负责纯函数 UI
+  卡片，`presentationMeta` 负责可重放卡片数据。模型结果里不放只为 UI 服务的格式。
+- client bundle 只依赖平台模块；跨插件值 import 会被本仓 tsdown purity gate 拒绝，
+  协作走 cordis services，不是互相 import 组件。
 
 ## 边界
 

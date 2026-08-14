@@ -6,10 +6,16 @@
 
 - `RuntimePhase` — phase 联合类型（snake_case，与 Rust `RuntimePhase` serde 一致）
 - `RuntimeSnapshot` — `get_status` 返回（phase/message/url/dsh_installed/node_found/log_dir/logs）
-- `DshConfig` — `get_config` / `set_config` 的配置结构（dsh_bin/dsh_node/dsh_home，null 表示未设置）
+- `DshConfig` — `get_config` / `set_config` 的配置结构（dsh_bin/dsh_node/dsh_home/shortcuts，null 表示未设置）
+- `StartupMode` — 启动模式（`normal` / `tray` / `minimized`）
+- `DeepLinkPayload` — `dsh-deeplink` / `get_pending_deeplinks` / `ack_deeplink` 的深链载荷（id/url/raw/received_at/source/args/cwd）
+- `FileDropPayload` — `dsh-file-drop` / `open_paths` / `import_paths` 的拖放载荷（paths/kind/position/action）
+- `ShortcutSnapshot` — `get_shortcuts` 返回的快捷键快照（shortcut/registered）
+- `NotificationActionPayload` — `dsh-notification-action` 的通知动作载荷（kind/session_id/url/path）
 - `UiThemeSnapshot` / `UiThemeTokens` — `get_ui_theme` / `dsh-ui-theme` 的主题快照
 - `WindowState` / `WindowAction` — `window_action` / `dsh-window-state` 的窗口控制契约
-- `COMMANDS` / `EVENTS` — IPC 命令名与事件名字符串常量（命令含 `open_external` / `get_autostart` / `set_autostart` / `register_shortcut` / `unregister_shortcut` / `get_ui_theme` / `window_action`；事件含 `dsh-file-drop` / `dsh-theme` / `dsh-deeplink` / `dsh-shortcut` / `dsh-update-available` / `dsh-ui-theme` / `dsh-window-state`）
+- `COMMANDS` — IPC 命令名字符串常量（`get_status` / `install_dsh` / `restart` / `open_log_directory` / `get_config` / `set_config` / `open_external` / `get_autostart` / `set_autostart` / `register_shortcut` / `unregister_shortcut` / `get_shortcuts` / `unregister_all_shortcuts` / `get_pending_deeplinks` / `ack_deeplink` / `request_notification_permission` / `update_dsh` / `get_ui_theme` / `window_action` / `open_paths` / `import_paths`）
+- `EVENTS` — IPC 事件名字符串常量（`dsh-status` / `dsh-log` / `dsh-file-drop` / `dsh-theme` / `dsh-deeplink` / `dsh-shortcut` / `dsh-update-available` / `dsh-ui-theme` / `dsh-window-state` / `dsh-notification-action`）
 
 ## 边界
 

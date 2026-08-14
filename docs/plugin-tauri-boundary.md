@@ -51,6 +51,16 @@ DSH Desktop 是 dsh 的桌面套壳：Rust 后端拉起 `dsh web` 子进程，�
 **红线**：Tauri 壳不实现任何 dsh 产品功能——不做 agent、不做工具、不接 LLM、
 不解析 dsh 的配置树、**不重复实现 dsh 的插件管理**。这些永远是 dsh 自己的事。
 
+### 2.3 二期新增能力边界
+
+二期新增的桌面原生能力统一收敛到 **Tauri 壳域**：托盘、开机自启、深链、
+全局快捷键、通知、进程日志与文件拖放均由壳负责实现、持久化与事件出口；
+dsh 侧只能经 `window.__DSH_DESKTOP__` 的最小桥接面调用或订阅。
+
+`packages/plugins/bridge` 的 host 面只注册 `desktop` settings 命名空间与
+`dsh-desktop/health` 健康端点，**不实现 dsh 业务**；agent、工具、会话等
+dsh 产品逻辑仍由 dsh 官方或自定义 cordis 插件提供。
+
 ## 3. 归属判断规则
 
 给新功能定归属时，按顺序回答三个问题：
@@ -174,13 +184,16 @@ snake_case）。
    （`package.json` 白名单字段 + `cordis.patch.yml` + `lib/`）装配进
    `apps/shell/src-tauri/resources/plugins/<name>/`；`tauri.conf.json` 的
    `bundle.resources: ["resources/plugins/**/*"]` 将其打进安装包，`beforeBuildCommand`
-   链入 `yarn build:plugins`。
+   链入 `yarn build:plugins`；`beforeDevCommand` 也先执行 `yarn build:plugins` 再启动
+   Vite，保证 `yarn dev` 开发模式同样装配内嵌插件。
 2. **装配（Rust `apps/shell/src-tauri/src/embedded.rs`）**：应用启动时
    `embedded::assemble` 遍历 resources 里每个含 `dshDesktop.id` 的插件包，复制进
    `$DSH_HOME/profiles/node_modules/@dsh-desktop/<name>/`（dsh 的 profile 模块兜底目录）——
    以版本号为键幂等（缺失或版本不同才重装）、临时目录 + rename 原子替换、单包失败只记日志
    跳过；随后 `write_overlay` 在应用数据目录生成 `embedded-plugins.patch.yml`（`- insert:`
-   行，插件名**必须单引号**——`@` 是 YAML 1.1 保留指示符）。
+   行，插件名**必须单引号**——`@` 是 YAML 1.1 保留指示符）。开发模式下 Tauri 的
+   `resource_dir()` 指向 `target/<profile>`，因此 Rust 侧经 `plugins_resource_dir()` 显式回退到
+   源码 `apps/shell/src-tauri/resources`，发布模式仍读取应用资源目录。
 3. **挂载**：桌面壳以 `dsh web --patch <overlay> --host 127.0.0.1 --port <port>` 拉起子进程，
    overlay 的 `- insert:` 行向 profile 插入插件行——host 侧经 dsh 的 loader 装载，client 侧由
    dsh-client-modules 扫描插件 `exports["./client"]` 自动注入。**不写 profile manifest、

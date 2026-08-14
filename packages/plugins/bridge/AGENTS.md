@@ -9,7 +9,7 @@
 
 | 面 | 文件 | 职责 |
 | --- | --- | --- |
-| host | `src/index.ts` | 插件入口（`export const name` + `apply(ctx)`）；定义 `DshDesktopBridge` 类型；注册 `desktop` settings 命名空间（`autostart: z.boolean().default(false)`，默认关闭） |
+| host | `src/index.ts` | 插件入口（`export const name` + `apply(ctx)`）；定义 `DshDesktopBridge` 类型；注册 `desktop` settings 命名空间（`autostart: z.boolean().default(false)`，默认关闭）与 `dsh-desktop/health` 健康端点，不实现 dsh 业务 |
 | client | `src/client.tsx` | 在 dsh WebUI 设置面板注册“桌面”设置节（状态 / 配置 / 工具 / 开机自启）与“外观”设置节（主题偏好 / 主题库 / 背景图 / 玻璃透明度 / 自定义主题 / 排版）；`ui-theme` 命名空间只 bind 不注册，快照经 `createThemeStore` 防抖写回，变化时 `applyThemeSection` 实时应用 |
 
 `package.json` 通过 `dsh.client`（platform web）声明 client 面并导出 `./client`；
@@ -23,8 +23,12 @@ client 面依赖 `@deepseek-ai/dsh-client-ui-settings` 等 dsh client 生态（p
 | --- | --- | --- |
 | `autostart.get()` / `autostart.set(enabled)` | `get_autostart` / `set_autostart` | 查询 / 设置开机自启 |
 | `shortcuts.register(s, cb)` / `shortcuts.unregister(s)` | `register_shortcut` / `unregister_shortcut` | 注册 / 注销系统级全局快捷键 |
+| `shortcuts.list()` / `shortcuts.unregisterAll()` | `get_shortcuts` / `unregister_all_shortcuts` | 查询 / 全量清理全局快捷键 |
 | `onShortcut(cb)` | 事件 `dsh-shortcut` | 订阅快捷键按下（payload 为快捷键字符串） |
 | `onDeepLink(cb)` | 事件 `dsh-deeplink` | 订阅 `dsh-desktop://` 深链（payload 为原始 URL） |
+| `getPendingDeepLinks()` / `ackDeepLink(id)` | `get_pending_deeplinks` / `ack_deeplink` | 深链 pending 队列读取 / 确认消费 |
+| `requestNotificationPermission()` / `onNotificationAction(cb)` | `request_notification_permission` / 事件 `dsh-notification-action` | 通知权限申请 / 点击动作 |
+| `openPaths(paths)` / `importPaths(paths)` | `open_paths` / `import_paths` | 打开文件 / 导入目录动作 |
 | `windowAction(action)` | `window_action` | 无边框窗口控制（minimize / maximize / close） |
 | `onWindowState(cb)` | 事件 `dsh-window-state` | 订阅窗口最大化状态（payload 为 `{ maximized }`） |
 

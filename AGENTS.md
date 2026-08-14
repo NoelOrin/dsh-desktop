@@ -42,6 +42,8 @@
 
 - 提交信息遵循 [Conventional Commits](https://www.conventionalcommits.org/)（`feat:` / `fix:` / `chore:`），版本号与 CHANGELOG 由 CI 依据提交信息自动生成
 - 用户可见文案与代码注释使用中文
+- dsh 官方插件开发、UI 规范与组件使用约定已固定于 `packages/plugins/AGENTS.md`
+  （含官方文档链接，新增插件/修改 client 面前先读该文件）
 - 前后端通过固定契约通信：IPC 命令 `get_status` / `install_dsh` / `restart` / `open_log_directory` / `get_config` / `set_config` / `open_external` / `get_autostart` / `set_autostart` / `register_shortcut` / `unregister_shortcut` / `get_ui_theme` / `window_action`，事件 `dsh-status` / `dsh-log` / `dsh-file-drop` / `dsh-theme` / `dsh-deeplink` / `dsh-shortcut` / `dsh-update-available` / `dsh-ui-theme` / `dsh-window-state`（类型与常量见 `packages/contracts`，各模块契约表见对应 AGENTS.md）
 - 系统托盘常驻后台（关闭到托盘），关键节点弹原生通知；dsh web 通过受控桥接 `window.__DSH_DESKTOP__` 调用最小能力（白名单见 `apps/shell/src-tauri/capabilities/bridge.json`，边界见 `docs/plugin-tauri-boundary.md`）
 - 原生能力：无边框窗口 + 自绘标题栏、窗口状态记忆（重启恢复窗口大小/位置）、主题/背景图跟随、深链 `dsh-desktop://`、自动更新（后台检查 + “桌面”页“检查更新”，静默下载安装包后由用户手动安装）、开机自启（dsh 插件设置面板，默认关闭）、自定义全局快捷键（dsh 插件经桥接注册/注销）、托盘“退出”二次确认

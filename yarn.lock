@@ -5,10 +5,19 @@ __metadata:
   version: 10
   cacheKey: 10c0
 
+"@dsh-desktop/contracts@workspace:^, @dsh-desktop/contracts@workspace:packages/contracts":
+  version: 0.0.0-use.local
+  resolution: "@dsh-desktop/contracts@workspace:packages/contracts"
+  dependencies:
+    typescript: "npm:^5"
+  languageName: unknown
+  linkType: soft
+
 "@dsh-desktop/shell@workspace:apps/shell":
   version: 0.0.0-use.local
   resolution: "@dsh-desktop/shell@workspace:apps/shell"
   dependencies:
+    "@dsh-desktop/contracts": "workspace:^"
     "@tauri-apps/api": "npm:^2"
     "@tauri-apps/cli": "npm:^2"
     concurrently: "npm:^9"

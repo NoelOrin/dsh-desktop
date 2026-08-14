@@ -17,12 +17,17 @@ const RAW_RUNTIME_STATE =
     {\
       "name": "@dsh-desktop/shell",\
       "reference": "workspace:apps/shell"\
+    },\
+    {\
+      "name": "@dsh-desktop/contracts",\
+      "reference": "workspace:packages/contracts"\
     }\
   ],\
   "enableTopLevelFallback": true,\
   "ignorePatternData": "(^(?:\\\\.yarn\\\\/sdks(?:\\\\/(?!\\\\.{1,2}(?:\\\\/|$))(?:(?:(?!(?:^|\\\\/)\\\\.{1,2}(?:\\\\/|$)).)*?)|$))$)",\
   "pnpZipBackend": "libzip",\
   "fallbackExclusionList": [\
+    ["@dsh-desktop/contracts", ["workspace:packages/contracts"]],\
     ["@dsh-desktop/shell", ["workspace:apps/shell"]],\
     ["dsh-desktop", ["workspace:."]]\
   ],\
@@ -38,10 +43,21 @@ const RAW_RUNTIME_STATE =
         "linkType": "SOFT"\
       }]\
     ]],\
+    ["@dsh-desktop/contracts", [\
+      ["workspace:packages/contracts", {\
+        "packageLocation": "./packages/contracts/",\
+        "packageDependencies": [\
+          ["@dsh-desktop/contracts", "workspace:packages/contracts"],\
+          ["typescript", "patch:typescript@npm%3A5.9.3#optional!builtin<compat/typescript>::version=5.9.3&hash=5786d5"]\
+        ],\
+        "linkType": "SOFT"\
+      }]\
+    ]],\
     ["@dsh-desktop/shell", [\
       ["workspace:apps/shell", {\
         "packageLocation": "./apps/shell/",\
         "packageDependencies": [\
+          ["@dsh-desktop/contracts", "workspace:packages/contracts"],\
           ["@dsh-desktop/shell", "workspace:apps/shell"],\
           ["@tauri-apps/api", "npm:2.11.1"],\
           ["@tauri-apps/cli", "npm:2.11.4"],\

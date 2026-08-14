@@ -30,7 +30,14 @@ pub fn assemble(resource_dir: &Path, home: &Path, log: &mut dyn FnMut(&str)) -> 
     };
 
     let mut mounted = Vec::new();
-    for entry in entries.filter_map(Result::ok) {
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                log(&format!("[desktop] 读取内嵌插件目录出错（跳过）：{error}"));
+                continue;
+            }
+        };
         if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
             continue;
         }
@@ -176,7 +183,10 @@ pub fn write_overlay(dir: &Path, mounted: &[MountedPlugin]) -> Option<PathBuf> {
         ));
     }
     let path = dir.join("embedded-plugins.patch.yml");
-    fs::write(&path, content).ok()?;
+    if let Err(error) = fs::write(&path, content) {
+        eprintln!("[desktop] 写入 overlay {} 失败：{error}", path.display());
+        return None;
+    }
     Some(path)
 }
 

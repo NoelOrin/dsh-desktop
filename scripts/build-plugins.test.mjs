@@ -19,6 +19,7 @@ test("dist manifest 剔除依赖并指向 lib", () => {
     type: "module",
     main: "./lib/index.js",
     exports: { ".": "./lib/index.js", "./client": "./lib/client.js" },
+    description: "桥接 Tauri 壳能力",
     dependencies: { "@deepseek-ai/cordis": "^4.0.1" },
     devDependencies: { typescript: "^5" },
     peerDependencies: { react: "^18" },
@@ -31,6 +32,10 @@ test("dist manifest 剔除依赖并指向 lib", () => {
   assert.equal(dist.peerDependencies, undefined);
   assert.equal(dist.private, undefined);
   assert.equal(dist.main, "./lib/index.js");
+  assert.equal(dist.version, "0.1.0");
+  assert.equal(dist.type, "module");
+  assert.deepEqual(dist.exports, { ".": "./lib/index.js", "./client": "./lib/client.js" });
+  assert.equal(dist.description, "桥接 Tauri 壳能力");
   assert.equal(dist.dsh.bundle.patch, "./cordis.patch.yml");
   assert.equal(dist.dshDesktop.id, "bridge");
 });

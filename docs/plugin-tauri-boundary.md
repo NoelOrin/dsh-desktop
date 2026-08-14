@@ -181,6 +181,11 @@ snake_case）。
 从 resources 移除对应目录（或不再 `--patch`），不修改 profile manifest，dsh 配置里无引用残留
 （已复制的兜底目录为惰性数据，不再被挂载）。
 
+**注意（行 id 去重）**：桌面 overlay 的 `- insert:` 行由 `write_overlay` **无条件追加**，
+不校验 profile 中是否已存在同名插件行。若把同一插件既内嵌挂载、又经
+`dsh plugin --profile web add <包>` 装进 profile，叠加后会出现**重复行 id**（同一插件行被
+插入两次）。因此**桌面内嵌装配是唯一规范路径**：对同一插件不要同时走 profile 安装与内嵌挂载。
+
 ## 7. 新增能力走哪条路（变更流程）
 
 拿到一个新需求时，按 §3 判断后走对应流程：

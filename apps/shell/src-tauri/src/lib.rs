@@ -600,8 +600,12 @@ impl DshManager {
         let mut child = cmd
             .spawn()
             .map_err(|error| format!("无法启动 dsh: {error}"))?;
+        let overlay_log = overlay
+            .as_ref()
+            .map(|path| format!(" --patch {}", path.to_string_lossy()))
+            .unwrap_or_default();
         self.append_log(&format!(
-            "[desktop] 启动 dsh: {} {} web --host 127.0.0.1 --port {port}",
+            "[desktop] 启动 dsh: {} {} web{overlay_log} --host 127.0.0.1 --port {port}",
             node.display(),
             entry.display()
         ));

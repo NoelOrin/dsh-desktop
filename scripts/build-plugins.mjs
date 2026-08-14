@@ -76,9 +76,11 @@ function main() {
     if (!srcPkg.dsh) continue; // 只装配含 dsh 字段的插件包
 
     // ① tsdown 构建（Task 1 产物：lib/）
+    // win32 下 Node 无法直接 spawn .cmd/.bat（corepack.cmd），需经 shell 解析后才能启动
     const build = spawnSync("corepack", ["yarn", "workspace", srcPkg.name, "build"], {
       cwd: ROOT,
       stdio: "inherit",
+      shell: process.platform === "win32",
     });
     if (build.error) {
       console.error(`[build-plugins] ${srcPkg.name} 启动构建失败: ${build.error.message}`);
@@ -109,9 +111,12 @@ function main() {
     }
 
     const libDir = path.join(pluginDir, "lib");
-    if (fs.existsSync(libDir)) {
-      fs.cpSync(libDir, path.join(target, "lib"), { recursive: true });
+    if (!fs.existsSync(libDir)) {
+      console.error(`[build-plugins] ${srcPkg.name} 构建产物 lib/ 缺失（${libDir}），装配失败`);
+      failures += 1;
+      continue;
     }
+    fs.cpSync(libDir, path.join(target, "lib"), { recursive: true });
 
     // ④ 打印清单
     const files = [];

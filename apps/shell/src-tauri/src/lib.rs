@@ -49,15 +49,15 @@ const BRIDGE_SCRIPT: &str = r#"(function () {
     return internals.listen(event, function (e) { cb(e.payload); });
   }
   window.__DSH_DESKTOP__ = {
-    platform: internals.metadata && internals.metadata.currentWindow ? (navigator.platform || "unknown") : "unknown",
-    notify: function (title, body) { return invoke("plugin:notification|notify", { title: title, body: body }); },
+    platform: (navigator.platform || "unknown"),
+    notify: function (title, body) { return invoke("plugin:notification|notify", { options: { title: title, body: body } }); },
     clipboard: {
       readText: function () { return invoke("plugin:clipboard-manager|read_text"); },
       writeText: function (text) { return invoke("plugin:clipboard-manager|write_text", { text: text }); },
     },
     dialog: {
-      openFile: function (options) { return invoke("plugin:dialog|open", options || {}); },
-      saveFile: function (options) { return invoke("plugin:dialog|save", options || {}); },
+      openFile: function (options) { return invoke("plugin:dialog|open", { options: options || {} }); },
+      saveFile: function (options) { return invoke("plugin:dialog|save", { options: options || {} }); },
     },
     openExternal: function (target) { return invoke("open_external", { target: target }); },
     getStatus: function () { return invoke("get_status"); },
@@ -279,8 +279,7 @@ pub fn run() {
             let label = window.label().to_string();
             // 文件拖放：把真实路径通过 dsh-file-drop 事件转给前端（dsh web 经桥接订阅）
             if label == "main" {
-                if let WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event
-                {
+                if let WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
                     let paths: Vec<String> = paths
                         .iter()
                         .map(|path| path.to_string_lossy().into_owned())
@@ -364,9 +363,7 @@ fn setup_tray(app: &tauri::AppHandle, exiting: Arc<AtomicBool>) -> tauri::Result
     let icon = app
         .default_window_icon()
         .cloned()
-        .or_else(|| {
-            tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png")).ok()
-        })
+        .or_else(|| tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png")).ok())
         .expect("缺少托盘图标");
 
     let tray = TrayIconBuilder::with_id("main-tray")

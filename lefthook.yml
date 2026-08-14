@@ -1,0 +1,21 @@
+# Git hooks 配置（Lefthook）
+# pre-commit：对暂存文件做 Biome 格式化与 lint 自动修复
+# pre-push：typecheck + Rust fmt/clippy 检查
+
+pre-commit:
+  parallel: true
+  commands:
+    biome:
+      glob: "*.{ts,tsx,js,mjs,cjs,json}"
+      # 用 node 直接调用本地二进制，避免依赖 yarn/corepack 是否在 PATH 上（git hooks 环境 PATH 可能很精简）
+      run: node node_modules/@biomejs/biome/bin/biome check --write --staged && git add -u
+
+pre-push:
+  parallel: false
+  commands:
+    typecheck:
+      run: yarn typecheck
+    cargo-fmt:
+      run: cd apps/shell/src-tauri && cargo fmt --check
+    cargo-clippy:
+      run: cd apps/shell/src-tauri && cargo clippy --all-targets

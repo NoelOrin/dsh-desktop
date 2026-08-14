@@ -14,7 +14,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@deepseek-ai/cordis": "^4.0.1"
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@dsh-desktop/contracts": "workspace:^"
   },
   "devDependencies": {
     "typescript": "^5"

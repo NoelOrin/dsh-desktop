@@ -21,6 +21,6 @@ DSH Desktop 的第二个窗口：SolidJS SPA（Vite 8 + vite-plugin-solid + Type
 
 ## 通信契约
 
-- IPC 命令：`get_status` / `install_dsh` / `restart` / `open_log_directory` / `get_config` / `set_config`
-- 事件：`dsh-status`（RuntimeSnapshot）、`dsh-log`（文本行）
+- IPC 命令：`get_status` / `install_dsh` / `restart` / `open_log_directory` / `get_config` / `set_config` / `open_external`
+- 事件：`dsh-status`（RuntimeSnapshot）、`dsh-log`（文本行）、`dsh-theme`（light/dark，深色适配）
 - 类型与常量来自 `@dsh-desktop/contracts`；修改契约须同步 Rust serde 类型与 `apps/shell/src`

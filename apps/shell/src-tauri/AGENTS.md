@@ -7,10 +7,11 @@ DSH Desktop 的 Rust 后端。职责：检测 / 一键安装 `dsh`、以子进�
 - `src/lib.rs` — 全部后端逻辑：状态机、进程管理、IPC 命令、control 窗口打开
 - `src/config.rs` — `DshConfig` 结构、`config.json` 的 load/save 与 effective 合并逻辑
 - `src/main.rs` — 仅入口：调用 `dsh_desktop_lib::run()`
-- `Cargo.toml` — 依赖：`tauri 2`、`tauri-plugin-global-shortcut`、`serde`、`serde_json`；lib 名为 `dsh_desktop_lib`
+- `Cargo.toml` — 依赖：`tauri 2`（`tray-icon` / `image-png`）、`tauri-plugin-global-shortcut` / `notification` / `single-instance` / `clipboard-manager` / `dialog`、`libc`（unix 优雅退出）、`serde`、`serde_json`；lib 名为 `dsh_desktop_lib`
+- `build.rs` — 用 `AppManifest::commands` 为应用命令生成 `allow-*` ACL 权限（远程桥接与本地窗口共用）
 - `tauri.conf.json` — main / control 窗口配置、构建前后命令、bundle 目标
-- `capabilities/default.json` — IPC 权限（`core:default` + `global-shortcut:default`，覆盖 main 与 control 窗口）
-- `build.rs` — 仅调用 `tauri_build::build()`
+- `capabilities/default.json` — 本地窗口（main/control）IPC 权限：`core:default` + `global-shortcut:default` + 插件权限 + 应用命令 `allow-*`
+- `capabilities/bridge.json` — dsh web（remote `http://127.0.0.1:*` 白名单）受控桥接权限，仅授予最小命令切片
 - `gen/` — 构建生成的 schema（勿手改，已在 `.gitignore`）
 - `icons/` — 应用图标（由 `tauri icon` 生成，勿手改）
 
@@ -30,10 +31,21 @@ DSH Desktop 的 Rust 后端。职责：检测 / 一键安装 `dsh`、以子进�
 
 ## IPC 命令与事件
 
-- 命令：`get_status` / `restart` / `install_dsh` / `open_log_directory` / `get_config` / `set_config`
-- 事件（向前端 emit）：`dsh-status`（RuntimeSnapshot）、`dsh-log`（单行文本）
+- 命令：`get_status` / `restart` / `install_dsh` / `open_log_directory` / `get_config` / `set_config` / `open_external`（系统默认应用打开目标）
+- 事件（向前端 emit）：`dsh-status`（RuntimeSnapshot）、`dsh-log`（单行文本）、`dsh-file-drop`（拖入 main 窗口的真实路径数组）、`dsh-theme`（系统主题 `light`/`dark`）
 - `get_config` 返回“生效配置”：config.json 有值则用之，未设置的字段回退到环境变量；`set_config` 只写 `config.json`，不会修改环境变量
 - 修改契约时，必须同步更新 `../../../AGENTS.md` 的通信契约表与 `../../../packages/contracts/src/index.ts`
+
+## 原生能力
+
+- **系统托盘**：`setup_tray()` 用 `TrayIconBuilder` 创建（`ManagedTray` 经 `app.manage` 保活）；菜单含 显示主窗口 / 控制中心 / 重启 dsh / 退出；main 窗口关闭请求被拦截，默认**关闭到托盘**（仅隐藏），托盘"退出"置 `exiting` 后真正退出
+- **原生通知**：`DshManager::notify()` 在 就绪 / 失败 / 安装完成 时经 notification 插件发系统通知
+- **单实例锁**：`tauri-plugin-single-instance` 最先注册，二次启动聚焦主窗口
+- **看门狗**：子进程在 `starting`/`ready` 阶段意外退出时自动重启，`MAX_AUTO_RESTARTS=3` 次内连续重试，超限转 `failed`；手动 Start / 安装完成清零计数
+- **主题跟随**：CSS `prefers-color-scheme` 深色变量 + Rust `ThemeChanged` 事件 emit `dsh-theme`
+- **优雅退出**：`cleanup_child()` unix 下先对进程组（`process_group(0)` 启动）发 SIGTERM，`GRACE_PERIOD=2s` 宽限后 SIGKILL；Windows 直接 TerminateProcess
+- **拖放**：main 窗口 `DragDropEvent::Drop` 把真实路径 emit `dsh-file-drop`
+- **桥接**：`Builder::on_page_load` 在 dsh web 页面（127.0.0.1）加载完成后 `eval` `BRIDGE_SCRIPT`，注入 `window.__DSH_DESKTOP__`（最小能力：通知 / 剪贴板 / 对话框 / openExternal / 状态事件 / 文件拖放），权限由 `capabilities/bridge.json` remote 白名单收口
 
 ## 窗口与快捷键
 
@@ -52,7 +64,7 @@ DSH Desktop 的 Rust 后端。职责：检测 / 一键安装 `dsh`、以子进�
 
 - 常量：`READY_TIMEOUT=120s`、`POLL_INTERVAL=250ms`、`MAX_LOGS=500`（环形日志）
 - `reserve_port()`：绑定 `127.0.0.1:0` 拿到空闲端口后立即 drop —— 存在极小竞态窗口，子进程应尽快接管
-- 窗口关闭：发送 `Stop`，300ms 后 `app.exit(0)`；`RunEvent::Exit` 时发送 `Shutdown` 并清理子进程
+- 窗口关闭：main 窗口默认**关闭到托盘**（仅隐藏，不退出）；托盘"退出"或 `RunEvent::Exit` 时发送 `Stop`/`Shutdown` 并优雅清理子进程后退出
 - 环境变量：`DSH_BIN`（dsh 入口）、`DSH_NODE`（Node 解释器）、`DSH_HOME`（透传给子进程）；数据目录为 `app_data_dir()/logs` 与 `.../config.json`（`dsh` 通过一键安装全局安装，不写入应用数据目录）
 - `resolve_dsh` 的查找顺序：`dsh_bin`（config.json 优先于环境变量）→ PATH → npm 全局安装目录（`npm prefix -g`，含 `bin/dsh` 与 `lib/node_modules/@deepseek-ai/dsh/lib/bin.js`）→ `~/.vite-plus/bin/dsh`
 

@@ -18,6 +18,7 @@ DSH Desktop 的 main 窗口启动页：Vite + TypeScript 的单页应用（无�
 | 调用 | `invoke("open_log_directory")` | 打开日志目录 |
 | 监听 | `dsh-status` | 状态快照（phase / message / url / logs 等） |
 | 监听 | `dsh-log` | 追加一行日志文本 |
+| 监听 | `dsh-theme` | 系统主题（light / dark，供启动页深色适配） |
 
 > 本页只使用上述命令；完整契约（含 `get_config` / `set_config`）与类型定义见 `../../packages/contracts`。修改 IPC 契约时，必须同步更新 `../../packages/contracts/src/index.ts`、Rust 端 serde 类型（`apps/shell/src-tauri/src/lib.rs` / `config.rs`）与 `./src-tauri/AGENTS.md` 的契约表。
 

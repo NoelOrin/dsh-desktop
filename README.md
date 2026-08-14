@@ -23,6 +23,7 @@
 - 自动检测 `dsh`：已安装直接启动，未安装提供一键安装并自动进入
 - 自动选择空闲 loopback 端口，以 `dsh web --host 127.0.0.1 --port <port>` 启动
 - 双窗口架构：main 窗口承载启动页与 dsh Web UI；control 窗口（SolidJS 控制中心）按需打开（菜单项 / `CmdOrCtrl+Shift+C`）
+- 原生能力增强：系统托盘（关闭到托盘）、原生通知、单实例锁、崩溃自动重启、系统主题跟随、优雅退出与进程树清理、文件拖放、dsh web 受控桥接 `window.__DSH_DESKTOP__`（通知 / 剪贴板 / 对话框 / 打开外部链接）
 
 ## 架构
 

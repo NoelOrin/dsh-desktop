@@ -30,9 +30,12 @@ export const COMMANDS = {
   openLogDirectory: "open_log_directory",
   getConfig: "get_config",
   setConfig: "set_config",
+  openExternal: "open_external",
 } as const;
 
 export const EVENTS = {
   dshStatus: "dsh-status",
   dshLog: "dsh-log",
+  dshFileDrop: "dsh-file-drop",
+  dshTheme: "dsh-theme",
 } as const;

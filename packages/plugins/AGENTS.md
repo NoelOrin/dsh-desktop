@@ -6,8 +6,9 @@ dsh 插件的开发容器：**每个子目录一个 dsh 插件**（cordis bundle
 ## 现有插件
 
 - `bridge/`（`@dsh-desktop/plugin-bridge`）— **桥接 Tauri 壳能力的插件**（骨架）：
-  让 dsh web 内的插件/页面能调用 Tauri 壳能力，经 `packages/contracts` 声明的命令 +
-  `tauri.conf.json` 端口白名单（边界见 `docs/plugin-tauri-boundary.md`）
+  让 dsh web 内的插件/页面能调用 Tauri 壳能力。**桥接命令契约由本插件自持**
+  （Rust 侧在 `apps/shell/src-tauri/capabilities/bridge.json` 声明），不并入
+  `packages/contracts`——contracts 只负责 native 内容（边界见 `docs/plugin-tauri-boundary.md`）
 - `hello/`（`@dsh-desktop/plugin-hello`）— **自定义插件示例**（骨架），演示开发结构
 
 ## 新增插件
@@ -30,7 +31,7 @@ dsh 插件的开发容器：**每个子目录一个 dsh 插件**（cordis bundle
 
 ## 边界
 
-- 本包不做业务：只负责插件自身逻辑；调用壳能力只经 `packages/contracts` 声明的命令
+- 本包不做业务：只负责插件自身逻辑；桥接命令契约由 `bridge/` 插件自持（不并入 `packages/contracts`，contracts 只负责 native）
 - 插件管理（清单 / 安装 UI）是 dsh 现成的 cordis 插件（`dsh-host-plugin-inventory` 等），
   不在本包重复实现
 - `@deepseek-ai/cordis` 等新版本发布不足 1 天会被 yarn 的 npmMinimalAgeGate 隔离；

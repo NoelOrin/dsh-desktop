@@ -11,6 +11,7 @@
 | `yarn dev:web` | 仅启动前端 dev server（shell :5173 + control-center :5174） |
 | `yarn build:web` | 构建前端到 `dist/`（先 shell 后 control-center；Tauri 的 `beforeBuildCommand` 会调用） |
 | `yarn typecheck` | 对所有 workspace 执行 TypeScript 类型检查（shell / control-center / contracts / plugins） |
+| `yarn lint` / `yarn format` / `yarn format:check` | Biome 检查 / 格式化（格式约定见 `biome.json`） |
 | `corepack yarn install` | 安装依赖（Yarn 4 + node-modules，生成 `node_modules` 目录） |
 
 ## 模块划分
@@ -39,8 +40,10 @@
 
 - 提交信息遵循 [Conventional Commits](https://www.conventionalcommits.org/)（`feat:` / `fix:` / `chore:`），版本号与 CHANGELOG 由 CI 依据提交信息自动生成
 - 用户可见文案与代码注释使用中文
-- 前后端通过固定契约通信：IPC 命令 `get_status` / `install_dsh` / `restart` / `open_log_directory` / `get_config` / `set_config`，事件 `dsh-status` / `dsh-log`（类型与常量见 `packages/contracts`，各模块契约表见对应 AGENTS.md）
+- 前后端通过固定契约通信：IPC 命令 `get_status` / `install_dsh` / `restart` / `open_log_directory` / `get_config` / `set_config` / `open_external`，事件 `dsh-status` / `dsh-log` / `dsh-file-drop` / `dsh-theme`（类型与常量见 `packages/contracts`，各模块契约表见对应 AGENTS.md）
+- 系统托盘常驻后台（关闭到托盘），关键节点弹原生通知；dsh web 通过受控桥接 `window.__DSH_DESKTOP__` 调用最小能力（白名单见 `apps/shell/src-tauri/capabilities/bridge.json`，边界见 `docs/plugin-tauri-boundary.md`）
 - 后端是唯一状态源，前端只做渲染
+- 代码规范：Biome（`biome.json`）负责 TS/TSX/JSON 的 lint 与格式；Lefthook（`lefthook.yml`）接入 git hooks——`pre-commit` 对暂存文件自动 `biome check --write`，`pre-push` 跑 `yarn typecheck` + `cargo fmt --check` + `cargo clippy`；`package.json` 的 `postinstall` 会在每次 `yarn install` 时自动执行 `lefthook install` 装好 hooks（Yarn 4 默认禁用依赖的 build scripts，需靠它兜底）
 
 ## 注意事项
 

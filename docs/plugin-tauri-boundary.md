@@ -72,15 +72,19 @@ DSH Desktop 是 dsh 的桌面套壳：Rust 后端拉起 `dsh web` 子进程，�
 | 在 Tauri 侧解析 dsh 的 profile / patch 配置树 | 配置树归 dsh 管，壳应通过 `dsh` 命令/契约获取结果 |
 | 在 Tauri 侧重复实现 dsh 的插件管理（清单/安装/设置 UI） | dsh 的插件管理**本身就是 cordis 插件**（`dsh-host-plugin-inventory`、`dsh-client-ui-settings-plugin-inventory` 等，由 `dsh-web-app` 装配），壳侧直接消费 dsh web 现成界面 |
 | 在 dsh 插件里直接读 `config.json`、开原生窗口/对话框 | 那是壳的能力，插件默认拿不到；只能通过本仓库桥接插件 + 已声明命令 + 端口白名单（见 §5/§6） |
-| 前端直接 import 另一个模块的内部实现 | 跨界数据一律走 `packages/contracts` 声明的 IPC 命令/事件 |
+| 前端直接 import 另一个模块的内部实现 | native 跨界数据走 `packages/contracts` 命令/事件；桥接命令由 `packages/plugins/bridge` 自持 |
 | 新增 IPC 却不改 capabilities 声明 | 权限收口，新增能力必须同步声明 |
 
 ## 4. 边界缝：`packages/contracts` 与 IPC
 
-两端之间的唯一合法通道是 **`@dsh-desktop/contracts` 中声明的 IPC 命令与事件**。
-所有跨界数据（状态快照、配置、事件）都必须是契约的一部分，两端各自实现，不允许
-直接 import 对方内部或另开通道。**桥接插件调用壳能力同样走这条缝**——它调用的是
-契约里声明的命令，不是新通道。
+壳侧两端（Rust 后端 ↔ 本地窗口）的唯一合法通道是 **`@dsh-desktop/contracts` 中声明的
+IPC 命令与事件**。本包只负责 **native 内容**：dsh 运行态的检测/安装/配置/日志等壳侧命令
+与事件。所有 native 跨界数据都必须是契约的一部分，两端各自实现，不允许直接 import
+对方内部或另开通道。
+
+> **桥接不经过本契约**：dsh 插件调用 Tauri 壳能力的桥接命令，由 `packages/plugins/bridge`
+> 自持契约，Rust 侧在 `capabilities/bridge.json` 声明（见 §5/§6）。`packages/contracts`
+> 只负责 native 内容，不负责桥接。
 
 修改任何 IPC 契约时，必须同步四处（已有约定，此处重申为边界规则）：
 
@@ -112,7 +116,9 @@ snake_case）。
 
 本仓库自己的桥接插件要调用 Tauri 壳能力，按以下顺序收紧，而不是一刀切开放：
 
-1. 在壳侧新增**最小化 IPC 命令**（例如 `pick_directory`），契约写进 `packages/contracts`。
+1. 在桥接插件（`packages/plugins/bridge`）内定义**最小化桥接命令**（例如 `pick_directory`），
+   **契约由桥接插件自持**，Rust 侧在 `capabilities/bridge.json` 声明实现与权限——
+   不写进 `packages/contracts`（contracts 只负责 native 内容，不负责桥接）。
 2. 在 `tauri.conf.json` 的 `app.security.dangerousRemoteDomainIpcAccess` 里
    **只对该 loopback 端口白名单**，并在对应 capability 里只授予桥接需要的命令。
 3. 桥接命令必须是**能力的最小切片**（一次只暴露一个动作），不允许把整个 `core:default`
@@ -129,9 +135,9 @@ snake_case）。
 | --- | --- |
 | 归属 | **dsh 插件域**（本仓库维护，交付给 dsh 装配） |
 | 结构 | `bridge/`（桥接 Tauri 壳能力）、`hello/`（自定义示例）；新增插件在容器下建子目录即可 |
-| bridge 唯一职责 | 让 dsh 插件/页面能调用 Tauri 壳能力（经 `packages/contracts` 声明 + §5 端口白名单） |
+| bridge 唯一职责 | 让 dsh 插件/页面能调用 Tauri 壳能力（桥接命令契约由 bridge 自持 + §5 端口白名单） |
 | 消费者 | dsh web 内的插件/页面 |
-| 依赖方向 | 依赖 `@deepseek-ai/cordis` 等 dsh 生态包 + `@dsh-desktop/contracts`（只作为类型来源） |
+| 依赖方向 | 依赖 `@deepseek-ai/cordis` 等 dsh 生态包；**不依赖 `@dsh-desktop/contracts`**（native 契约与桥接契约分离） |
 | 安装 | 每个插件 `dsh plugin --profile web add <包>`（或随桌面应用自动装配） |
 
 **约定**：

@@ -250,7 +250,8 @@ pub fn run() {
         ])
         .on_window_event(|window, event| {
             if window.label() == "control" {
-                if matches!(event, WindowEvent::CloseRequested { .. }) {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
                     let _ = window.hide();
                 }
                 return;

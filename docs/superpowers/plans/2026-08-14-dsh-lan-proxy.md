@@ -73,9 +73,9 @@ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8080/
 # 对 token → 200（页面）
 curl -s -o /dev/null -w "%{http_code}\n" -H "Authorization: Bearer <token>" http://127.0.0.1:8080/
 # 模拟浏览器：POST /api + Origin（验证 Host/Origin 改写穿透 fence）→ 200
-curl -s -o /dev/null -w "%{http_code}\n" -X POST -H "Authorization: Bearer <token>" -H "Origin: http://127.0.0.1:8080" -H "Content-Type: application/json" -d '{"id":1,"method":"settings.describe","params":[]}' http://127.0.0.1:8080/api/settings.describe
+curl -s -o /dev/null -w "%{http_code}\n" -X POST -H "Authorization: Bearer <token>" -H "Origin: http://127.0.0.1:8080" -H "Content-Type: application/json" -d '{"type":"client-request","rpcId":"verify-1","method":"settings.describe","payload":{}}' http://127.0.0.1:8080/api/settings.describe
 # 跨站标记 → 403
-curl -s -o /dev/null -w "%{http_code}\n" -X POST -H "Authorization: Bearer <token>" -H "Sec-Fetch-Site: cross-site" -H "Content-Type: application/json" -d '{"id":1,"method":"settings.describe","params":[]}' http://127.0.0.1:8080/api/settings.describe
+curl -s -o /dev/null -w "%{http_code}\n" -X POST -H "Authorization: Bearer <token>" -H "Sec-Fetch-Site: cross-site" -H "Content-Type: application/json" -d '{"type":"client-request","rpcId":"verify-1","method":"settings.describe","payload":{}}' http://127.0.0.1:8080/api/settings.describe
 ```
 
 - [ ] **Step 3: 局域网端到端**

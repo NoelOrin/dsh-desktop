@@ -34,7 +34,7 @@ DSH Desktop 的 Rust 后端。职责：检测 / 一键安装 `dsh`、以子进�
 - 命令：`get_status` / `restart` / `install_dsh` / `open_log_directory` / `get_config` / `set_config`
 - 事件（向前端 emit）：`dsh-status`（RuntimeSnapshot）、`dsh-log`（单行文本）
 - `get_config` 返回“生效配置”：config.json 有值则用之，未设置的字段回退到环境变量；`set_config` 只写 `config.json`，不会修改环境变量
-- 修改契约时，必须同步更新 `../../AGENTS.md` 的通信契约表与 `../../packages/contracts/src/index.ts`
+- 修改契约时，必须同步更新 `../../../AGENTS.md` 的通信契约表与 `../../../packages/contracts/src/index.ts`
 
 ## 窗口与快捷键
 

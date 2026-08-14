@@ -199,6 +199,17 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
+        // 窗口状态记忆：重启后恢复 main/control 窗口大小与位置（Task 2 调整保存内容）
+        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // 深链 dsh-desktop://（macOS 经 RunEvent::Opened；Windows/Linux 由 single-instance 转发）
+        .plugin(tauri_plugin_deep_link::init())
+        // 开机自启（默认关闭，由 dsh 插件设置面板控制）
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--autostart"]),
+        ))
+        // 自动更新：pubkey/endpoints 由 tauri.conf.json 的 plugins.updater 段提供
+        .plugin(tauri_plugin_updater::Builder::new().build())
         // 向 dsh web（loopback 远程页面）注入受控桥接 window.__DSH_DESKTOP__
         .on_page_load(|webview, payload| {
             if payload.event() == PageLoadEvent::Finished && is_dsh_web_url(payload.url()) {

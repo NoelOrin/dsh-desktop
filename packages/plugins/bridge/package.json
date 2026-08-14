@@ -9,11 +9,13 @@
   "exports": {
     ".": "./lib/index.js",
     "./client": "./lib/client.js",
+    "./shared": "./lib/shared.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
   "scripts": {
     "build": "tsdown",
+    "test": "yarn build && node tests/theme.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

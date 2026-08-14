@@ -70,4 +70,16 @@ export default defineConfig([
       intro: "var module = { exports: {} }; var exports = module.exports;",
     },
   },
+  {
+    // shared 面：纯函数共享模型，供 host 单测与 client 内联打包
+    name: "@dsh-desktop/plugin-bridge/shared",
+    entry: { shared: "src/shared/theme.ts" },
+    outDir: "lib",
+    format: ["esm"],
+    platform: "neutral",
+    target: "es2024",
+    fixedExtension: false,
+    dts: false,
+    clean: false,
+  },
 ]);

@@ -1,4 +1,8 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { AppearanceSection } from "./client/AppearanceSection";
+import { applyThemeSection } from "./client/theme-apply";
+import { createThemeStore } from "./client/theme-store";
+import { THEME_SETTINGS_NAMESPACE, type ThemeSettings } from "./shared/theme";
 
 /** 桥接对象最小切片（与 src/index.ts 的 DshDesktopBridge 对齐；client 侧内联读取 window，不跨侧 import）。 */
 interface BridgeLike {
@@ -74,7 +78,7 @@ interface ClientContextLike {
     register(ns: string, locale: string, dict: Record<string, string>): unknown;
   };
   settingsScope: {
-    bind(spec: { namespace: string }): SettingsScopeLike<DesktopConfig>;
+    bind<T = DesktopConfig>(spec: { namespace: string }): SettingsScopeLike<T>;
   };
   slots: {
     inject(key: string, callback: () => unknown): unknown;
@@ -497,6 +501,52 @@ export function apply(ctx: ClientContextLike): void {
   const NS = "settings.desktop";
   const namespace = "desktop";
   const t = ctx.locale.bind(NS);
+
+  // ── 主题与背景（ui-theme 命名空间由上游 dsh-client-ui-theme host 注册，这里只 bind）──
+  const THEME_NS = "settings.appearance";
+  const themeScope = ctx.settingsScope.bind<ThemeSettings>({
+    namespace: THEME_SETTINGS_NAMESPACE,
+  });
+  const themeStore = createThemeStore(themeScope);
+
+  const systemDark = (): boolean =>
+    typeof matchMedia !== "undefined" && matchMedia("(prefers-color-scheme: dark)").matches;
+
+  const applyNow = (): void => {
+    applyThemeSection(themeStore.getSnapshot(), systemDark(), themeStore.getPreview());
+  };
+
+  ctx.effect(() => {
+    applyNow();
+    const unsubscribe = themeStore.subscribe(applyNow);
+    const media = matchMedia("(prefers-color-scheme: dark)");
+    const onMedia = (): void => {
+      if (themeStore.getSnapshot().preference === "system") applyNow();
+    };
+    media.addEventListener("change", onMedia);
+    return () => {
+      unsubscribe();
+      media.removeEventListener("change", onMedia);
+    };
+  }, "bridge: 主题应用");
+
+  const themeT = ctx.locale.bind(THEME_NS);
+  ctx.effect(() => ctx.locale.register(THEME_NS, "zh", themeSectionZh), "bridge: 外观中文字典");
+  ctx.effect(() => ctx.locale.register(THEME_NS, "en", themeSectionEn), "bridge: 外观英文字典");
+  ctx.slots.inject("settings.section", () =>
+    ctx.slots.register(
+      {
+        name: "settings.section",
+        id: "appearance",
+        order: 5,
+        label: () => themeT("nav"),
+        locale: THEME_NS,
+        children: {},
+      },
+      () => <AppearanceSection store={themeStore} t={themeT} />,
+    ),
+  );
+
   ctx.effect(
     () =>
       ctx.locale.register(NS, "zh", {
@@ -563,3 +613,103 @@ export function apply(ctx: ClientContextLike): void {
     ),
   );
 }
+
+const themeSectionZh: Record<string, string> = {
+  nav: "外观",
+  "pref.title": "主题偏好",
+  "pref.light": "浅色",
+  "pref.dark": "深色",
+  "pref.system": "跟随系统",
+  "library.title": "主题库",
+  "library.desc": "每张卡有浅、深两半，点哪半用哪半",
+  "library.lightHalf": "浅色半",
+  "library.darkHalf": "深色半",
+  "library.builtin": "内置",
+  "library.custom": "自定义",
+  "wallpaper.title": "背景图",
+  "wallpaper.desc": "选一张图铺在整个界面后面，可调毛玻璃与像素化",
+  "wallpaper.choose": "选择图片",
+  "wallpaper.clear": "清除",
+  "wallpaper.blur": "毛玻璃",
+  "wallpaper.pixelate": "像素化",
+  "wallpaper.reset": "重置效果",
+  "glass.title": "玻璃透明度",
+  "glass.desc": "数值越低，侧栏、对话框和输入框越通透",
+  "glass.opacity": "透明度",
+  "custom.title": "自定义主题",
+  "custom.create": "新建",
+  "custom.import": "导入",
+  "custom.edit": "编辑",
+  "custom.copy": "复制",
+  "custom.export": "导出",
+  "custom.remove": "删除",
+  "custom.name": "名称",
+  "custom.lightHalf": "浅色",
+  "custom.darkHalf": "深色",
+  "custom.accent": "强调色",
+  "custom.background": "背景",
+  "custom.foreground": "前景",
+  "custom.contrast": "对比度",
+  "custom.save": "保存",
+  "custom.cancel": "取消",
+  "custom.newName": "新主题",
+  "type.title": "排版",
+  "type.desc": "界面与代码字号、字体族",
+  "type.interfaceSize": "界面字号",
+  "type.codeSize": "代码字号",
+  "type.sans": "界面字体族",
+  "type.code": "代码字体族",
+  "type.composer": "输入框字体族",
+  "type.terminal": "终端字体族",
+  "type.default": "留空使用默认栈",
+};
+
+const themeSectionEn: Record<string, string> = {
+  nav: "Appearance",
+  "pref.title": "Theme preference",
+  "pref.light": "Light",
+  "pref.dark": "Dark",
+  "pref.system": "System",
+  "library.title": "Theme library",
+  "library.desc": "Each card has a light and dark half; click the half to use it",
+  "library.lightHalf": "Light half",
+  "library.darkHalf": "Dark half",
+  "library.builtin": "Built-in",
+  "library.custom": "Custom",
+  "wallpaper.title": "Wallpaper",
+  "wallpaper.desc": "Pick an image to lay behind the whole UI; adjust frost and pixelation",
+  "wallpaper.choose": "Choose image",
+  "wallpaper.clear": "Clear",
+  "wallpaper.blur": "Frosted glass",
+  "wallpaper.pixelate": "Pixelation",
+  "wallpaper.reset": "Reset effects",
+  "glass.title": "Glass opacity",
+  "glass.desc": "Lower values make sidebar, dialogs and composer more translucent",
+  "glass.opacity": "Opacity",
+  "custom.title": "Custom themes",
+  "custom.create": "Create",
+  "custom.import": "Import",
+  "custom.edit": "Edit",
+  "custom.copy": "Duplicate",
+  "custom.export": "Export",
+  "custom.remove": "Remove",
+  "custom.name": "Name",
+  "custom.lightHalf": "Light",
+  "custom.darkHalf": "Dark",
+  "custom.accent": "Accent",
+  "custom.background": "Background",
+  "custom.foreground": "Foreground",
+  "custom.contrast": "Contrast",
+  "custom.save": "Save",
+  "custom.cancel": "Cancel",
+  "custom.newName": "New theme",
+  "type.title": "Typography",
+  "type.desc": "Interface and code font sizes and families",
+  "type.interfaceSize": "Interface font size",
+  "type.codeSize": "Code font size",
+  "type.sans": "Interface font family",
+  "type.code": "Code font family",
+  "type.composer": "Composer font family",
+  "type.terminal": "Terminal font family",
+  "type.default": "Leave empty to keep the default stack",
+};

@@ -1,0 +1,210 @@
+#!/usr/bin/env node
+/**
+ * dsh-web 局域网反向代理（零依赖，仅 Node 内置模块）
+ *
+ * 解决的问题：
+ *   dsh web 默认只绑 127.0.0.1，局域网其他设备无法访问。直接改绑 0.0.0.0
+ *   又绕不开 dsh 的 browser-trust fence：/api 与 WebSocket 全部按 Host/Origin
+ *   头校验，非 loopback 一律 403，且特权方法（settings/credentials/host.* 等）
+ *   被硬编码钉死在 loopback，靠 --trusted-host 也救不了。
+ *
+ * 本脚本把「本机回环身份」伪造成 dsh 看到的来源：
+ *   - 改写 Host   → 目标地址（默认 127.0.0.1:53553）
+ *   - 改写 Origin → 目标地址（浏览器 POST/WS 都会带 Origin，不改必 403）
+ *   - 原样透传 Sec-Fetch-Site（保留跨站防护，cross-site 依旧 403）
+ *   - 处理 WebSocket 升级（/api/events.mux、/api/events.host）与流式响应
+ *
+ * 可选 token 门禁（强烈建议启用）：HTTP 请求与 WS 握手都要求
+ *   Authorization: Bearer <token>
+ *
+ * 用法：
+ *   node scripts/lan-proxy.mjs [--bind 0.0.0.0] [--port 8080]
+ *                              [--target 127.0.0.1:53553] [--token <secret>]
+ * 环境变量（同名参数优先）：DSH_PROXY_BIND / DSH_PROXY_PORT /
+ *                          DSH_PROXY_TARGET / DSH_PROXY_TOKEN
+ */
+import http from "node:http";
+import os from "node:os";
+
+const HELP = `dsh-web 局域网反向代理
+
+用法:
+  node scripts/lan-proxy.mjs [选项]
+
+选项:
+  --bind <host>       监听地址，默认 0.0.0.0（局域网可访问）
+  --port <port>       监听端口，默认 8080
+  --target <host:port> 上游 dsh web 地址，默认 127.0.0.1:53553
+  --token <secret>    启用 Bearer token 门禁（强烈建议）
+  --help, -h          显示帮助
+
+环境变量（优先级低于同名参数）:
+  DSH_PROXY_BIND / DSH_PROXY_PORT / DSH_PROXY_TARGET / DSH_PROXY_TOKEN
+
+示例:
+  node scripts/lan-proxy.mjs --token "一个足够长的随机串"
+  DSH_PROXY_TOKEN=xxx node scripts/lan-proxy.mjs --port 9090
+`;
+
+// ---- 参数解析 ----
+const argv = process.argv.slice(2);
+function opt(name, envName, dflt) {
+  const i = argv.indexOf(`--${name}`);
+  if (i !== -1 && argv[i + 1] !== undefined && !argv[i + 1].startsWith("--")) return argv[i + 1];
+  const e = process.env[envName];
+  return e !== undefined && e !== "" ? e : dflt;
+}
+if (argv.includes("--help") || argv.includes("-h")) {
+  console.log(HELP);
+  process.exit(0);
+}
+
+const BIND = opt("bind", "DSH_PROXY_BIND", "0.0.0.0");
+const PORT = Number(opt("port", "DSH_PROXY_PORT", "8080"));
+const TARGET_RAW = opt("target", "DSH_PROXY_TARGET", "127.0.0.1:53553");
+const TOKEN = opt("token", "DSH_PROXY_TOKEN", "");
+
+if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
+  console.error(`[lan-proxy] 端口无效: ${PORT}`);
+  process.exit(1);
+}
+let TARGET;
+try {
+  TARGET = new URL(`http://${TARGET_RAW}`);
+} catch {
+  console.error(`[lan-proxy] 目标地址无效: ${TARGET_RAW}（应为 host 或 host:port）`);
+  process.exit(1);
+}
+const TARGET_HOST = TARGET.host; // 规范化后的 host:port
+const TARGET_ORIGIN = `http://${TARGET_HOST}`;
+const TARGET_PORT = TARGET.port || "80";
+
+// ---- 头改写 ----
+const HOP_BY_HOP = new Set([
+  "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+  "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade",
+]);
+/**
+ * 清理并改写转发头：剥掉 hop-by-hop，把 Host/Origin 改写成 loopback 目标，
+ * 其余（含 Sec-Fetch-Site、Cookie、X-* 等）原样保留。
+ */
+function rewriteHeaders(headers, { keepUpgrade }) {
+  const out = {};
+  for (const [key, value] of Object.entries(headers)) {
+    const lk = key.toLowerCase();
+    if (HOP_BY_HOP.has(lk)) continue;
+    if (lk === "host") { out.host = TARGET_HOST; continue; }
+    if (lk === "origin") { out.origin = TARGET_ORIGIN; continue; }
+    out[lk] = value;
+  }
+  if (keepUpgrade) {
+    out.connection = headers.connection;
+    out.upgrade = headers.upgrade;
+  }
+  return out;
+}
+
+// ---- token 门禁 ----
+function authorized(req) {
+  if (!TOKEN) return true;
+  const auth = req.headers.authorization;
+  return typeof auth === "string" && auth === `Bearer ${TOKEN}`;
+}
+
+// ---- HTTP 转发 ----
+const server = http.createServer((req, res) => {
+  if (!authorized(req)) {
+    res.writeHead(401, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end("unauthorized");
+    return;
+  }
+  const proxyReq = http.request(
+    {
+      hostname: TARGET.hostname,
+      port: TARGET_PORT,
+      method: req.method,
+      path: req.url,
+      headers: rewriteHeaders(req.headers, { keepUpgrade: false }),
+    },
+    (proxyRes) => {
+      res.writeHead(proxyRes.statusCode || 502, proxyRes.headers);
+      proxyRes.pipe(res); // 流式透传（SSE/大响应/分块编码）
+    },
+  );
+  proxyReq.on("error", (err) => {
+    if (!res.headersSent) res.writeHead(502, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end(`bad gateway: ${err.message}`);
+  });
+  req.pipe(proxyReq);
+});
+
+// ---- WebSocket 升级转发 ----
+server.on("upgrade", (req, socket, head) => {
+  if (!authorized(req)) {
+    socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+    socket.destroy();
+    return;
+  }
+  const proxyReq = http.request(
+    {
+      hostname: TARGET.hostname,
+      port: TARGET_PORT,
+      method: "GET",
+      path: req.url,
+      headers: rewriteHeaders(req.headers, { keepUpgrade: true }),
+      agent: false, // 每个 WS 独立连接
+    },
+  );
+  proxyReq.on("upgrade", (proxyRes, proxySocket, proxyHead) => {
+    const lines = [
+      "HTTP/1.1 101 Switching Protocols",
+      `Upgrade: ${proxyRes.headers.upgrade || "websocket"}`,
+      "Connection: Upgrade",
+      `Sec-WebSocket-Accept: ${proxyRes.headers["sec-websocket-accept"] || ""}`,
+    ];
+    if (proxyRes.headers["sec-websocket-protocol"]) {
+      lines.push(`Sec-WebSocket-Protocol: ${proxyRes.headers["sec-websocket-protocol"]}`);
+    }
+    socket.write(lines.join("\r\n") + "\r\n\r\n");
+    if (proxyHead && proxyHead.length > 0) socket.write(proxyHead);
+    proxySocket.pipe(socket);
+    socket.pipe(proxySocket);
+  });
+  proxyReq.on("error", () => socket.destroy());
+  if (head && head.length > 0) proxyReq.write(head); // 客户端预发的帧（一般为空）
+  proxyReq.end();
+});
+
+server.on("clientError", (err, socket) => {
+  if (socket.writable) socket.end("HTTP/1.1 400 Bad Request\r\n\r\n");
+});
+
+// ---- 启动 ----
+function lanAddresses() {
+  const out = [];
+  for (const infos of Object.values(os.networkInterfaces())) {
+    for (const info of infos ?? []) {
+      if (info.family === "IPv4" && !info.internal) out.push(info.address);
+    }
+  }
+  return out;
+}
+
+server.on("error", (err) => {
+  console.error(`[lan-proxy] 启动失败: ${err.message}`);
+  process.exit(1);
+});
+
+server.listen(PORT, BIND, () => {
+  console.log(`[lan-proxy] 已启动`);
+  console.log(`  监听:      ${BIND}:${PORT}`);
+  console.log(`  上游 dsh:  http://${TARGET_HOST}`);
+  console.log(`  token:     ${TOKEN ? "已启用（Bearer）" : "未启用 ⚠ 局域网内任何人都能访问"}`);
+  for (const ip of lanAddresses()) {
+    console.log(`  局域网访问: http://${ip}:${PORT}`);
+  }
+  if (!TOKEN) {
+    console.warn(`\n  ⚠⚠  未设置 token：dsh 的 fence 不是认证层，谁连上谁就有本机完整权限`);
+    console.warn(`  ⚠⚠  强烈建议加 --token，或至少只在可信网络中使用。`);
+  }
+});

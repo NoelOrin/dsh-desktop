@@ -4,10 +4,10 @@
   "version": "0.1.0",
   "identifier": "ai.deepseek.dsh-desktop",
   "build": {
-    "beforeDevCommand": "corepack yarn dev:web",
+    "beforeDevCommand": "corepack yarn web:all",
     "devUrl": "http://localhost:5173",
-    "beforeBuildCommand": "corepack yarn build:web",
-    "frontendDist": "../dist"
+    "beforeBuildCommand": "corepack yarn web:build",
+    "frontendDist": "../../dist"
   },
   "app": {
     "windows": [

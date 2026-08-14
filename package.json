@@ -4,18 +4,16 @@
   "version": "0.1.0",
   "packageManager": "yarn@4.17.1",
   "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
-    "dev": "tauri dev",
-    "build": "tauri build",
-    "dev:web": "vite",
-    "build:web": "vite build",
-    "tauri": "tauri"
-  },
-  "dependencies": {
-    "@tauri-apps/api": "^2"
-  },
-  "devDependencies": {
-    "@tauri-apps/cli": "^2",
-    "vite": "^7.0.0"
+    "dev": "yarn workspace @dsh-desktop/shell dev",
+    "build": "yarn workspace @dsh-desktop/shell build",
+    "dev:web": "yarn workspace @dsh-desktop/shell web:all",
+    "build:web": "yarn workspace @dsh-desktop/shell web:build",
+    "tauri": "yarn workspace @dsh-desktop/shell tauri",
+    "typecheck": "yarn workspaces foreach -pt run typecheck"
   }
 }

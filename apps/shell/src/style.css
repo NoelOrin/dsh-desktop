@@ -131,7 +131,7 @@ button.primary {
 html[data-platform="macos"] .titlebar {
   height: 44px;
   justify-content: flex-start;
-  padding-left: 80px;
+  padding-left: 84px;
 }
 
 html[data-platform="macos"] .titlebar__title {

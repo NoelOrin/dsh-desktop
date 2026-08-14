@@ -28,7 +28,9 @@ function detectPlatform(): DesktopPlatform {
 document.documentElement.dataset.platform = detectPlatform();
 
 function isTauri(): boolean {
-  return "__TAURI_INTERNALS__" in window;
+  const tauri = "__TAURI_INTERNALS__" in window;
+  if (tauri) document.documentElement.dataset.tauri = "true";
+  return tauri;
 }
 
 function render(status: Partial<RuntimeSnapshot>): void {

@@ -1,6 +1,6 @@
+import type { RuntimePhase, RuntimeSnapshot, UiThemeSnapshot } from "@dsh-desktop/contracts";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { RuntimePhase, RuntimeSnapshot } from "@dsh-desktop/contracts";
 
 const messageEl = document.getElementById("message") as HTMLSpanElement;
 const statusEl = document.getElementById("status") as HTMLDivElement;
@@ -35,6 +35,31 @@ function appendLog(line: string): void {
   logsEl.scrollTop = logsEl.scrollHeight;
 }
 
+function applyUiTheme(snapshot: UiThemeSnapshot): void {
+  const root = document.documentElement;
+  const tokens = snapshot.tokens;
+  root.style.setProperty("--theme-bg", tokens.bg);
+  root.style.setProperty("--theme-ink", tokens.fg);
+  root.style.setProperty("--theme-muted", tokens.muted);
+  root.style.setProperty("--theme-line", tokens.line);
+  root.style.setProperty("--theme-accent", tokens.accent);
+  root.style.setProperty("--theme-accent-ink", tokens.accent);
+  root.style.setProperty("--theme-button-fg", tokens.button_fg);
+  root.style.setProperty("--theme-field", tokens.field);
+  root.style.colorScheme = tokens.scheme;
+}
+
+async function initTheme(): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    const snapshot = await invoke<UiThemeSnapshot>("get_ui_theme");
+    applyUiTheme(snapshot);
+  } catch {
+    // 忽略：主题不可用时保持样式表默认
+  }
+  await listen<UiThemeSnapshot>("dsh-ui-theme", (event) => applyUiTheme(event.payload));
+}
+
 async function init(): Promise<void> {
   if (!isTauri()) {
     render({ phase: "detecting", message: "正在检测运行环境..." });
@@ -52,6 +77,7 @@ async function init(): Promise<void> {
     render({ phase: "failed", message: String(error) });
   }
 
+  await initTheme();
   await listen<RuntimeSnapshot>("dsh-status", (event) => render(event.payload));
   await listen<string>("dsh-log", (event) => appendLog(String(event.payload)));
 }

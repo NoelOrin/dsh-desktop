@@ -12,6 +12,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 mod config;
+mod embedded;
+
 use config::DshConfig;
 
 use serde::Serialize;
@@ -21,6 +23,7 @@ use tauri::webview::PageLoadEvent;
 use tauri::{AppHandle, Emitter, Manager as _, RunEvent, State, WindowEvent};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_deep_link::DeepLinkExt;
+use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{
     Builder as ShortcutBuilder, GlobalShortcutExt, Shortcut, ShortcutState,
 };
@@ -373,11 +376,26 @@ fn setup_tray(app: &tauri::AppHandle, exiting: Arc<AtomicBool>) -> tauri::Result
                 let _ = state.tx.send(ManagerMessage::Start);
             }
             TRAY_QUIT => {
-                exiting.store(true, Ordering::Relaxed);
-                let state = app.state::<AppState>();
-                let _ = state.tx.send(ManagerMessage::Stop);
-                thread::sleep(Duration::from_millis(300));
-                app.exit(0);
+                let app = app.clone();
+                let exiting = exiting.clone();
+                app.dialog()
+                    .message("退出后将停止当前 dsh 会话，确认退出？")
+                    .title("退出 DSH Desktop")
+                    .kind(tauri_plugin_dialog::MessageDialogKind::Warning)
+                    .buttons(tauri_plugin_dialog::MessageDialogButtons::OkCancelCustom(
+                        "退出".into(),
+                        "取消".into(),
+                    ))
+                    .show(move |confirmed| {
+                        if !confirmed {
+                            return;
+                        }
+                        exiting.store(true, Ordering::Relaxed);
+                        let state = app.state::<AppState>();
+                        let _ = state.tx.send(ManagerMessage::Stop);
+                        thread::sleep(Duration::from_millis(300));
+                        app.exit(0);
+                    });
             }
             _ => {}
         })

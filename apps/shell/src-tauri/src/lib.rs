@@ -13,8 +13,10 @@ use std::time::{Duration, Instant};
 
 mod config;
 mod embedded;
+mod theme;
 
 use config::DshConfig;
+use theme::{read_ui_theme_section, resolve_ui_theme, UiThemeSnapshot};
 
 use serde::Serialize;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -256,6 +258,8 @@ pub fn run() {
             };
             thread::spawn(move || manager.run());
 
+            let theme_app = app_handle.clone();
+            let config_path_for_theme = config_path.clone();
             app.manage(AppState {
                 app: app_handle,
                 inner: inner.clone(),
@@ -285,6 +289,46 @@ pub fn run() {
             thread::spawn(move || {
                 thread::sleep(Duration::from_millis(300));
                 let _ = start_tx.send(ManagerMessage::Start);
+            });
+
+            // 主题跟随：轮询 settings.yaml 的 ui-theme 分节，变化时发 dsh-ui-theme 并更新窗口背景
+            thread::spawn(move || {
+                let mut last: Option<String> = None;
+                loop {
+                    thread::sleep(Duration::from_secs(2));
+                    let config =
+                        config::load(&config_path_for_theme).effective(|k| std::env::var(k).ok());
+                    let home = config
+                        .dsh_home
+                        .clone()
+                        .or_else(|| std::env::var("DSH_HOME").ok())
+                        .or_else(|| std::env::var("HOME").ok().map(|h| format!("{h}/.dsh")));
+                    let Some(home) = home else {
+                        continue;
+                    };
+                    let settings_path = Path::new(&home).join("settings.yaml");
+                    let system_dark = theme_app
+                        .get_webview_window("main")
+                        .and_then(|w| w.theme().ok())
+                        .map(|t| t == tauri::Theme::Dark)
+                        .unwrap_or(false);
+                    let section = read_ui_theme_section(&settings_path);
+                    let snapshot = resolve_ui_theme(&section, system_dark);
+                    let key = format!(
+                        "{}:{}:{}",
+                        snapshot.preference, snapshot.mode, snapshot.tokens.bg
+                    );
+                    if last.as_deref() == Some(key.as_str()) {
+                        continue;
+                    }
+                    last = Some(key);
+                    let _ = theme_app.emit("dsh-ui-theme", &snapshot);
+                    if let Some(window) = theme_app.get_webview_window("main") {
+                        if let Some(color) = parse_window_color(&snapshot.tokens.bg) {
+                            let _ = window.set_background_color(Some(color));
+                        }
+                    }
+                }
             });
 
             setup_tray(app.handle(), exiting.clone())?;
@@ -322,7 +366,8 @@ pub fn run() {
             register_shortcut,
             unregister_shortcut,
             check_update,
-            install_update
+            install_update,
+            get_ui_theme
         ])
         .on_window_event(|window, event| {
             let label = window.label().to_string();
@@ -726,6 +771,35 @@ fn get_status(state: State<AppState>) -> RuntimeSnapshot {
     state.inner.lock().unwrap().snapshot()
 }
 
+/// #rrggbb → tauri::window::Color
+fn parse_window_color(hex: &str) -> Option<tauri::window::Color> {
+    let value = hex.trim_start_matches('#');
+    if value.len() != 6 {
+        return None;
+    }
+    let r = u8::from_str_radix(&value[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&value[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&value[4..6], 16).ok()?;
+    Some(tauri::window::Color(r, g, b, 255))
+}
+
+#[tauri::command]
+fn get_ui_theme(app: AppHandle) -> UiThemeSnapshot {
+    let system_dark = app
+        .get_webview_window("main")
+        .and_then(|w| w.theme().ok())
+        .map(|t| t == tauri::Theme::Dark)
+        .unwrap_or(false);
+    let home = std::env::var("DSH_HOME")
+        .ok()
+        .or_else(|| std::env::var("HOME").ok().map(|h| format!("{h}/.dsh")));
+    let section = match home {
+        Some(home) => read_ui_theme_section(&Path::new(&home).join("settings.yaml")),
+        None => theme::UiThemeSection::default(),
+    };
+    resolve_ui_theme(&section, system_dark)
+}
+
 #[tauri::command]
 fn restart(state: State<AppState>) -> Result<(), String> {
     state
@@ -907,9 +981,12 @@ async fn install_update(app: AppHandle) -> Result<String, String> {
     let asset = json["assets"]
         .as_array()
         .and_then(|assets| {
-            assets
-                .iter()
-                .find(|a| a["name"].as_str().map(|n| n.ends_with(ext)).unwrap_or(false))
+            assets.iter().find(|a| {
+                a["name"]
+                    .as_str()
+                    .map(|n| n.ends_with(ext))
+                    .unwrap_or(false)
+            })
         })
         .ok_or_else(|| format!("发布中未找到 {ext} 安装包"))?;
     let name = asset["name"]
@@ -935,7 +1012,8 @@ async fn install_update(app: AppHandle) -> Result<String, String> {
     }
     let mut file = std::fs::File::create(&dest).map_err(|e| format!("创建文件失败: {e}"))?;
     while let Some(chunk) = resp.chunk().await.map_err(|e| format!("下载中断: {e}"))? {
-        file.write_all(&chunk).map_err(|e| format!("写入失败: {e}"))?;
+        file.write_all(&chunk)
+            .map_err(|e| format!("写入失败: {e}"))?;
     }
     file.sync_all().map_err(|e| format!("同步失败: {e}"))?;
 

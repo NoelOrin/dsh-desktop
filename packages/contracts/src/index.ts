@@ -23,6 +23,23 @@ export interface DshConfig {
   dsh_home: string | null;
 }
 
+export interface UiThemeTokens {
+  bg: string;
+  fg: string;
+  muted: string;
+  accent: string;
+  field: string;
+  line: string;
+  button_fg: string;
+  scheme: "light" | "dark";
+}
+
+export interface UiThemeSnapshot {
+  tokens: UiThemeTokens;
+  preference: "light" | "dark" | "system";
+  mode: "light" | "dark";
+}
+
 export const COMMANDS = {
   getStatus: "get_status",
   installDsh: "install_dsh",
@@ -31,6 +48,7 @@ export const COMMANDS = {
   getConfig: "get_config",
   setConfig: "set_config",
   openExternal: "open_external",
+  getUiTheme: "get_ui_theme",
 } as const;
 
 export const EVENTS = {
@@ -41,4 +59,5 @@ export const EVENTS = {
   dshDeeplink: "dsh-deeplink",
   dshShortcut: "dsh-shortcut",
   dshUpdateAvailable: "dsh-update-available",
+  dshUiTheme: "dsh-ui-theme",
 } as const;

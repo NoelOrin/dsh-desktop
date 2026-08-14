@@ -55,7 +55,18 @@ const BRIDGE_SCRIPT: &str = r#"(function () {
     return internals.invoke(cmd, args || {});
   }
   function listen(event, cb) {
-    return internals.listen(event, function (e) { cb(e.payload); });
+    return internals.invoke("plugin:event|listen", {
+      event: event,
+      target: { kind: "Any" },
+      handler: internals.transformCallback(function (e) { cb(e.payload); }),
+    }).then(function (eventId) {
+      return function () {
+        return internals.invoke("plugin:event|unlisten", {
+          event: event,
+          eventId: eventId,
+        });
+      };
+    });
   }
   window.__DSH_DESKTOP__ = {
     platform: (navigator.platform || "unknown"),

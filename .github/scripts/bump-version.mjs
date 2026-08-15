@@ -33,6 +33,11 @@ function commitsSince(tag) {
     .filter(Boolean);
 }
 
+function pushReleaseWithTag(version) {
+  execSync(`git tag v${version}`, { stdio: "inherit" });
+  execSync(`git push --atomic origin HEAD:release v${version}`, { stdio: "inherit" });
+}
+
 function resolveLevel(messages) {
   let level = "patch";
   for (const message of messages) {
@@ -119,9 +124,7 @@ if (!previous) {
   execSync(`git commit -m "chore: bump version to ${current}"`, {
     stdio: "inherit",
   });
-  execSync("git push origin HEAD:release", { stdio: "inherit" });
-  execSync(`git tag v${current}`, { stdio: "inherit" });
-  execSync(`git push origin v${current}`, { stdio: "inherit" });
+  pushReleaseWithTag(current);
   setOutput("version", current);
   setOutput("bumped", "true");
   process.exit(0);
@@ -148,9 +151,7 @@ execSync("git add package.json CHANGELOG.md", { stdio: "inherit" });
 execSync(`git commit -m "chore: bump version to ${next}"`, {
   stdio: "inherit",
 });
-execSync("git push origin HEAD:release", { stdio: "inherit" });
-execSync(`git tag v${next}`, { stdio: "inherit" });
-execSync(`git push origin v${next}`, { stdio: "inherit" });
+pushReleaseWithTag(next);
 
 setOutput("version", next);
 setOutput("bumped", "true");

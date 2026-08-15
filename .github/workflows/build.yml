@@ -4,12 +4,19 @@ on:
   push:
     branches:
       - release
+    tags:
+      - "v*"
   pull_request:
     paths:
       - "apps/shell/**"
       - "packages/**"
+      - "scripts/**"
+      - ".github/**"
       - "package.json"
       - "yarn.lock"
+      - "biome.json"
+      - "lefthook.yml"
+      - ".yarnrc.yml"
   workflow_dispatch:
 
 concurrency:
@@ -47,6 +54,7 @@ jobs:
   build:
     name: ${{ matrix.name }}
     needs: prepare
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -132,7 +140,7 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    if: github.ref == 'refs/heads/release'
+    if: (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/release') || startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
     permissions:

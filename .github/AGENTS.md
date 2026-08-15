@@ -10,18 +10,20 @@
 ## 工作流触发与流程
 
 - 触发条件：
-  - push 到 `release` 分支：全流程（含自动发布）
-  - PR 中改动 `apps/shell/**`、`packages/**`、`package.json`、`yarn.lock`：仅构建验证
-  - `workflow_dispatch`：手动触发
-- `prepare`：运行 bump 脚本，输出 `version` / `bumped` 供后续 job 使用
-- `build`：三平台矩阵（macOS arm64 dmg / Windows x64 nsis / Linux x64 deb+appimage），上传构建产物
-- `release`（仅 `release` 分支）：下载各平台 artifact、按平台重命名、取 CHANGELOG 最新一节为发布说明、打 `v<version>` tag 并发布
+  - push 到 `release` 分支：`prepare` 依据提交信息 bump 版本、更新 `CHANGELOG.md`、本地打 `v<version>` tag，并用一次 atomic push 同时推送 `release` 分支与 tag
+  - push `v*` tag：执行三平台构建与发布，避免分支 push 与 tag push 分裂成两条并发 release 流水线
+  - PR 中改动 `apps/shell/**`、`packages/**`、`scripts/**`、`.github/**`、`package.json`、`yarn.lock`、`biome.json`、`lefthook.yml`、`.yarnrc.yml`：仅构建验证
+  - `workflow_dispatch`：手动触发；在 `release` 分支上会构建并发布
+- `prepare`：仅在 push 到 `release` 分支时运行 bump；tag 事件直接输出当前版本
+- `build`：PR / tag / `workflow_dispatch` 触发
+- `release`（仅 tag 或 `release` 分支手动触发）：下载各平台 artifact、按平台重命名、取 CHANGELOG 最新一节为发布说明，发布到现有 `v<version>` tag
 
 ## bump-version.mjs 行为
 
 - 仅在 push 到 `release` 分支时真正 bump；提交信息以 `chore: bump version` 开头时跳过（防止递归触发）
 - 版本级别：含 `BREAKING CHANGE` / `!` → major；`feat:` → minor；其余 → patch
-- 脚本会以 github-actions[bot] 身份执行 `git commit` / `git push` / `git tag`，并更新 `package.json` 与 `CHANGELOG.md`
+- 脚本会以 github-actions[bot] 身份执行 `git commit` / `git tag` / `git push --atomic`，并更新 `package.json` 与 `CHANGELOG.md`
+- 先创建本地 tag，再原子推送 `release` 分支与 tag；构建与发布由 tag push 事件驱动
 - 本地手动运行会改写版本文件并推送 —— 调试前先想清楚影响面
 
 ## 约定与注意

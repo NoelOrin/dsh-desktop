@@ -23,35 +23,25 @@ client 面依赖 `@deepseek-ai/dsh-client-ui-settings` 等 dsh client 生态（p
 
 | 成员 | 壳命令 / 事件 | 说明 |
 | --- | --- | --- |
-| `platform` | - | 当前平台字符串 |
-| `notify(title, body)` | `plugin:notification\|notify` | 发原生通知 |
-| `clipboard.readText()` / `writeText(text)` | `plugin:clipboard-manager` | 剪贴板读写 |
-| `dialog.openFile(opts)` / `saveFile(opts)` | `plugin:dialog` | 文件选择 / 保存对话框 |
 | `openExternal(target)` | `open_external` | 用系统默认应用打开目标 |
-| `windowAction(action)` | `window_action` | 无边框窗口控制（minimize / maximize / close / toggle-visible 显示↔隐藏） |
+| `windowAction(action)` | `window_action` | 无边框窗口控制（native `WindowAction` 命令切片，minimize / maximize / close / toggle-visible，不暴露 `core:window` 全量 API） |
 | `onWindowState(cb)` | 事件 `dsh-window-state` | 订阅窗口最大化状态 |
-| `getStatus()` / `restart()` / `installDsh()` / `updateDsh()` / `openLogDirectory()` | 对应 native 命令 | dsh 运行状态与控制 |
+| `getStatus()` / `restart()` / `installDsh()` / `openLogDirectory()` | 对应 native 命令 | dsh 运行状态与控制 |
 | `getConfig()` / `setConfig(config)` | `get_config` / `set_config` | 读写桌面壳配置 |
 | `onStatus(cb)` / `onLog(cb)` | 事件 `dsh-status` / `dsh-log` | 订阅运行状态与日志 |
-| `onFileDrop(cb)` | 事件 `dsh-file-drop` | 订阅文件拖放 payload |
-| `openPaths(paths)` / `importPaths(paths)` | `open_paths` / `import_paths` | 打开文件 / 导入目录动作 |
-| `getPendingDeepLinks()` / `ackDeepLink(id)` / `onDeepLink(cb)` | `get_pending_deeplinks` / `ack_deeplink` / 事件 `dsh-deeplink` | 深链队列读取、确认与订阅 |
-| `requestNotificationPermission()` / `onNotificationAction(cb)` | `request_notification_permission` / 事件 `dsh-notification-action` | 通知权限申请 / 点击动作 |
 | `autostart.get()` / `autostart.set(enabled)` | `get_autostart` / `set_autostart` | 查询 / 设置开机自启 |
 | `desktop.get()` / `desktop.set(settings)` | `get_desktop_settings` / `set_desktop_settings` | 查询 / 设置开机自启与自启后窗口状态 |
 | `shortcuts.register(s, cb)` / `unregister(s)` / `list()` / `unregisterAll()` | `register_shortcut` / `unregister_shortcut` / `get_shortcuts` / `unregister_all_shortcuts` | 全局快捷键管理 |
 | `onShortcut(cb)` | 事件 `dsh-shortcut` | 订阅快捷键按下 |
 | `update.check()` / `update.install()` | `check_update` / `install_update` | 检查更新 / 静默下载安装包 |
-| `projects.list()` / `add(path)` / `update(project)` / `remove(id)` | `get_projects` / `add_project` / `update_project` / `remove_project` | 项目列表读写（壳侧 `projects.json` 持久化） |
-| `projects.setPinned(id, pinned)` / `markRead(id)` / `setArchived(id, archived)` | `set_project_pinned` / `mark_project_read` / `archive_project_chats` | 置顶 / 全部标为已读 / 聊天归档 |
-| `projects.createWorktree(id)` / `showInFinder(id)` | `create_project_worktree` / `show_project_in_finder` | 创建永久工作树 / 文件管理器定位 |
 
 所有事件订阅走 `plugin:event|listen` / `plugin:event|unlisten`，远程能力
-`capabilities/bridge.json` 必须保留 `core:event:allow-listen` / `core:event:allow-unlisten`。
+`capabilities/bridge.json` 与 `capabilities/shortcuts.json` 必须保留
+`core:event:allow-listen` / `core:event:allow-unlisten`。
 
 “快捷键”设置 UI 由独立的 `@dsh-desktop/plugin-shortcuts` 插件提供；本插件只保留
-`shortcuts` 桥接面，不实现设置页。项目设置页已移除；本插件仍保留 `projects`
-桥接面，不实现设置页。
+`shortcuts` 桥接面，不实现设置页。项目列表/工作树等壳侧命令已从 remote 白名单移除，
+projects 插件只经 host 端点提供数据，右键“打开位置”复用 `openExternal`。
 
 ## 开机自启与启动模式设置项归属
 
@@ -83,7 +73,8 @@ client 面依赖 `@deepseek-ai/dsh-client-ui-settings` 等 dsh client 生态（p
 ## 维护约定
 
 - 新增桥接能力必须是**能力的最小切片**，须同步 `apps/shell/src-tauri/capabilities/bridge.json`
-  白名单、`apps/shell/src-tauri/src/lib.rs` 的 `BRIDGE_SCRIPT`、`src/index.ts` 的
+  （快捷键相关同步 `capabilities/shortcuts.json`）白名单、`apps/shell/src-tauri/src/lib.rs`
+  的 `BRIDGE_SCRIPT`、`src/index.ts` 的
   `DshDesktopBridge`、client 侧 `BridgeLike`（如需使用）与本文件的桥接对象表
 - 桥接契约不并入 `packages/contracts`（native 契约与桥接契约分离；桥接可以复用 contracts
   中已有的 native 快照/配置类型，但桥接对象形状与命令切片由本插件自持）

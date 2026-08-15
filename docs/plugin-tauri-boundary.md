@@ -120,10 +120,11 @@ snake_case）。
 ### 现状（刻意隔离）
 
 - 主窗口就绪后整页导航到 `http://127.0.0.1:<port>`，dsh web 是**远端 origin**。
-- Tauri 2 的 IPC 只对本地窗口页面默认开放；远端 origin 没有 `dangerousRemoteDomainIpcAccess`
-  声明就拿不到 `window.__TAURI_INTERNALS__`。
-- capabilities 仅覆盖 main 本地窗口，**dsh web（及其插件）默认永远拿不到
-  Tauri 能力**。
+- Tauri 2 的 IPC 只对本地窗口页面默认开放；远端 origin 只有在其对应 capability
+  的 `remote.urls` 白名单内才可访问受限 IPC。
+- capabilities 仅覆盖 main 窗口；`bridge.json` / `shortcuts.json` 用 `remote.urls`
+  仅放行 `http://127.0.0.1:*`，并且 Rust 导航/注入侧只接受**当前桌面壳托管的 dsh origin**。
+  其他远端 origin（包括 dsh web 以外的 loopback 服务）默认永远拿不到 Tauri 能力。
 
 这是**有意为之**的安全边界：第三方插件运行在 dsh 的 Node 进程和远端页面里，不授予它们
 桌面壳权限，插件就永远无法碰 `config.json`、窗口、宿主资源。
@@ -135,8 +136,9 @@ snake_case）。
 1. 在桥接插件（`packages/plugins/bridge`）内定义**最小化桥接命令**（例如 `pick_directory`），
    **契约由桥接插件自持**，Rust 侧在 `capabilities/bridge.json` 声明实现与权限——
    不写进 `packages/contracts`（contracts 只负责 native 内容，不负责桥接）。
-2. 在 `tauri.conf.json` 的 `app.security.dangerousRemoteDomainIpcAccess` 里
-   **只对该 loopback 端口白名单**，并在对应 capability 里只授予桥接需要的命令。
+2. 在 capabilities 的 `remote.urls` 里只允许 loopback，并在 Rust 导航/注入侧校验
+   **当前托管的 dsh origin**；对应 capability 只授予桥接实际消费的命令。快捷键命令
+   单独放在 `capabilities/shortcuts.json`，避免 bridge client 不使用的命令进入远程面。
 3. 桥接命令必须是**能力的最小切片**（一次只暴露一个动作），不允许把整个 `core:default`
    或 `shell` 权限开放给远端。
 

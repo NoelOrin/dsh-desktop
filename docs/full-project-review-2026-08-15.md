@@ -41,8 +41,7 @@
 - `packages/plugins/reasoning/src/index.ts:41-56` P1：host 面直接改写共享服务对象 `llm.resolveModelInfo`，没有 disposer；HMR 或另一个插件再包装时可能嵌套包装并永久叠加。优先通过 cordis 服务注册/事件包装，或至少记录原始函数并在 effect 清理时恢复。
 - `packages/plugins/projects/src/index.ts:302-343` P1：`webServer.register` 返回的 disposer 被忽略。插件 HMR/卸载时旧端点可能残留。应在 `ctx.effect` 中收集并返回 disposer。
 - `packages/plugins/projects/src/index.ts:290-299` P2：`readBody` 无大小上限，JSON body 可被本地请求撑爆内存。设置 body 上限并拒绝超大请求。
-- `packages/plugins/bridge/src/client/desktop-shell.ts:65-92` P2：窗口控制按钮用 `innerHTML` 生成静态 SVG，当前无注入风险，但后续若拼接动态内容需改为 DOM API。
-- `packages/plugins/reasoning/src/models/client/ModelListEditor.tsx:226-249` P2：容量编辑 buffer 以行号做 key，采纳候选后重建行序可能把未提交文本映射到错误行。建议改用模型 id 或候选稳定键。
+/- `packages/plugins/reasoning/src/models/client/ModelListEditor.tsx:226-249` P2：容量编辑 buffer 以行号做 key，采纳候选后重建行序可能把未提交文本映射到错误行。建议改用模型 id 或候选稳定键。
 - `packages/plugins/bridge/src/client/theme-store.ts:101-115` P2：防抖写回逐个 `await scope.set`，失败被吞掉且无 UI 反馈。主题设置静默丢失时用户无法感知；至少记录失败或暴露错误状态。
 
 ## 第 3 轮：脚本、CI 与文档

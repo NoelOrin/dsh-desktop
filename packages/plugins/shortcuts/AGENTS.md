@@ -66,6 +66,6 @@ settings 注册，改用 `localStorage` 的 `@dsh-desktop/plugin-shortcuts:setti
 - 新增 dsh 侧快捷键时，先在本插件登记，避免快捷键逻辑散落到其他插件。
 - 需要持久化设置时，扩展 `src/shared/settings.ts` 与 host schema，并在设置页补控件。
 - 修改桥接命令或事件时，同步 `packages/plugins/bridge/AGENTS.md`、
-  `apps/shell/src-tauri/capabilities/bridge.json` 与本文档。
+  `apps/shell/src-tauri/capabilities/shortcuts.json`、`bridge.json` 与本文档。
 - `lib/` 为构建产物，不手改；修改后运行 `yarn typecheck`、`yarn lint`、
   `yarn build:plugins`。

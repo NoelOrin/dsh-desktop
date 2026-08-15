@@ -28,7 +28,7 @@
 - 自动选择空闲 loopback 端口，以 `dsh web --host 127.0.0.1 --port <port>` 启动
 - 单窗口架构：main 窗口承载启动页与 dsh Web UI；桌面壳能力（状态 / 配置 / 工具 / 开机自启）经 dsh 插件在 WebUI 设置面板的“桌面”页提供，不再有独立 control 窗口
 - 内嵌 dsh 插件自动装配：`packages/plugins`（bridge 桥接 / projects 项目 / shortcuts 快捷键 / reasoning 模型与思考强度）随应用打包进 Tauri resources，启动时自动复制到 dsh profile 并生成 `--patch` overlay 挂载
-- 原生能力增强：系统托盘（关闭到托盘）、原生通知、单实例锁、崩溃自动重启、系统主题跟随、优雅退出与进程树清理、文件拖放、窗口状态记忆、`dsh-desktop://` 深链、自动更新（后台检查 + “桌面”页“检查更新”）、开机自启（dsh 插件设置面板，默认关闭）、自定义全局快捷键、托盘“退出”二次确认；dsh web 受控桥接 `window.__DSH_DESKTOP__`（通知 / 剪贴板 / 对话框 / 打开外部链接 / 开机自启 / 全局快捷键 / 深链）
+- 原生能力增强：系统托盘（关闭到托盘）、原生通知、单实例锁、崩溃自动重启、系统主题跟随、优雅退出与进程树清理、文件拖放、窗口状态记忆、`dsh-desktop://` 深链、自动更新（后台检查 + “桌面”页“检查更新”）、开机自启（dsh 插件设置面板，默认关闭）、自定义全局快捷键、托盘“退出”二次确认；dsh web 受控桥接 `window.__DSH_DESKTOP__`（打开外部链接 / 运行状态与日志 / 配置 / 开机自启 / 全局快捷键 / 更新）
 - 主题与背景图：设置 → 外观（内置 7 主题家族浅/深两半、自定义主题、背景图毛玻璃/像素化/玻璃透明度、排版），启动页与窗口背景跟随
 - 第三方思考强度：设置 → 模型 的自定义设置里可为自定义 / 第三方模型勾选 Low / Medium / High / Very High / Extreme，输入栏模型菜单可直接切换推理等级
 - 无边框窗口 + 自绘标题栏：可拖动、双击最大化，最小化/最大化/关闭按钮齐全，标题栏背景跟随主题
@@ -106,7 +106,7 @@ npm install -g @deepseek-ai/dsh
 
 `packages/plugins` 是本仓库的 dsh 插件容器，当前包含：
 
-- `bridge`（`@dsh-desktop/plugin-bridge`）— 桥接 Tauri 壳能力的双面插件：在 dsh WebUI 设置面板渲染“桌面”页（状态 / 配置 / 工具 / 开机自启）与“外观”页（主题偏好 / 主题库 / 背景图 / 玻璃透明度 / 自定义主题 / 排版），通过 `window.__DSH_DESKTOP__` 调用壳能力（通知 / 剪贴板 / 对话框 / 打开外部链接 / 窗口控制 / 开机自启 / 全局快捷键 / 深链）
+- `bridge`（`@dsh-desktop/plugin-bridge`）— 桥接 Tauri 壳能力的双面插件：在 dsh WebUI 设置面板渲染“桌面”页（状态 / 配置 / 工具 / 开机自启）与“外观”页（主题偏好 / 主题库 / 背景图 / 玻璃透明度 / 自定义主题 / 排版），通过 `window.__DSH_DESKTOP__` 调用壳能力（打开外部链接 / 窗口控制 / 运行状态与日志 / 配置 / 开机自启 / 全局快捷键 / 更新）
 - `projects`（`@dsh-desktop/plugin-projects`）— 项目 host 插件：为侧边栏右键菜单提供 dsh 工作区/会话数据与动作端点
 - `shortcuts`（`@dsh-desktop/plugin-shortcuts`）— 全局快捷键设置插件：在 dsh WebUI 设置面板管理壳侧全局快捷键，并提供双击 Esc 停止当前对话
 - `reasoning`（`@dsh-desktop/plugin-reasoning`）— 模型设置插件：在“模型”页中为自定义 / 第三方模型配置推理等级，写入 `reasoningEfforts` 后输入栏模型菜单可直接切换
@@ -154,7 +154,7 @@ dsh-desktop/
 │       ├── index.html            # 启动页入口
 │       ├── src/                  # 启动页前端（Vite + TypeScript）
 │       └── src-tauri/            # Tauri 2 + Rust 后端
-│           ├── capabilities/     # IPC 权限（default.json / bridge.json）
+│           ├── capabilities/     # IPC 权限（default.json / bridge.json / shortcuts.json）
 │           ├── permissions/      # 自动生成的命令权限
 │           ├── resources/plugins # 打包进应用的内嵌 dsh 插件（构建产物）
 │           ├── icons/            # 应用图标

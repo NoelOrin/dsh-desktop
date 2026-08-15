@@ -1,0 +1,4 @@
+# 桥接 Tauri 壳能力的 dsh 插件：向 profile 插入插件行
+- insert:
+    - id: bridge
+      name: '@dsh-desktop/plugin-bridge'

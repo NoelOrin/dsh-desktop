@@ -1,0 +1,27 @@
+{
+  "name": "@dsh-desktop/shell",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "yarn@4.17.1",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "tauri": "tauri",
+    "dev:web": "vite",
+    "build:web": "vite build",
+    "web:all": "yarn dev:web",
+    "web:build": "yarn build:web",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@dsh-desktop/contracts": "workspace:^",
+    "@tauri-apps/api": "^2"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "concurrently": "^9",
+    "typescript": "^5",
+    "vite": "^8"
+  }
+}

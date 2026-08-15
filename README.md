@@ -5,6 +5,10 @@
 > 就绪后直接在系统 WebView 中进入 Harness Web UI。
 
 <p align="center">
+  <b>简体中文</b> · <a href="README.en.md">English</a>
+</p>
+
+<p align="center">
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey" alt="Platform" />
   <img src="https://img.shields.io/badge/Tauri-2.11-4D6BFE" alt="Tauri 2.11" />
   <img src="https://img.shields.io/badge/Rust-1.97-orange" alt="Rust 1.97" />
@@ -22,16 +26,26 @@
 
 - 自动检测 `dsh`：已安装直接启动，未安装提供一键安装并自动进入
 - 自动选择空闲 loopback 端口，以 `dsh web --host 127.0.0.1 --port <port>` 启动
+- 单窗口架构：main 窗口承载启动页与 dsh Web UI；桌面壳能力（状态 / 配置 / 工具 / 开机自启）经 dsh 插件在 WebUI 设置面板的“桌面”页提供，不再有独立 control 窗口
+- 内嵌 dsh 插件自动装配：`packages/plugins`（bridge 桥接 / projects 项目 / shortcuts 快捷键 / reasoning 模型与思考强度）随应用打包进 Tauri resources，启动时自动复制到 dsh profile 并生成 `--patch` overlay 挂载
+- 原生能力增强：系统托盘（关闭到托盘）、原生通知、单实例锁、崩溃自动重启、系统主题跟随、优雅退出与进程树清理、文件拖放、窗口状态记忆、`dsh-desktop://` 深链、自动更新（后台检查 + “桌面”页“检查更新”）、开机自启（dsh 插件设置面板，默认关闭）、自定义全局快捷键、托盘“退出”二次确认；dsh web 受控桥接 `window.__DSH_DESKTOP__`（打开外部链接 / 运行状态与日志 / 配置 / 开机自启 / 全局快捷键 / 更新）
+- 主题与背景图：设置 → 外观（内置 7 主题家族浅/深两半、自定义主题、背景图毛玻璃/像素化/玻璃透明度、排版），启动页与窗口背景跟随
+- 第三方思考强度：设置 → 模型 的自定义设置里可为自定义 / 第三方模型勾选 Low / Medium / High / Very High / Extreme，输入栏模型菜单可直接切换推理等级
+- 无边框窗口 + 自绘标题栏：可拖动、双击最大化，最小化/最大化/关闭按钮齐全，标题栏背景跟随主题
+- 局域网访问：内置零依赖反向代理脚本，让局域网设备访问本机 `dsh web`（支持 Bearer token 门禁）
 
 ## 架构
 
 ```mermaid
 flowchart LR
-  A[DSH Desktop 窗口] --> B[Rust 进程管理器]
+  A[main 窗口<br/>启动页 → dsh Web UI] --> B[Rust 进程管理器]
   B -->|spawn / 监控 / 停止| C[dsh web 子进程]
   C -->|HTTP 127.0.0.1:随机端口| A
-  B -->|未安装时 npm install| D[应用数据目录 runtime]
+  B -->|未安装时 npm install -g| D[全局安装 dsh]
   D --> C
+  E[dsh 插件（bridge）<br/>WebUI 设置面板“桌面”页] -->|window.__DSH_DESKTOP__ 桥接| B
+  B -->|启动时自动装配| F[内嵌 dsh 插件<br/>resources/plugins → dsh profile]
+  F -->|cordis patch overlay| C
 ```
 
 ## 快速开始
@@ -48,7 +62,7 @@ flowchart LR
 ### 安装
 
 ```sh
-git clone <your-repo-url> dsh-desktop
+git clone https://github.com/NoelOrin/dsh-desktop.git
 cd dsh-desktop
 yarn
 ```
@@ -56,8 +70,13 @@ yarn
 ### 开发运行
 
 ```sh
-yarn tauri dev
+yarn dev
 ```
+
+仅前端热更新：`yarn dev:web`（shell @ :5173）。
+类型检查（全部 workspace）：`yarn typecheck`。
+编译 dsh 插件到 Tauri resources（自动清理旧产物）：`yarn build:plugins`。
+局域网反向代理：`yarn lan-proxy`（详见下文“局域网访问”）。
 
 ### 打包
 
@@ -65,7 +84,7 @@ yarn tauri dev
 yarn build
 ```
 
-构建产物位于 `src-tauri/target/release/bundle/`：
+构建产物位于 `apps/shell/src-tauri/target/release/bundle/`：
 
 | 平台 | 产物 |
 | --- | --- |
@@ -75,15 +94,50 @@ yarn build
 
 ## 一键安装 dsh
 
-启动页检测到系统没有 `dsh` 时，点击“一键安装 DSH”，应用会在数据目录执行：
+启动页检测到系统没有 `dsh` 时，点击“一键安装 DSH”，应用会直接执行全局安装：
 
 ```sh
-npm install --prefix <应用数据目录>/runtime @deepseek-ai/dsh
+npm install -g @deepseek-ai/dsh
 ```
 
 安装日志实时展示在启动页，完成后自动拉起 `dsh web` 并进入界面。
 
+## 内嵌 dsh 插件
+
+`packages/plugins` 是本仓库的 dsh 插件容器，当前包含：
+
+- `bridge`（`@dsh-desktop/plugin-bridge`）— 桥接 Tauri 壳能力的双面插件：在 dsh WebUI 设置面板渲染“桌面”页（状态 / 配置 / 工具 / 开机自启）与“外观”页（主题偏好 / 主题库 / 背景图 / 玻璃透明度 / 自定义主题 / 排版），通过 `window.__DSH_DESKTOP__` 调用壳能力（打开外部链接 / 窗口控制 / 运行状态与日志 / 配置 / 开机自启 / 全局快捷键 / 更新）
+- `projects`（`@dsh-desktop/plugin-projects`）— 项目 host 插件：为侧边栏右键菜单提供 dsh 工作区/会话数据与动作端点
+- `shortcuts`（`@dsh-desktop/plugin-shortcuts`）— 全局快捷键设置插件：在 dsh WebUI 设置面板管理壳侧全局快捷键，并提供双击 Esc 停止当前对话
+- `reasoning`（`@dsh-desktop/plugin-reasoning`）— 模型设置插件：在“模型”页中为自定义 / 第三方模型配置推理等级，写入 `reasoningEfforts` 后输入栏模型菜单可直接切换
+- `client-kit`（共享源码，非插件）— 统一 `window.__DSH_DESKTOP__` 读取、client CSS 注入与 tsdown 公共构建插件；构建时内联进各插件的 client bundle，不进入 `resources/plugins`
+
+构建时 `scripts/build-plugins.mjs` 用 tsdown 编译各插件，并把自包含 dist 清单拷贝进 `apps/shell/src-tauri/resources/plugins/`，随安装包分发；插件从源码删除后，下次构建会自动清理 resources 与 `--home` profile 中的旧产物。应用启动时 `embedded.rs` 将其复制到 dsh profile 的 node_modules 并生成 `--patch` overlay，`dsh web` 启动即自动挂载，全程 best-effort 不阻塞启动。
+
+> 插件域与 Tauri 壳域的职责边界、受控桥接与端口白名单机制，见 [docs/plugin-tauri-boundary.md](docs/plugin-tauri-boundary.md)。
+
+## 局域网访问（可选）
+
+`dsh web` 默认只绑 `127.0.0.1`，局域网设备无法访问。仓库提供零依赖反向代理脚本，将本机回环身份伪装成 dsh 看到的来源（改写 Host / Origin，透传 `Sec-Fetch-Site`，支持 WebSocket 与流式响应）：
+
+```sh
+yarn lan-proxy --token "一个足够长的随机串"
+```
+
+常用参数（环境变量 `DSH_PROXY_*` 优先级低于同名参数）：
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `--bind` | `0.0.0.0` | 监听地址 |
+| `--port` | `8080` | 监听端口 |
+| `--target` | `127.0.0.1:53553` | 上游 dsh web 地址 |
+| `--token` | 关闭 | 启用 Bearer token 门禁（强烈建议） |
+
 ## 配置
+
+配置优先级：`config.json`（应用数据目录）→ 环境变量 → PATH 检测。
+PATH 检测会合并桌面进程自身 PATH、macOS 系统 PATH（`/etc/paths` + `/etc/paths.d`）、Linux `/etc/environment`、Windows 用户/系统注册表 PATH，以及非 Windows 用户 shell PATH；合并结果也会注入 dsh/npm 子进程。
+桌面壳“配置”区通过 `get_config` / `set_config` 读写 `config.json`；未在 `config.json` 设置的字段回退到环境变量。
 
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
@@ -95,14 +149,27 @@ npm install --prefix <应用数据目录>/runtime @deepseek-ai/dsh
 
 ```text
 dsh-desktop/
-├── src/                     # 启动页前端（Vite）
-├── src-tauri/               # Tauri 2 + Rust 后端
-│   ├── capabilities/        # IPC 权限
-│   ├── icons/               # 应用图标
-│   └── src/lib.rs           # dsh 检测、安装、进程管理、窗口导航
+├── apps/
+│   └── shell/                    # main 窗口
+│       ├── index.html            # 启动页入口
+│       ├── src/                  # 启动页前端（Vite + TypeScript）
+│       └── src-tauri/            # Tauri 2 + Rust 后端
+│           ├── capabilities/     # IPC 权限（default.json / bridge.json / shortcuts.json）
+│           ├── permissions/      # 自动生成的命令权限
+│           ├── resources/plugins # 打包进应用的内嵌 dsh 插件（构建产物）
+│           ├── icons/            # 应用图标
+│           └── src/              # lib.rs / config.rs / embedded.rs / main.rs
+├── packages/
+│   ├── contracts/                # 共享 IPC 类型与常量（@dsh-desktop/contracts）
+│   └── plugins/                  # dsh 插件容器：bridge / projects / shortcuts / reasoning
+├── scripts/
+│   ├── lan-proxy.mjs             # 局域网反向代理
+│   └── build-plugins.mjs         # 编译插件并打包进 Tauri resources
 ├── .github/
-│   ├── scripts/             # 版本管理脚本
-│   └── workflows/           # 三平台构建与自动发布
+│   ├── scripts/                  # 版本管理 / 更新器产物脚本
+│   └── workflows/                # 三平台构建与自动发布
+├── docs/                         # 插件边界文档、截图等
+├── dist/                         # 前端构建产物（生成，勿手改）
 ├── CHANGELOG.md
 └── package.json
 ```
@@ -111,6 +178,8 @@ dsh-desktop/
 
 - 构建产物未签名，macOS 首次打开需右键“打开”，Windows 会提示 SmartScreen
 - Linux 构建依赖 WebKitGTK 等系统包，GitHub Actions 已内置安装步骤
+- 前端在普通浏览器中无法完整运行（依赖 Tauri 注入的 `window.__TAURI_INTERNALS__`），只能调试样式/布局
+
 ## 贡献
 
 1. Fork 本仓库并创建功能分支

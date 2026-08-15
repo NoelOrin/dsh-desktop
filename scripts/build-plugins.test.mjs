@@ -1,0 +1,166 @@
+#!/usr/bin/env node
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+/**
+ * build-plugins 纯函数冒烟测试（零依赖，仅 node:test / node:assert）
+ *
+ * 直接测 buildDistManifest：源 package.json → 内嵌 dist 清单变换
+ * （剔除依赖/私有字段/scripts/packageManager/悬空 types，保留 lib 入口与 dsh 字段）。
+ *
+ * 运行：
+ *   node scripts/build-plugins.test.mjs
+ */
+import test from "node:test";
+import {
+  buildDistManifest,
+  deployToProfile,
+  pruneStaleProfilePackages,
+  pruneStaleResources,
+} from "./build-plugins.mjs";
+
+test("dist manifest 剔除依赖并指向 lib", () => {
+  const dist = buildDistManifest({
+    name: "@dsh-desktop/plugin-bridge",
+    version: "0.1.0",
+    type: "module",
+    main: "./lib/index.js",
+    exports: { ".": "./lib/index.js", "./client": "./lib/client.js" },
+    description: "桥接 Tauri 壳能力",
+    dependencies: { "@deepseek-ai/cordis": "^4.0.1" },
+    devDependencies: { typescript: "^5" },
+    peerDependencies: { react: "^18" },
+    private: true,
+    dsh: { bundle: { patch: "./cordis.patch.yml" } },
+    dshDesktop: { id: "bridge" },
+  });
+  assert.equal(dist.dependencies, undefined);
+  assert.equal(dist.devDependencies, undefined);
+  assert.equal(dist.peerDependencies, undefined);
+  assert.equal(dist.private, undefined);
+  assert.equal(dist.main, "./lib/index.js");
+  assert.equal(dist.version, "0.1.0");
+  assert.equal(dist.type, "module");
+  assert.deepEqual(dist.exports, { ".": "./lib/index.js", "./client": "./lib/client.js" });
+  assert.equal(dist.description, "桥接 Tauri 壳能力");
+  assert.equal(dist.dsh.bundle.patch, "./cordis.patch.yml");
+  assert.equal(dist.dshDesktop.id, "bridge");
+});
+
+test("dist manifest 剔除悬空的 types 字段", () => {
+  const dist = buildDistManifest({
+    name: "@dsh-desktop/plugin-projects",
+    version: "0.1.0",
+    type: "module",
+    main: "./lib/index.js",
+    types: "./lib/index.d.ts",
+    scripts: { build: "tsdown" },
+    packageManager: "yarn@4.17.1",
+    dsh: { bundle: { patch: "./cordis.patch.yml" } },
+    dshDesktop: { id: "projects" },
+  });
+  assert.equal(dist.types, undefined);
+  assert.equal(dist.scripts, undefined);
+  assert.equal(dist.packageManager, undefined);
+  assert.equal(dist.name, "@dsh-desktop/plugin-projects");
+  assert.equal(dist.main, "./lib/index.js");
+  assert.equal(dist.dshDesktop.id, "projects");
+});
+
+test("deployToProfile 原子复制到 dsh profile", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dsh-deploy-"));
+  const src = path.join(root, "src");
+  const home = path.join(root, "home");
+  fs.mkdirSync(src, { recursive: true });
+  fs.writeFileSync(path.join(src, "client.js"), "// hot");
+
+  const error = deployToProfile(src, "@dsh-desktop/plugin-bridge", home);
+  assert.equal(error, null);
+  const target = path.join(
+    home,
+    "profiles",
+    "node_modules",
+    "@dsh-desktop",
+    "plugin-bridge",
+    "client.js",
+  );
+  assert.equal(fs.readFileSync(target, "utf8"), "// hot");
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("deployToProfile 复制失败时保留旧目标", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dsh-deploy-fail-"));
+  const home = path.join(root, "home");
+  const target = path.join(home, "profiles", "node_modules", "@dsh-desktop", "plugin-bridge");
+  fs.mkdirSync(target, { recursive: true });
+  fs.writeFileSync(path.join(target, "client.js"), "// old");
+
+  const error = deployToProfile(path.join(root, "missing-src"), "@dsh-desktop/plugin-bridge", home);
+
+  assert.ok(error);
+  assert.equal(fs.readFileSync(path.join(target, "client.js"), "utf8"), "// old");
+  assert.equal(fs.existsSync(`${target}.tmp`), false);
+  assert.equal(fs.existsSync(`${target}.backup`), false);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("deployToProfile rename 失败时回滚旧目标", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dsh-deploy-rename-fail-"));
+  const home = path.join(root, "home");
+  const target = path.join(home, "profiles", "node_modules", "@dsh-desktop", "plugin-bridge");
+  const src = path.join(root, "src");
+  fs.mkdirSync(src, { recursive: true });
+  fs.writeFileSync(path.join(src, "client.js"), "// new");
+  fs.mkdirSync(target, { recursive: true });
+  fs.writeFileSync(path.join(target, "client.js"), "// old");
+
+  const originalRename = fs.renameSync;
+  fs.renameSync = (oldPath, newPath, ...args) => {
+    if (String(oldPath).endsWith(".tmp")) {
+      throw new Error("rename failed");
+    }
+    return originalRename.call(fs, oldPath, newPath, ...args);
+  };
+  try {
+    const error = deployToProfile(src, "@dsh-desktop/plugin-bridge", home);
+    assert.ok(error);
+    assert.equal(fs.readFileSync(path.join(target, "client.js"), "utf8"), "// old");
+    assert.equal(fs.existsSync(`${target}.tmp`), false);
+    assert.equal(fs.existsSync(`${target}.backup`), false);
+  } finally {
+    fs.renameSync = originalRename;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("pruneStaleResources 删除已移除插件的旧 resources 产物", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dsh-prune-resources-"));
+  const resources = path.join(root, "resources", "plugins");
+  fs.mkdirSync(path.join(resources, "bridge"), { recursive: true });
+  fs.mkdirSync(path.join(resources, "plugin-removed"), { recursive: true });
+
+  const removed = pruneStaleResources(resources, new Set(["bridge"]));
+
+  assert.deepEqual(removed, ["plugin-removed"]);
+  assert.equal(fs.existsSync(path.join(resources, "bridge")), true);
+  assert.equal(fs.existsSync(path.join(resources, "plugin-removed")), false);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("pruneStaleProfilePackages 只清理 @dsh-desktop/plugin-* 旧包", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dsh-prune-profile-"));
+  const home = path.join(root, "home");
+  const namespaceDir = path.join(home, "profiles", "node_modules", "@dsh-desktop");
+  fs.mkdirSync(path.join(namespaceDir, "plugin-bridge"), { recursive: true });
+  fs.mkdirSync(path.join(namespaceDir, "plugin-removed"), { recursive: true });
+  fs.mkdirSync(path.join(namespaceDir, "custom"), { recursive: true });
+
+  const removed = pruneStaleProfilePackages(home, new Set(["@dsh-desktop/plugin-bridge"]));
+
+  assert.deepEqual(removed, ["@dsh-desktop/plugin-removed"]);
+  assert.equal(fs.existsSync(path.join(namespaceDir, "plugin-bridge")), true);
+  assert.equal(fs.existsSync(path.join(namespaceDir, "plugin-removed")), false);
+  assert.equal(fs.existsSync(path.join(namespaceDir, "custom")), true);
+  fs.rmSync(root, { recursive: true, force: true });
+});

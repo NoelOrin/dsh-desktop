@@ -1,7 +1,12 @@
 node_modules
-dist
-src-tauri/target
-src-tauri/gen
 .yarn/
+dist
+apps/shell/src-tauri/target
+apps/shell/src-tauri/gen
 .DS_Store
 .idea
+packages/plugins/*/lib
+packages/plugins/*/dist
+apps/shell/src-tauri/resources/**
+!apps/shell/src-tauri/resources/plugins/
+!apps/shell/src-tauri/resources/plugins/.gitkeep

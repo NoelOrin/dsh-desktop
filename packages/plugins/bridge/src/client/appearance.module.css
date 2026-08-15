@@ -1,0 +1,415 @@
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* ── 主题库 ─────────────────────────────────────────────── */
+
+.library {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.libraryToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.librarySummary {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+
+.themeGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.themeCard {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.themePreview {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  height: 104px;
+}
+
+.themeHalf {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 0;
+  margin: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.themeHalf:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: -3px;
+}
+
+.themeHalfActive::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 2px solid var(--dsw-alias-brand-primary);
+  pointer-events: none;
+}
+
+.miniUi {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.miniDot {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  box-shadow: 0 1px 3px color-mix(in srgb, currentColor 22%, transparent);
+}
+
+.miniLines {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.miniLine {
+  width: 48px;
+  height: 5px;
+  border-radius: 3px;
+  background: currentcolor;
+  opacity: 0.45;
+}
+
+.miniLineShort {
+  width: 30px;
+  opacity: 0.24;
+}
+
+.themeHalfLabel {
+  font-size: 11px;
+  line-height: 1;
+  opacity: 0.78;
+}
+
+.themeBadge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--dsw-alias-brand-primary);
+  color: var(--dsw-alias-label-primary-foreground);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.themeCardFoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 38px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.themeName {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.themeMeta {
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+}
+
+/* ── 背景图 ─────────────────────────────────────────────── */
+
+.wallpaperActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.wallpaperPreview {
+  box-sizing: border-box;
+  display: block;
+  width: min(100%, 560px);
+  aspect-ratio: 4 / 3;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background-color: var(--dsw-alias-bg-layer-1);
+  object-fit: cover;
+  object-position: center;
+}
+
+.wallpaperEmpty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 96px;
+  border: 1px dashed var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+}
+
+.effectStack {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+/* ── 玻璃预览 ───────────────────────────────────────────── */
+
+.glassStage {
+  position: relative;
+  overflow: hidden;
+  height: 108px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--dsw-alias-brand-primary) 16%, transparent),
+      transparent 58%
+    ),
+    var(--dsw-alias-bg-layer-2);
+}
+
+.glassBackdrop {
+  position: absolute;
+  inset: 16px;
+  border-radius: 8px;
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--dsw-alias-label-primary) 16%, transparent),
+      transparent 70%
+    ),
+    var(--dsw-alias-bg-layer-3);
+  opacity: 0.7;
+}
+
+.glassSurface {
+  position: absolute;
+  top: 22px;
+  left: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56%;
+  height: 58%;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent);
+}
+
+/* ── 自定义主题 ─────────────────────────────────────────── */
+
+.themeList {
+  display: flex;
+  flex-direction: column;
+}
+
+.themeRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 0;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.themeRowName {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.themeRowActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.editorGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+}
+
+.editorHalf {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+}
+
+.colorGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+}
+
+.colorField {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.colorSwatch {
+  box-sizing: border-box;
+  flex: none;
+  width: 46px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: transparent;
+}
+
+.colorMeta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.colorLabel {
+  display: block;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+
+.colorValue {
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editorActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+
+.rowHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.value {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 32px;
+  min-width: 0;
+}
+
+.input input {
+  width: 100%;
+}
+
+/* ── 排版 ───────────────────────────────────────────────── */
+
+.typographyGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+@media (max-width: 640px) {
+  .themeGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .editorGrid,
+  .colorGrid,
+  .effectStack,
+  .typographyGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .themeRow {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .themeRowActions {
+    justify-content: flex-start;
+  }
+}

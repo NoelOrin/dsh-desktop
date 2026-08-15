@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DSH Desktop</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <header class="titlebar" id="titlebar" data-tauri-drag-region="deep">
+      <span class="titlebar__title">DSH Desktop</span>
+      <div class="titlebar__controls">
+        <button type="button" id="win-min" aria-label="最小化" title="最小化">
+          <svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="5.4" width="8" height="1.2" rx="0.6" fill="currentColor"/></svg>
+        </button>
+        <button type="button" id="win-max" aria-label="最大化" title="最大化">
+          <svg viewBox="0 0 12 12" aria-hidden="true" id="win-max-icon"><rect x="2.4" y="2.4" width="7.2" height="7.2" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+        </button>
+        <button type="button" id="win-close" aria-label="关闭" title="关闭">
+          <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 3l6 6M9 3L3 9" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+    </header>
+    <main class="shell" aria-live="polite">
+      <p class="eyebrow">DeepSeek Harness</p>
+      <h1>DSH</h1>
+      <p class="subtitle">Desktop Runtime</p>
+
+      <div class="loader" aria-hidden="true">
+        <span class="loader__arc"></span>
+      </div>
+
+      <div class="status" id="status" data-phase="detecting">
+        <span class="status__dot"></span>
+        <span class="status__text" id="message">正在检测运行环境...</span>
+      </div>
+
+      <div class="actions">
+        <button type="button" id="install" class="hidden">安装 DSH</button>
+        <button type="button" id="retry" class="hidden">重试</button>
+        <button type="button" id="open-logs" class="hidden">日志目录</button>
+      </div>
+
+      <pre class="logs hidden" id="logs"></pre>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

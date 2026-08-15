@@ -1,0 +1,306 @@
+/* 桌面壳形态：由 bridge client 负责标记与全局形态，避免 Rust 注入依赖 dsh DOM。 */
+
+:global([data-slot="sidebar"]),
+:global([data-slot^="sidebar"]) {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+:global(html[data-dsh-desktop-platform="darwin"]) [data-slot="sidebar"] > div {
+  padding-top: 32px;
+}
+
+:global(#dsh-desktop-drag) {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 96px;
+  height: 44px;
+  z-index: 2147483644;
+  pointer-events: auto;
+}
+
+:global(html[data-dsh-desktop-platform="darwin"] #dsh-desktop-drag) {
+  left: 80px;
+  right: 0;
+  height: 32px;
+}
+
+:global(#dsh-desktop-controls) {
+  position: fixed;
+  top: 4px;
+  right: 8px;
+  z-index: 2147483647;
+  display: flex;
+  gap: 0;
+  height: 32px;
+}
+
+:global(#dsh-desktop-controls button) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary, #3f3f46);
+  cursor: pointer;
+}
+
+:global(#dsh-desktop-controls button svg) {
+  width: 12px;
+  height: 12px;
+  display: block;
+}
+
+:global(#dsh-desktop-controls button:hover) {
+  background: color-mix(in srgb, var(--dsw-alias-label-primary, #3f3f46) 12%, transparent);
+}
+
+:global(#dsh-desktop-controls button[data-action="close"]:hover) {
+  background: #e81123;
+  color: #fff;
+}
+
+.statusSummary {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px 0;
+}
+
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.statusMeta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.statusLine {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+
+.statusText {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.url {
+  min-width: 0;
+  max-width: 340px;
+  overflow: hidden;
+  padding: 2px 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metaRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.metaItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 22px;
+  padding: 0 7px;
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+}
+
+.metaItem strong {
+  color: var(--dsw-alias-label-primary);
+  font-weight: 600;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.log {
+  margin: 0;
+  max-height: 280px;
+  overflow: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--ds-font-family-code);
+  font-size: var(--dsw-font-size-code, 11px);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.configGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.fieldLabel {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+}
+
+.fieldLabel code {
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 32px;
+  min-width: 0;
+}
+
+.input input {
+  width: 100%;
+}
+
+.formActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.toolList {
+  display: flex;
+  flex-direction: column;
+}
+
+.toolRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+  padding: 12px 0;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.toolText {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.toolTitle {
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.toolDesc {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.toolActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.startupStack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.modeBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 14px 0;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.messageError {
+  margin: 0;
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 12px;
+}
+
+.messageInfo {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+
+@media (max-width: 640px) {
+  .statusLine,
+  .toolRow {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .configGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .url {
+    max-width: 100%;
+  }
+
+  .toolActions {
+    justify-content: flex-start;
+  }
+}

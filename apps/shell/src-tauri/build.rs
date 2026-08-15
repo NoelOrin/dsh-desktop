@@ -1,0 +1,45 @@
+fn main() {
+    // 为应用自定义命令生成 allow-* / deny-* ACL 权限，
+    // 供 capabilities 声明（含 remote 白名单下的桥接命令）。
+    let attributes =
+        tauri_build::Attributes::new().app_manifest(tauri_build::AppManifest::new().commands(&[
+            "get_status",
+            "restart",
+            "install_dsh",
+            "open_log_directory",
+            "get_config",
+            "set_config",
+            "open_external",
+            "get_autostart",
+            "set_autostart",
+            "get_desktop_settings",
+            "set_desktop_settings",
+            "get_projects",
+            "add_project",
+            "update_project",
+            "remove_project",
+            "set_project_pinned",
+            "mark_project_read",
+            "archive_project_chats",
+            "create_project_worktree",
+            "show_project_in_finder",
+            "register_shortcut",
+            "unregister_shortcut",
+            "check_update",
+            "install_update",
+            "get_ui_theme",
+            "window_action",
+            "get_shortcuts",
+            "unregister_all_shortcuts",
+            "get_pending_deeplinks",
+            "ack_deeplink",
+            "request_notification_permission",
+            "update_dsh",
+            "open_paths",
+            "import_paths",
+        ]));
+    if let Err(error) = tauri_build::try_build(attributes) {
+        println!("{error}");
+        std::process::exit(1);
+    }
+}

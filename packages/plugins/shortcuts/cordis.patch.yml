@@ -1,0 +1,4 @@
+# 全局快捷键设置插件：向 profile 插入插件行
+- insert:
+    - id: shortcuts
+      name: '@dsh-desktop/plugin-shortcuts'

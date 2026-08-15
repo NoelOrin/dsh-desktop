@@ -1,0 +1,24 @@
+# Git hooks 配置（Lefthook）
+# pre-commit：对暂存文件做 Biome 格式化与 lint 自动修复
+# pre-push：typecheck + Rust fmt/clippy 检查
+
+pre-commit:
+  parallel: true
+  commands:
+    biome:
+      glob: "*.{ts,tsx,js,mjs,cjs,json}"
+      # npx 解析本地 node_modules 的 biome（npx 随 node 提供；本仓库 node 是硬依赖，hook 环境 PATH 精简也可用）
+      run: npx biome check --write --staged && git add -u
+
+pre-push:
+  parallel: false
+  commands:
+    typecheck:
+      # 用 npm workspaces 替代 yarn（Node 自带，无需单独安装 yarn）
+      run: npm run typecheck --workspaces --if-present
+    cargo-fmt:
+      # 未安装 cargo（Rust 工具链缺失）时跳过，避免无 cargo 环境无法推送
+      run: if command -v cargo >/dev/null 2>&1; then (cd apps/shell/src-tauri && cargo fmt --check); fi
+    cargo-clippy:
+      # 未安装 cargo 时跳过
+      run: if command -v cargo >/dev/null 2>&1; then (cd apps/shell/src-tauri && cargo clippy --all-targets); fi

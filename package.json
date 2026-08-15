@@ -4,18 +4,30 @@
   "version": "0.1.0",
   "packageManager": "yarn@4.17.1",
   "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "packages/plugins/*"
+  ],
   "scripts": {
-    "dev": "tauri dev",
-    "build": "tauri build",
-    "dev:web": "vite",
-    "build:web": "vite build",
-    "tauri": "tauri"
-  },
-  "dependencies": {
-    "@tauri-apps/api": "^2"
+    "dev": "yarn workspace @dsh-desktop/shell dev",
+    "build": "yarn workspace @dsh-desktop/shell build",
+    "dev:web": "yarn workspace @dsh-desktop/shell web:all",
+    "dev:shell": "node scripts/dev.mjs",
+    "dev:plugins": "node scripts/watch-plugins.mjs",
+    "build:web": "yarn workspace @dsh-desktop/shell web:build",
+    "tauri": "yarn workspace @dsh-desktop/shell tauri",
+    "lan-proxy": "node scripts/lan-proxy.mjs",
+    "build:plugins": "node scripts/build-plugins.mjs",
+    "typecheck": "yarn workspaces foreach -A --exclude dsh-desktop -p -t run typecheck",
+    "lint": "biome check",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "postinstall": "lefthook install"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2",
-    "vite": "^7.0.0"
+    "@biomejs/biome": "^2.5.8",
+    "lefthook": "^2.1.10",
+    "tsdown": "^0.22"
   }
 }

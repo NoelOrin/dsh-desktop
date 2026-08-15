@@ -75,11 +75,21 @@ fn is_managed_dsh_cmd(cmd: &[OsString], environ: &[OsString], marker: &str) -> b
 }
 
 #[cfg(unix)]
+/// 直接取进程组 id；sysinfo 的 `group_id()` 返回真实组 id（RGID），不能用于组信号。
+fn process_group_id(process: &Process) -> Option<i32> {
+    let pid = process.pid().as_u32() as i32;
+    if pid <= 0 {
+        return None;
+    }
+    let pgid = unsafe { libc::getpgid(pid) };
+    (pgid > 0).then_some(pgid)
+}
+
+#[cfg(unix)]
 fn terminate_process(process: &Process) {
-    if let Some(group) = process.group_id() {
-        let group_id = *group as i32;
-        if group_id > 0 {
-            unsafe { libc::kill(-group_id, libc::SIGTERM) };
+    if let Some(group) = process_group_id(process) {
+        let ok = unsafe { libc::kill(-group, libc::SIGTERM) } == 0;
+        if ok {
             return;
         }
     }
@@ -93,14 +103,13 @@ fn terminate_process(process: &Process) {
 
 #[cfg(unix)]
 fn force_terminate_process(process: &Process) {
-    if let Some(group) = process.group_id() {
-        let group_id = *group as i32;
-        if group_id > 0 {
-            unsafe { libc::kill(-group_id, libc::SIGKILL) };
+    if let Some(group) = process_group_id(process) {
+        let ok = unsafe { libc::kill(-group, libc::SIGKILL) } == 0;
+        if ok {
             return;
         }
     }
-    process.kill();
+    let _ = process.kill_with(sysinfo::Signal::Kill);
 }
 
 #[cfg(not(unix))]

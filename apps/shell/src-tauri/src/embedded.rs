@@ -107,6 +107,22 @@ fn assemble_inner(
             ));
             continue;
         };
+        if !is_valid_plugin_name(name) {
+            log(&format!(
+                "[desktop] 跳过插件 {}：package.json 的 name 不合法（{}）",
+                dir.display(),
+                name
+            ));
+            continue;
+        }
+        if !is_valid_plugin_id(id) {
+            log(&format!(
+                "[desktop] 跳过插件 {}：dshDesktop.id 不合法（{}）",
+                dir.display(),
+                id
+            ));
+            continue;
+        }
         let version = manifest
             .get("version")
             .and_then(|v| v.as_str())
@@ -133,9 +149,12 @@ fn assemble_inner(
             continue;
         }
 
-        // 原子重装：先拷到 <name>.tmp，再删旧目标，rename 上位
+        // 原子重装：先拷到 <name>.tmp，旧目标移到 <name>.backup，再 rename 上位；
+        // rename 失败时回滚旧目标，避免丢失旧版本。
         let tmp = PathBuf::from(format!("{}.tmp", target.display()));
+        let backup = PathBuf::from(format!("{}.backup", target.display()));
         let _ = fs::remove_dir_all(&tmp);
+        let _ = fs::remove_dir_all(&backup);
         if let Err(error) = copy_dir_recursive(&dir, &tmp) {
             log(&format!(
                 "[desktop] 装配插件 {name} 失败（复制到临时目录）：{error}"
@@ -144,21 +163,38 @@ fn assemble_inner(
             continue;
         }
         if target.exists() {
-            if let Err(error) = fs::remove_dir_all(&target) {
+            if let Err(error) = fs::rename(&target, &backup) {
                 log(&format!(
-                    "[desktop] 装配插件 {name} 失败（清理旧目标）：{error}"
+                    "[desktop] 装配插件 {name} 失败（备份旧目标）：{error}"
                 ));
                 let _ = fs::remove_dir_all(&tmp);
                 continue;
             }
         }
         if let Err(error) = fs::rename(&tmp, &target) {
-            log(&format!(
-                "[desktop] 装配插件 {name} 失败（重命名）：{error}"
-            ));
+            if backup.exists() {
+                match fs::rename(&backup, &target) {
+                    Ok(()) => {
+                        log(&format!(
+                            "[desktop] 装配插件 {name} 失败（重命名），已回滚旧目标：{error}"
+                        ));
+                    }
+                    Err(restore_error) => {
+                        log(&format!(
+                            "[desktop] 装配插件 {name} 失败（重命名），且回滚旧目标失败：{error}；回滚错误：{restore_error}"
+                        ));
+                    }
+                }
+            } else {
+                log(&format!(
+                    "[desktop] 装配插件 {name} 失败（重命名）：{error}"
+                ));
+            }
+            log(&format!("[desktop] 装配插件 {name} 失败，已清理临时目录"));
             let _ = fs::remove_dir_all(&tmp);
             continue;
         }
+        let _ = fs::remove_dir_all(&backup);
 
         log(&format!(
             "[desktop] 已装配插件 {name}@{version} → {}",
@@ -171,6 +207,31 @@ fn assemble_inner(
         });
     }
     mounted
+}
+
+/// npm 包名允许 scope 的 `/`，但其余部分必须是安全组件：禁止路径穿越、空组件、
+/// 反斜杠、控制字符与 YAML/overlay 特殊字符。
+fn is_valid_plugin_name(name: &str) -> bool {
+    if name.is_empty() || name.len() > 214 || name.starts_with('/') || name.ends_with('/') {
+        return false;
+    }
+    name.split('/').all(|component| {
+        !component.is_empty()
+            && component != "."
+            && component != ".."
+            && component
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '@' | '-' | '_' | '.'))
+    })
+}
+
+/// 插件 id 用于 overlay 的裸 YAML 标量，只允许常见安全字符。
+fn is_valid_plugin_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
 }
 
 /// 返回内嵌插件的 resources 根目录。
@@ -246,9 +307,11 @@ pub fn write_overlay(dir: &Path, mounted: &[MountedPlugin]) -> Option<PathBuf> {
                 content.push('\n');
             }
         } else {
+            let name = serde_yaml::to_string(&plugin.name).unwrap_or_else(|_| "''".to_string());
             content.push_str(&format!(
-                "- insert:\n    - id: {}\n      name: '{}'\n",
-                plugin.id, plugin.name
+                "- insert:\n    - id: {}\n      name: {}\n",
+                plugin.id,
+                name.trim()
             ));
         }
     }
@@ -305,6 +368,22 @@ mod tests {
     #[test]
     fn write_overlay_none_when_empty() {
         assert!(write_overlay(&temp_dir(), &[]).is_none());
+    }
+
+    #[test]
+    fn rejects_unsafe_plugin_names_and_ids() {
+        assert!(is_valid_plugin_name("@dsh-desktop/plugin-bridge"));
+        assert!(is_valid_plugin_name("plugin-shortcuts"));
+        assert!(!is_valid_plugin_name("../plugin-bridge"));
+        assert!(!is_valid_plugin_name("@dsh-desktop/../plugin-bridge"));
+        assert!(!is_valid_plugin_name("plugin\\bridge"));
+        assert!(!is_valid_plugin_name("plugin:bridge"));
+        assert!(!is_valid_plugin_name("plugin\nbridge"));
+        assert!(!is_valid_plugin_name(""));
+
+        assert!(is_valid_plugin_id("bridge"));
+        assert!(!is_valid_plugin_id("bridge:id"));
+        assert!(!is_valid_plugin_id("../bridge"));
     }
 
     #[cfg(debug_assertions)]

@@ -164,14 +164,16 @@ fn assemble_inner(
 
 /// 返回内嵌插件的 resources 根目录。
 ///
-/// 发布模式使用 Tauri 的应用资源目录；开发模式下 Tauri 的 `resource_dir()` 指向
+/// 发布模式下 Tauri 会把 `resources/**` 按相对路径复制到应用资源目录下的
+/// `resources/` 子目录，因此这里返回 `resource_dir/resources`，最终读取
+/// `resource_dir/resources/plugins`。开发模式下 Tauri 的 `resource_dir()` 指向
 /// `target/<profile>`，不会包含源码里的 `resources`，因此显式回退到
 /// `CARGO_MANIFEST_DIR/resources`，保证 `yarn dev` 也能装配内嵌插件。
 pub fn plugins_resource_dir(resource_dir: Option<&Path>) -> Option<PathBuf> {
     if cfg!(debug_assertions) {
         Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources"))
     } else {
-        resource_dir.map(Path::to_path_buf)
+        resource_dir.map(|dir| dir.join("resources"))
     }
 }
 

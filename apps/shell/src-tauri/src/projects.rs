@@ -214,7 +214,7 @@ mod tests {
             created_at: 1,
             updated_at: 2,
         };
-        save(&path, &[entry.clone()]).unwrap();
+        save(&path, std::slice::from_ref(&entry)).unwrap();
         assert_eq!(load(&path), vec![entry]);
         std::fs::remove_dir_all(&dir).ok();
     }

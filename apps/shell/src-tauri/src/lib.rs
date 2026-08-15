@@ -14,8 +14,10 @@ use std::time::{Duration, Instant};
 mod config;
 mod desktop_settings;
 mod embedded;
+mod inject;
 mod notifications;
 mod process;
+mod projects;
 mod theme;
 
 use config::DshConfig;
@@ -134,6 +136,7 @@ const BRIDGE_SCRIPT: &str = r#"(function () {
     shortcuts: {
       register: function (s, cb) {
         return invoke("register_shortcut", { shortcut: s }).then(function () {
+          if (typeof cb !== "function") return function () {};
           return listen("dsh-shortcut", function (e) { if (e.payload === s) cb(); });
         });
       },
@@ -142,6 +145,17 @@ const BRIDGE_SCRIPT: &str = r#"(function () {
       unregisterAll: function () { return invoke("unregister_all_shortcuts"); },
     },
     onShortcut: function (cb) { return listen("dsh-shortcut", cb); },
+    projects: {
+      list: function () { return invoke("get_projects"); },
+      add: function (path) { return invoke("add_project", { path: path }); },
+      update: function (project) { return invoke("update_project", { project: project }); },
+      remove: function (id) { return invoke("remove_project", { id: id }); },
+      setPinned: function (id, pinned) { return invoke("set_project_pinned", { id: id, pinned: pinned }); },
+      markRead: function (id) { return invoke("mark_project_read", { id: id }); },
+      setArchived: function (id, archived) { return invoke("archive_project_chats", { id: id, archived: archived }); },
+      createWorktree: function (id) { return invoke("create_project_worktree", { id: id }); },
+      showInFinder: function (id) { return invoke("show_project_in_finder", { id: id }); },
+    },
     update: {
       check: function () { return invoke("check_update"); },
       install: function () { return invoke("install_update"); },
@@ -187,6 +201,10 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
     style = document.createElement("style");
     style.id = STYLE_ID;
     style.textContent = [
+      '[data-slot="sidebar"], [data-slot^="sidebar"] {',
+      "  user-select: none;",
+      "  -webkit-user-select: none;",
+      "}",
       "#" + CONTROLS_ID + " {",
       "  position: fixed;",
       "  top: 4px;",
@@ -250,6 +268,421 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
     return true;
   }
 
+  // ── 侧边栏右键菜单 ─────────────────────────────────────────────
+  // 数据与动作经 @dsh-desktop/plugin-projects 的 loopback 端点提供，
+  // 菜单本体由本脚本渲染；定位只依赖稳定 data-slot / aria-label，不依赖哈希 class。
+  var SIDEBAR_MENU_ID = "dsh-shell-context-menu";
+  var SIDEBAR_TOAST_ID = "dsh-shell-context-toast";
+  var SIDEBAR_MENU_STYLE_ID = "dsh-shell-context-style";
+  var sidebarWorkspacesCache = null;
+  var sidebarWorkspacesCacheAt = 0;
+  var sidebarMenuDismiss = null;
+
+  function sidebarMenuStyleText() {
+    return [
+      "#" + SIDEBAR_MENU_ID + " {",
+      "  position: fixed;",
+      "  z-index: 2147483646;",
+      "  min-width: 200px;",
+      "  padding: 4px;",
+      "  border: 1px solid var(--dsw-alias-border-l3, rgba(0,0,0,0.12));",
+      "  border-radius: 8px;",
+      "  background: var(--dsw-alias-bg-layer-2, #ffffff);",
+      "  color: var(--dsw-alias-label-primary, #18181b);",
+      "  box-shadow: 0 8px 24px rgba(0,0,0,0.16);",
+      "  font-size: 13px;",
+      "  line-height: 18px;",
+      "}",
+      "#" + SIDEBAR_MENU_ID + " button {",
+      "  display: block;",
+      "  width: 100%;",
+      "  box-sizing: border-box;",
+      "  padding: 6px 10px;",
+      "  border: 0;",
+      "  border-radius: 6px;",
+      "  background: transparent;",
+      "  color: inherit;",
+      "  font: inherit;",
+      "  text-align: left;",
+      "  cursor: pointer;",
+      "}",
+      "#" + SIDEBAR_MENU_ID + " button:hover {",
+      "  background: var(--dsw-alias-interactive-bg-hover, rgba(0,0,0,0.06));",
+      "}",
+      "#" + SIDEBAR_MENU_ID + " button.danger { color: var(--dsw-alias-state-error-primary, #d92d20); }",
+      "#" + SIDEBAR_MENU_ID + " .sep { height: 1px; margin: 4px 6px; background: var(--dsw-alias-border-l1, rgba(0,0,0,0.08)); }",
+      "#" + SIDEBAR_MENU_ID + " .hint { padding: 6px 10px; color: var(--dsw-alias-label-tertiary, #71717a); }",
+      "#" + SIDEBAR_MENU_ID + " .edit { display: flex; flex-direction: column; gap: 8px; padding: 8px 10px; }",
+      "#" + SIDEBAR_MENU_ID + " .edit input {",
+      "  box-sizing: border-box;",
+      "  width: 100%;",
+      "  padding: 5px 8px;",
+      "  border: 1px solid var(--dsw-alias-border-l2, rgba(0,0,0,0.16));",
+      "  border-radius: 6px;",
+      "  background: var(--dsw-alias-bg-base, #ffffff);",
+      "  color: inherit;",
+      "  font: inherit;",
+      "}",
+      "#" + SIDEBAR_MENU_ID + " .edit .row { display: flex; gap: 8px; }",
+      "#" + SIDEBAR_MENU_ID + " .edit .row button { flex: 1; text-align: center; }",
+      "#" + SIDEBAR_TOAST_ID + " {",
+      "  position: fixed;",
+      "  top: 12px;",
+      "  left: 50%;",
+      "  transform: translateX(-50%);",
+      "  z-index: 2147483646;",
+      "  padding: 8px 14px;",
+      "  border-radius: 8px;",
+      "  background: var(--dsw-alias-bg-layer-2, #18181b);",
+      "  color: var(--dsw-alias-label-primary, #ffffff);",
+      "  box-shadow: 0 6px 18px rgba(0,0,0,0.18);",
+      "  font-size: 13px;",
+      "  line-height: 18px;",
+      "  opacity: 0;",
+      "  transition: opacity 0.18s ease;",
+      "  pointer-events: none;",
+      "}"
+    ].join("\n");
+  }
+
+  function ensureSidebarMenuStyle() {
+    var style = document.getElementById(SIDEBAR_MENU_STYLE_ID);
+    if (style) return;
+    style = document.createElement("style");
+    style.id = SIDEBAR_MENU_STYLE_ID;
+    style.textContent = sidebarMenuStyleText();
+    (document.head || document.documentElement).appendChild(style);
+  }
+
+  function sidebarToast(text) {
+    var toast = document.getElementById(SIDEBAR_TOAST_ID);
+    if (!toast) {
+      toast = document.createElement("div");
+      toast.id = SIDEBAR_TOAST_ID;
+      (document.body || document.documentElement).appendChild(toast);
+    }
+    toast.textContent = text;
+    requestAnimationFrame(function () {
+      toast.style.opacity = "1";
+    });
+    window.setTimeout(function () {
+      toast.style.opacity = "0";
+    }, 2400);
+  }
+
+  function hideSidebarMenu() {
+    var menu = document.getElementById(SIDEBAR_MENU_ID);
+    if (menu) menu.remove();
+    if (sidebarMenuDismiss) {
+      sidebarMenuDismiss();
+      sidebarMenuDismiss = null;
+    }
+  }
+
+  function bindSidebarMenuDismiss() {
+    var onPointerDown = function (event) {
+      var menu = document.getElementById(SIDEBAR_MENU_ID);
+      if (menu && menu.contains(event.target)) return;
+      hideSidebarMenu();
+    };
+    var onKeyDown = function (event) {
+      if (event.key === "Escape") hideSidebarMenu();
+    };
+    var onViewportChange = function () {
+      hideSidebarMenu();
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("keydown", onKeyDown);
+    window.addEventListener("scroll", onViewportChange, true);
+    window.addEventListener("resize", onViewportChange);
+    return function () {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("scroll", onViewportChange, true);
+      window.removeEventListener("resize", onViewportChange);
+    };
+  }
+
+  function loadSidebarWorkspaces() {
+    var now = Date.now();
+    if (sidebarWorkspacesCache && now - sidebarWorkspacesCacheAt < 5000) {
+      return Promise.resolve(sidebarWorkspacesCache);
+    }
+    return fetch("/dsh-desktop/workspaces", { headers: { accept: "application/json" } })
+      .then(function (response) {
+        if (!response.ok) throw new Error("HTTP " + response.status);
+        return response.json();
+      })
+      .then(function (data) {
+        var list = Array.isArray(data && data.workspaces) ? data.workspaces : [];
+        sidebarWorkspacesCache = list;
+        sidebarWorkspacesCacheAt = Date.now();
+        return list;
+      });
+  }
+
+  function invalidateSidebarWorkspaces() {
+    sidebarWorkspacesCache = null;
+    sidebarWorkspacesCacheAt = 0;
+  }
+
+  function postWorkspaceAction(id, action, extra) {
+    var payload = { id: id, action: action };
+    if (extra) {
+      for (var key in extra) payload[key] = extra[key];
+    }
+    return fetch("/dsh-desktop/workspaces/action", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload)
+    }).then(function (response) {
+      return response.json();
+    });
+  }
+
+  function findSidebarWorkspaceRow(target) {
+    if (!target || typeof target.closest !== "function") return null;
+    var row = target.closest('[data-slot="sidebar.workspaces"] [role="treeitem"][aria-expanded]');
+    return row instanceof HTMLElement ? row : null;
+  }
+
+  function findSidebarWorkspaceName(target) {
+    var row = findSidebarWorkspaceRow(target);
+    if (!row) return null;
+    var node = row;
+    while (node && node !== document.body && node !== document.documentElement) {
+      var button = node.querySelector && node.querySelector('[role="treeitem"] button[aria-label^="工作区"]');
+      var aria = button && button.getAttribute("aria-label");
+      var match = aria && aria.match(/^工作区“(.+)”的操作$/);
+      if (match) return match[1];
+      node = node.parentElement;
+    }
+    return null;
+  }
+
+  function findSidebarSession(target) {
+    if (!target || typeof target.closest !== "function") return null;
+    var row = target.closest('[data-slot="sidebar.workspaces"] [role="treeitem"][aria-selected]');
+    if (!(row instanceof HTMLElement)) return null;
+    var button = row.querySelector && row.querySelector('button[aria-label^="会话"]');
+    return button instanceof HTMLElement ? { row: row, button: button } : null;
+  }
+
+  function openSidebarSessionMenu(session) {
+    hideSidebarMenu();
+    if (session && session.button) session.button.click();
+  }
+
+  function runSidebarMenuAction(workspace, action, menu) {
+    if (action === "edit") {
+      renderSidebarMenuEdit(workspace, menu);
+      return;
+    }
+    if (action === "remove") {
+      renderSidebarMenuRemove(workspace, menu);
+      return;
+    }
+    postWorkspaceAction(workspace.id, action)
+      .then(function (result) {
+        if (!result || !result.ok) {
+          sidebarToast((result && result.error) || "操作失败");
+          return;
+        }
+        if (action === "pin") {
+          sidebarToast("已置顶");
+        } else if (action === "unpin") {
+          sidebarToast("已取消置顶");
+        } else if (action === "finder") {
+          if (window.__DSH_DESKTOP__ && window.__DSH_DESKTOP__.openExternal && result.path) {
+            window.__DSH_DESKTOP__.openExternal(result.path).catch(function (error) {
+              sidebarToast("打开目录失败: " + error);
+            });
+          } else {
+            sidebarToast("桌面桥接不可用");
+          }
+        } else if (action === "worktree") {
+          sidebarToast("已创建永久工作树: " + result.target);
+        } else if (action === "archive") {
+          sidebarToast("聊天已归档");
+        }
+        invalidateSidebarWorkspaces();
+        hideSidebarMenu();
+      })
+      .catch(function (error) {
+        sidebarToast("操作失败: " + error.message);
+        hideSidebarMenu();
+      });
+  }
+
+  function renderSidebarMenuEdit(workspace, menu) {
+    menu.textContent = "";
+    var box = document.createElement("div");
+    box.className = "edit";
+    var input = document.createElement("input");
+    input.type = "text";
+    input.value = workspace.name;
+    input.setAttribute("aria-label", "项目名称");
+    var row = document.createElement("div");
+    row.className = "row";
+    var save = document.createElement("button");
+    save.type = "button";
+    save.textContent = "保存";
+    save.addEventListener("click", function () {
+      var name = input.value.trim();
+      if (!name) {
+        input.focus();
+        return;
+      }
+      postWorkspaceAction(workspace.id, "edit", { name: name })
+        .then(function (result) {
+          if (!result || !result.ok) {
+            sidebarToast((result && result.error) || "保存失败");
+            return;
+          }
+          sidebarToast("已保存");
+          invalidateSidebarWorkspaces();
+          hideSidebarMenu();
+        })
+        .catch(function (error) {
+          sidebarToast("保存失败: " + error.message);
+        });
+    });
+    var cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.textContent = "取消";
+    cancel.addEventListener("click", hideSidebarMenu);
+    row.appendChild(save);
+    row.appendChild(cancel);
+    box.appendChild(input);
+    box.appendChild(row);
+    menu.appendChild(box);
+    input.focus();
+    input.select();
+  }
+
+  function renderSidebarMenuRemove(workspace, menu) {
+    menu.textContent = "";
+    var hint = document.createElement("div");
+    hint.className = "hint";
+    hint.textContent = "确认移除“" + workspace.name + "”？仅移出侧边栏，不删除磁盘目录。";
+    var row = document.createElement("div");
+    row.className = "edit row";
+    var remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "danger";
+    remove.textContent = "移除";
+    remove.addEventListener("click", function () {
+      postWorkspaceAction(workspace.id, "remove")
+        .then(function (result) {
+          if (!result || !result.ok) {
+            sidebarToast((result && result.error) || "移除失败");
+            return;
+          }
+          sidebarToast("已移除");
+          invalidateSidebarWorkspaces();
+          hideSidebarMenu();
+        })
+        .catch(function (error) {
+          sidebarToast("移除失败: " + error.message);
+        });
+    });
+    var cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.textContent = "取消";
+    cancel.addEventListener("click", hideSidebarMenu);
+    row.appendChild(remove);
+    row.appendChild(cancel);
+    menu.appendChild(hint);
+    menu.appendChild(row);
+  }
+
+  function buildSidebarMenu(workspace, x, y) {
+    var menu = document.createElement("div");
+    menu.id = SIDEBAR_MENU_ID;
+    var items = [
+      { id: workspace.pinned ? "unpin" : "pin", label: workspace.pinned ? "取消置顶" : "置顶项目" },
+      { id: "finder", label: "在 Finder 中显示" },
+      { id: "worktree", label: "创建永久工作树" },
+      { id: "edit", label: "编辑项目" },
+      { type: "sep" },
+      { id: "archive", label: "归档聊天" },
+      { id: "remove", label: "移除本地项目", danger: true }
+    ];
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i];
+      if (item.type === "sep") {
+        var sep = document.createElement("div");
+        sep.className = "sep";
+        menu.appendChild(sep);
+        continue;
+      }
+      var button = document.createElement("button");
+      button.type = "button";
+      button.textContent = item.label;
+      if (item.danger) button.className = "danger";
+      button.addEventListener("click", function (entry) {
+        return function () {
+          runSidebarMenuAction(workspace, entry.id, menu);
+        };
+      }(item));
+      menu.appendChild(button);
+    }
+    (document.body || document.documentElement).appendChild(menu);
+    var MARGIN = 8;
+    var rect = menu.getBoundingClientRect();
+    var left = Math.min(Math.max(x, MARGIN), window.innerWidth - rect.width - MARGIN);
+    var top = Math.min(Math.max(y, MARGIN), window.innerHeight - rect.height - MARGIN);
+    menu.style.left = Math.max(left, 0) + "px";
+    menu.style.top = Math.max(top, 0) + "px";
+    sidebarMenuDismiss = bindSidebarMenuDismiss();
+  }
+
+  function openSidebarMenu(name, x, y) {
+    ensureSidebarMenuStyle();
+    loadSidebarWorkspaces()
+      .then(function (workspaces) {
+        var workspace = null;
+        for (var i = 0; i < workspaces.length; i++) {
+          if (workspaces[i].name === name) {
+            workspace = workspaces[i];
+            break;
+          }
+        }
+        if (!workspace) {
+          sidebarToast("未找到工作区“" + name + "”");
+          return;
+        }
+        buildSidebarMenu(workspace, x, y);
+      })
+      .catch(function (error) {
+        sidebarToast("侧边栏菜单不可用: " + error.message);
+      });
+  }
+
+  // 侧边栏区域（会话树 / 工作区行）：禁用系统原生右键菜单。
+  // 工作区行打开壳侧自定义菜单；会话行复用 dsh 自带的行内会话菜单，避免两套业务逻辑混在一起。
+  function installSidebarContextMenu() {
+    document.addEventListener("contextmenu", function (event) {
+      var target = event.target;
+      var inSidebar = false;
+      var root = findSidebarRoot();
+      if (root && root.contains(target)) {
+        inSidebar = true;
+      } else if (target && typeof target.closest === "function" && target.closest('[data-slot^="sidebar"]')) {
+        inSidebar = true;
+      }
+      if (!inSidebar) return;
+      event.preventDefault();
+      var session = findSidebarSession(target);
+      if (session) {
+        openSidebarSessionMenu(session);
+        return;
+      }
+      var name = findSidebarWorkspaceName(target);
+      if (name) openSidebarMenu(name, event.clientX, event.clientY);
+    }, true);
+  }
+
   function findTopBar() {
     var buttons = document.querySelectorAll("button");
     for (var i = 0; i < buttons.length; i++) {
@@ -308,6 +741,7 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
   }
 
   function install() {
+    installSidebarContextMenu();
     ensureStyle();
     var host = PLATFORM === "macos" ? null : ensureControls();
     var bar = findTopBar();
@@ -427,6 +861,7 @@ struct AppState {
     log_dir: PathBuf,
     config_path: PathBuf,
     desktop_settings_path: PathBuf,
+    projects_path: PathBuf,
     /// 应用是否正在退出（托盘"退出"置 true，用于关闭到托盘时区分真正退出）。
     exiting: Arc<AtomicBool>,
     /// --autostart + settings startupMode=tray 时隐藏主窗口，直到用户从托盘唤起。
@@ -554,9 +989,8 @@ pub fn run() {
         ))
         // 向 dsh web（loopback 远程页面）注入受控桥接 window.__DSH_DESKTOP__
         .on_page_load(|webview, payload| {
-            if payload.event() == PageLoadEvent::Finished && is_dsh_web_url(payload.url()) {
-                let _ = webview.eval(BRIDGE_SCRIPT);
-                let _ = webview.eval(HARNESS_CHROME_SCRIPT);
+            if payload.event() == PageLoadEvent::Finished {
+                inject::inject_dsh_web(&webview, payload.url());
             }
         })
         .setup(move |app| {
@@ -567,6 +1001,7 @@ pub fn run() {
             let log_path = log_dir.join("dsh.log");
             let config_path = app_data.join("config.json");
             let desktop_settings_path = app_data.join("desktop-settings.json");
+            let projects_path = app_data.join("projects.json");
 
             let inner = Arc::new(Mutex::new(Inner {
                 log_dir: Some(log_dir.clone()),
@@ -631,6 +1066,7 @@ pub fn run() {
                 log_dir,
                 config_path,
                 desktop_settings_path,
+                projects_path,
                 exiting: exiting.clone(),
                 start_in_tray: start_in_tray.clone(),
                 shortcuts: Arc::new(Mutex::new(HashMap::new())),
@@ -747,6 +1183,15 @@ pub fn run() {
             set_autostart,
             get_desktop_settings,
             set_desktop_settings,
+            get_projects,
+            add_project,
+            update_project,
+            remove_project,
+            set_project_pinned,
+            mark_project_read,
+            archive_project_chats,
+            create_project_worktree,
+            show_project_in_finder,
             register_shortcut,
             unregister_shortcut,
             get_shortcuts,
@@ -941,11 +1386,6 @@ struct TrayState {
     open_browser: tauri::menu::MenuItem<tauri::Wry>,
     stop_dsh: tauri::menu::MenuItem<tauri::Wry>,
     restart_dsh: tauri::menu::MenuItem<tauri::Wry>,
-}
-
-/// 判断是否为 dsh web 的 loopback 页面（用于桥接注入）。
-fn is_dsh_web_url(url: &tauri::Url) -> bool {
-    matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "::1"))
 }
 
 impl DshManager {
@@ -1638,6 +2078,174 @@ fn set_desktop_settings(
         }
     }
     desktop_settings::save_desktop_settings(&state.desktop_settings_path, &settings)
+}
+
+/// 读取本地项目列表（项目列表与右键菜单状态的唯一状态源）。
+#[tauri::command]
+fn get_projects(state: State<AppState>) -> Vec<projects::ProjectEntry> {
+    projects::load(&state.projects_path)
+}
+
+/// 把本地目录加入项目列表；名称默认取目录名，路径重复时拒绝。
+#[tauri::command]
+fn add_project(state: State<AppState>, path: String) -> Result<projects::ProjectEntry, String> {
+    let dir = PathBuf::from(&path);
+    if !dir.is_dir() {
+        return Err(format!("目录不存在: {path}"));
+    }
+    let mut entries = projects::load(&state.projects_path);
+    if entries.iter().any(|p| p.path == path) {
+        return Err("项目已在列表中".to_string());
+    }
+    let now = projects::now_millis();
+    let entry = projects::ProjectEntry {
+        id: projects::make_id(&path),
+        name: dir
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.clone()),
+        path,
+        pinned: false,
+        archived_chats: false,
+        unread_chats: 0,
+        read_at: None,
+        created_at: now,
+        updated_at: now,
+    };
+    entries.push(entry.clone());
+    projects::save(&state.projects_path, &entries)?;
+    Ok(entry)
+}
+
+/// 编辑项目（保留置顶 / 聊天状态等字段，只更新名称与路径）。
+#[tauri::command]
+fn update_project(
+    state: State<AppState>,
+    project: projects::ProjectEntry,
+) -> Result<projects::ProjectEntry, String> {
+    if project.name.trim().is_empty() {
+        return Err("项目名称不能为空".to_string());
+    }
+    let mut entries = projects::load(&state.projects_path);
+    let Some(found) = entries.iter_mut().find(|p| p.id == project.id) else {
+        return Err("项目不存在".to_string());
+    };
+    found.name = project.name.trim().to_string();
+    found.path = project.path;
+    found.updated_at = projects::now_millis();
+    let entry = found.clone();
+    projects::save(&state.projects_path, &entries)?;
+    Ok(entry)
+}
+
+/// 从项目列表移除（不删除磁盘上的目录）。
+#[tauri::command]
+fn remove_project(state: State<AppState>, id: String) -> Result<(), String> {
+    let mut entries = projects::load(&state.projects_path);
+    let before = entries.len();
+    entries.retain(|p| p.id != id);
+    if entries.len() == before {
+        return Err("项目不存在".to_string());
+    }
+    projects::save(&state.projects_path, &entries)
+}
+
+fn mutate_project(
+    state: &AppState,
+    id: &str,
+    apply: impl FnOnce(&mut projects::ProjectEntry),
+) -> Result<projects::ProjectEntry, String> {
+    let mut entries = projects::load(&state.projects_path);
+    let Some(entry) = entries.iter_mut().find(|p| p.id == id) else {
+        return Err("项目不存在".to_string());
+    };
+    apply(entry);
+    entry.updated_at = projects::now_millis();
+    let result = entry.clone();
+    projects::save(&state.projects_path, &entries)?;
+    Ok(result)
+}
+
+/// 置顶 / 取消置顶项目。
+#[tauri::command]
+fn set_project_pinned(
+    state: State<AppState>,
+    id: String,
+    pinned: bool,
+) -> Result<projects::ProjectEntry, String> {
+    mutate_project(&state, &id, |entry| entry.pinned = pinned)
+}
+
+/// 全部标为已读：清空未读计数并记录时间。
+#[tauri::command]
+fn mark_project_read(state: State<AppState>, id: String) -> Result<projects::ProjectEntry, String> {
+    mutate_project(&state, &id, |entry| {
+        entry.unread_chats = 0;
+        entry.read_at = Some(projects::now_millis());
+    })
+}
+
+/// 归档 / 恢复该项目下的会话聊天。
+#[tauri::command]
+fn archive_project_chats(
+    state: State<AppState>,
+    id: String,
+    archived: bool,
+) -> Result<projects::ProjectEntry, String> {
+    mutate_project(&state, &id, |entry| entry.archived_chats = archived)
+}
+
+/// 在项目目录旁创建永久 git 工作树，并把工作树作为新项目加入列表。
+#[tauri::command]
+fn create_project_worktree(
+    state: State<AppState>,
+    id: String,
+) -> Result<projects::ProjectWorktreeResult, String> {
+    let entries = projects::load(&state.projects_path);
+    let project = entries
+        .iter()
+        .find(|p| p.id == id)
+        .cloned()
+        .ok_or_else(|| "项目不存在".to_string())?;
+    let (target, branch) = projects::create_worktree(&project, None)?;
+
+    let mut entries = projects::load(&state.projects_path);
+    if entries.iter().any(|p| p.path == target.to_string_lossy()) {
+        return Err("工作树已在项目列表中".to_string());
+    }
+    let now = projects::now_millis();
+    let entry = projects::ProjectEntry {
+        id: projects::make_id(&target.to_string_lossy()),
+        name: target
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        path: target.to_string_lossy().into_owned(),
+        pinned: false,
+        archived_chats: false,
+        unread_chats: 0,
+        read_at: None,
+        created_at: now,
+        updated_at: now,
+    };
+    entries.push(entry.clone());
+    projects::save(&state.projects_path, &entries)?;
+    Ok(projects::ProjectWorktreeResult {
+        entry,
+        target: target.to_string_lossy().into_owned(),
+        branch,
+    })
+}
+
+/// 在系统文件管理器中定位项目目录。
+#[tauri::command]
+fn show_project_in_finder(state: State<AppState>, id: String) -> Result<(), String> {
+    let entries = projects::load(&state.projects_path);
+    let project = entries
+        .iter()
+        .find(|p| p.id == id)
+        .ok_or_else(|| "项目不存在".to_string())?;
+    projects::reveal_in_finder(&project.path)
 }
 
 /// 保存快捷键注册表到 config.json（保留其余配置字段）。

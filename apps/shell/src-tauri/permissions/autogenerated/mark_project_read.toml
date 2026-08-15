@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-mark-project-read"
+description = "Enables the mark_project_read command without any pre-configured scope."
+commands.allow = ["mark_project_read"]
+
+[[permission]]
+identifier = "deny-mark-project-read"
+description = "Denies the mark_project_read command without any pre-configured scope."
+commands.deny = ["mark_project_read"]

@@ -62,6 +62,28 @@ export interface DesktopSettings {
   startup_mode: StartupMode;
 }
 
+/** 壳侧维护的本地项目条目（项目列表与右键菜单操作的唯一状态源）。 */
+export interface ProjectEntry {
+  id: string;
+  name: string;
+  path: string;
+  pinned: boolean;
+  /** 该项目下的会话聊天是否已归档。 */
+  archived_chats: boolean;
+  unread_chats: number;
+  /** 最近一次“全部标为已读”的时间（unix 毫秒）。 */
+  read_at: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
+/** 创建永久工作树的结果：工作树目录已作为新项目加入列表。 */
+export interface ProjectWorktreeResult {
+  entry: ProjectEntry;
+  target: string;
+  branch: string;
+}
+
 export interface UiThemeTokens {
   bg: string;
   fg: string;
@@ -97,6 +119,15 @@ export const COMMANDS = {
   windowAction: "window_action",
   getDesktopSettings: "get_desktop_settings",
   setDesktopSettings: "set_desktop_settings",
+  getProjects: "get_projects",
+  addProject: "add_project",
+  updateProject: "update_project",
+  removeProject: "remove_project",
+  setProjectPinned: "set_project_pinned",
+  markProjectRead: "mark_project_read",
+  archiveProjectChats: "archive_project_chats",
+  createProjectWorktree: "create_project_worktree",
+  showProjectInFinder: "show_project_in_finder",
   getShortcuts: "get_shortcuts",
   unregisterAllShortcuts: "unregister_all_shortcuts",
   getPendingDeepLinks: "get_pending_deeplinks",

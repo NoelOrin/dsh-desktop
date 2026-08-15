@@ -4,6 +4,8 @@ import type {
   DshConfig,
   FileDropPayload,
   NotificationActionPayload,
+  ProjectEntry,
+  ProjectWorktreeResult,
   RuntimeSnapshot,
 } from "@dsh-desktop/contracts";
 
@@ -72,12 +74,23 @@ export interface DshDesktopBridge {
     set(settings: DesktopSettings): Promise<void>;
   };
   shortcuts: {
-    register(shortcut: string, cb: () => void): Promise<void>;
+    register(shortcut: string, cb?: () => void): Promise<() => void>;
     unregister(shortcut: string): Promise<void>;
     list(): Promise<Array<{ shortcut: string; registered: boolean }>>;
     unregisterAll(): Promise<void>;
   };
   onShortcut(cb: (shortcut: string) => void): Promise<() => void>;
+  projects: {
+    list(): Promise<ProjectEntry[]>;
+    add(path: string): Promise<ProjectEntry>;
+    update(project: ProjectEntry): Promise<ProjectEntry>;
+    remove(id: string): Promise<void>;
+    setPinned(id: string, pinned: boolean): Promise<ProjectEntry>;
+    markRead(id: string): Promise<ProjectEntry>;
+    setArchived(id: string, archived: boolean): Promise<ProjectEntry>;
+    createWorktree(id: string): Promise<ProjectWorktreeResult>;
+    showInFinder(id: string): Promise<void>;
+  };
   update: {
     check(): Promise<string | null>;
     /** 静默下载最新版安装包到本地，返回下载路径（由用户手动运行安装）。 */

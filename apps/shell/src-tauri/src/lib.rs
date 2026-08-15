@@ -1,19 +1,20 @@
 use std::collections::{HashMap, VecDeque};
 use std::fs::OpenOptions;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
 mod config;
 mod desktop_settings;
 mod embedded;
+mod host_lifecycle;
 mod inject;
 mod notifications;
 mod process;
@@ -21,13 +22,14 @@ mod projects;
 mod theme;
 
 use config::DshConfig;
+use host_lifecycle::{HostLifecycle, RestartDecision};
 use theme::{read_ui_theme_section, resolve_ui_theme, UiThemeSnapshot};
 
 use serde::Serialize;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::webview::PageLoadEvent;
-use tauri::{AppHandle, Emitter, Manager as _, RunEvent, State, WindowEvent};
+use tauri::webview::{NewWindowResponse, PageLoadEvent};
+use tauri::{AppHandle, Emitter, Manager as _, RunEvent, State, WebviewUrl, WindowEvent};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_deep_link::DeepLinkExt;
@@ -42,7 +44,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(250);
 const MAX_LOGS: usize = 500;
 const MAX_LOG_BYTES: u64 = 2 * 1024 * 1024;
 /// 子进程意外退出后的自动重启上限（看门狗，超过则转 failed）。
-const MAX_AUTO_RESTARTS: u32 = 3;
+const MAX_AUTO_RESTARTS: u32 = host_lifecycle::DEFAULT_AUTO_RESTART_LIMIT;
 /// 优雅退出：SIGTERM 后等待子进程退出的宽限期。
 const GRACE_PERIOD: Duration = Duration::from_secs(2);
 
@@ -56,6 +58,67 @@ const TRAY_STOP_DSH: &str = "tray-stop-dsh";
 const TRAY_RESTART_DSH: &str = "tray-restart-dsh";
 const TRAY_SHOW_MAIN: &str = "tray-show-main";
 const TRAY_QUIT: &str = "tray-quit";
+
+/// 允许 main 窗口导航到的 origin：Tauri 本地页面、开发服务器与 dsh loopback。
+fn is_shell_url(url: &tauri::Url) -> bool {
+    if url.scheme() == "tauri" {
+        return true;
+    }
+    if url.scheme() != "http" {
+        return false;
+    }
+    matches!(
+        url.host_str(),
+        Some("127.0.0.1" | "localhost" | "::1" | "[::1]" | "0:0:0:0:0:0:0:1" | "[0:0:0:0:0:0:0:1]")
+    )
+}
+
+fn is_external_url(url: &tauri::Url) -> bool {
+    matches!(url.scheme(), "http" | "https")
+}
+
+/// 动态创建 main 窗口，使导航/新窗口策略在首次加载前就生效。
+fn create_main_window<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
+    let mut builder =
+        tauri::WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+            .title("DSH Desktop")
+            .inner_size(1280.0, 860.0)
+            .min_inner_size(480.0, 600.0)
+            .center()
+            .resizable(true)
+            .visible(true)
+            .background_color(tauri::window::Color(245, 246, 250, 255))
+            .on_navigation(|url| {
+                if is_shell_url(url) {
+                    return true;
+                }
+                if is_external_url(url) {
+                    let _ = open_with_system(url.as_str());
+                }
+                false
+            })
+            .on_new_window(|url, _features| {
+                if is_external_url(&url) {
+                    let _ = open_with_system(url.as_str());
+                }
+                NewWindowResponse::Deny
+            });
+
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .decorations(true)
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        builder = builder.decorations(false);
+    }
+
+    builder.build()?;
+    Ok(())
+}
 
 /// 注入到 dsh web（loopback 远程页面）的桥接脚本，定义 window.__DSH_DESKTOP__。
 /// 仅暴露最小能力切片（见 capabilities/bridge.json 的 remote 白名单）。
@@ -911,6 +974,7 @@ enum ManagerMessage {
     Shutdown,
     Ready { generation: u64, url: String },
     ReadyTimeout { generation: u64 },
+    ReadinessError { generation: u64, error: String },
     InstallFinished { result: Result<(), String> },
     Unhealthy { generation: u64 },
 }
@@ -921,9 +985,7 @@ struct DshManager {
     tx: Sender<ManagerMessage>,
     rx: Receiver<ManagerMessage>,
     child: Option<Child>,
-    generation: u64,
-    /// 连续自动重启计数（看门狗），手动 Start 时清零。
-    auto_restarts: u32,
+    lifecycle: HostLifecycle,
     log_path: PathBuf,
     config_path: PathBuf,
     start_in_tray: Arc<AtomicBool>,
@@ -990,10 +1052,12 @@ pub fn run() {
         // 向 dsh web（loopback 远程页面）注入受控桥接 window.__DSH_DESKTOP__
         .on_page_load(|webview, payload| {
             if payload.event() == PageLoadEvent::Finished {
-                inject::inject_dsh_web(&webview, payload.url());
+                inject::inject_dsh_web(webview, payload.url());
             }
         })
         .setup(move |app| {
+            create_main_window(app)?;
+
             let app_handle = app.handle().clone();
             let app_data = app_handle.path().app_data_dir()?;
             let log_dir = app_data.join("logs");
@@ -1049,8 +1113,7 @@ pub fn run() {
                 tx: tx.clone(),
                 rx,
                 child: None,
-                generation: 0,
-                auto_restarts: 0,
+                lifecycle: HostLifecycle::new(MAX_AUTO_RESTARTS),
                 log_path,
                 config_path: config_path.clone(),
                 start_in_tray: start_in_tray.clone(),
@@ -1393,7 +1456,7 @@ impl DshManager {
         loop {
             match self.rx.recv_timeout(POLL_INTERVAL) {
                 Ok(ManagerMessage::Start) => {
-                    self.auto_restarts = 0;
+                    self.lifecycle.reset_restarts();
                     self.handle_start();
                 }
                 Ok(ManagerMessage::Stop) => {
@@ -1405,7 +1468,7 @@ impl DshManager {
                     break;
                 }
                 Ok(ManagerMessage::Ready { generation, url }) => {
-                    if generation == self.generation {
+                    if self.lifecycle.accept_ready(generation) {
                         self.set_phase(
                             RuntimePhase::Ready,
                             format!("DSH 已就绪: {url}"),
@@ -1426,40 +1489,44 @@ impl DshManager {
                     }
                 }
                 Ok(ManagerMessage::ReadyTimeout { generation }) => {
-                    if generation == self.generation {
+                    if self.lifecycle.is_current(generation) {
                         self.fail("DSH 未输出 URL line，等待超时".to_string());
+                    }
+                }
+                Ok(ManagerMessage::ReadinessError { generation, error }) => {
+                    if self.lifecycle.is_current(generation) {
+                        self.fail(format!("DSH 就绪输出无效: {error}"));
                     }
                 }
                 Ok(ManagerMessage::InstallFinished { result }) => match result {
                     Ok(()) => {
                         self.append_log("[desktop] DSH 安装完成");
                         self.notify("DSH 安装完成", "DeepSeek Harness 安装成功，正在启动…");
-                        self.auto_restarts = 0;
+                        self.lifecycle.reset_restarts();
                         self.handle_start();
                     }
                     Err(error) => self.fail(format!("DSH 安装失败: {error}")),
                 },
                 Ok(ManagerMessage::Unhealthy { generation }) => {
-                    if generation == self.generation {
+                    if self.lifecycle.is_current(generation) {
                         self.fail("DSH 健康检查连续失败".to_string());
                     }
                 }
                 Err(RecvTimeoutError::Timeout) => {
                     if let Some(exit) = self.take_exit() {
                         // 看门狗：运行中（starting/ready）意外退出时自动重启，超过上限才转 failed
-                        let running = matches!(
-                            self.inner.lock().unwrap().phase,
-                            RuntimePhase::Starting | RuntimePhase::Ready
-                        );
-                        if running && self.auto_restarts < MAX_AUTO_RESTARTS {
-                            self.auto_restarts += 1;
-                            self.append_log(&format!(
-                                "[desktop] DSH 进程意外退出 ({exit})，{}/{} 自动重启",
-                                self.auto_restarts, MAX_AUTO_RESTARTS
-                            ));
-                            self.handle_start();
-                        } else {
-                            self.fail(format!("DSH 进程已退出 ({exit})"));
+                        let generation = self.lifecycle.generation();
+                        match self.lifecycle.on_unexpected_exit(generation) {
+                            RestartDecision::Ignore => {}
+                            RestartDecision::Restart { attempt, limit } => {
+                                self.append_log(&format!(
+                                    "[desktop] DSH 进程意外退出 ({exit})，{attempt}/{limit} 自动重启"
+                                ));
+                                self.handle_start();
+                            }
+                            RestartDecision::Fail => {
+                                self.fail(format!("DSH 进程已退出 ({exit})"));
+                            }
                         }
                     }
                 }
@@ -1492,9 +1559,12 @@ impl DshManager {
         };
 
         self.update_detection(true, true);
-        let version = Command::new(&node)
+        let mut version_cmd = Command::new(&node);
+        version_cmd
+            .env("PATH", effective_path())
             .arg(&entry)
-            .arg("--version")
+            .arg("--version");
+        let version = version_cmd
             .output()
             .ok()
             .and_then(|output| {
@@ -1521,8 +1591,7 @@ impl DshManager {
 
         let workspace = std::env::var("HOME").unwrap_or_else(|_| ".".into());
 
-        self.generation += 1;
-        let generation = self.generation;
+        let generation = self.lifecycle.begin_start();
 
         // 装配内嵌插件（best-effort）并生成 --patch overlay：任何失败只记日志，不影响 dsh 启动
         let mut log = |line: &str| self.append_log(line);
@@ -1551,6 +1620,7 @@ impl DshManager {
         ]);
         cmd.arg(&entry)
             .args(&args)
+            .env("PATH", effective_path())
             .env("NO_COLOR", "1")
             .current_dir(&workspace)
             .stdin(Stdio::null())
@@ -1614,7 +1684,7 @@ impl DshManager {
     /// 优雅停止子进程：unix 下先 SIGTERM 等宽限期，再 SIGKILL；Windows 直接 TerminateProcess。
     fn cleanup_child(&mut self) {
         if let Some(mut child) = self.child.take() {
-            self.generation += 1;
+            self.lifecycle.invalidate();
             let pid = child.id() as i32;
             #[cfg(unix)]
             {
@@ -1674,13 +1744,25 @@ impl DshManager {
         let log_path = self.log_path.clone();
         let tx = self.tx.clone();
         thread::spawn(move || {
+            let mut parser = process::ReadinessParser::new();
             let reader = BufReader::new(stream);
             for line in reader.lines().map_while(Result::ok) {
                 let line = line.trim_end();
-                if let Some(url) = process::parse_dsh_web_url(line) {
-                    let _ = tx.send(ManagerMessage::Ready { generation, url });
+                match parser.push_line(line) {
+                    Ok(Some(url)) => {
+                        let _ = tx.send(ManagerMessage::Ready { generation, url });
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        append_line(&app, &inner, &log_path, &format!("[{label}] {line}"));
+                        let _ = tx.send(ManagerMessage::ReadinessError { generation, error });
+                        return;
+                    }
                 }
                 append_line(&app, &inner, &log_path, &format!("[{label}] {line}"));
+            }
+            if let Err(error) = parser.finalize() {
+                let _ = tx.send(ManagerMessage::ReadinessError { generation, error });
             }
         });
     }
@@ -1688,7 +1770,7 @@ impl DshManager {
     fn spawn_health_checker(&self) {
         let inner = self.inner.clone();
         let tx = self.tx.clone();
-        let generation = self.generation;
+        let generation = self.lifecycle.generation();
         thread::spawn(move || {
             let started = Instant::now();
             let url = loop {
@@ -2598,7 +2680,10 @@ fn run_install(
         "[desktop] 执行: npm install -g @deepseek-ai/dsh",
     );
     let mut cmd = Command::new(&npm);
-    cmd.arg("install").arg("-g").arg("@deepseek-ai/dsh");
+    cmd.env("PATH", effective_path())
+        .arg("install")
+        .arg("-g")
+        .arg("@deepseek-ai/dsh");
     let mut child = cmd
         .spawn()
         .map_err(|error| format!("无法启动 npm ({}): {error}", npm.display()))?;
@@ -2683,7 +2768,9 @@ fn npm_global_dsh(config: &DshConfig) -> Option<PathBuf> {
 /// 通过 npm prefix -g 查询 npm 全局安装前缀（GUI 启动时 PATH 可能不含 npm bin）。
 fn npm_global_prefix(config: &DshConfig) -> Option<PathBuf> {
     let npm = resolve_npm(config)?;
-    let output = Command::new(&npm).args(["prefix", "-g"]).output().ok()?;
+    let mut command = Command::new(&npm);
+    command.env("PATH", effective_path()).args(["prefix", "-g"]);
+    let output = command.output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -2700,14 +2787,343 @@ fn home_dir() -> Option<PathBuf> {
 }
 
 fn find_in_path(name: &str) -> Option<PathBuf> {
-    let path = std::env::var("PATH").ok()?;
-    for dir in path.split(':') {
-        let candidate = Path::new(dir).join(name);
+    let path = effective_path();
+    let entries = std::env::split_paths(&path).collect::<Vec<_>>();
+    find_in_path_entries(&entries, name)
+}
+
+fn find_in_path_entries(entries: &[PathBuf], name: &str) -> Option<PathBuf> {
+    for dir in entries {
+        let candidate = dir.join(name);
         if candidate.is_file() {
             return Some(candidate);
         }
     }
     None
+}
+
+/// 合并 GUI 进程自身、系统全局 PATH 与用户 shell PATH，保证桌面启动时也能找到 node/npm/dsh。
+fn effective_path() -> String {
+    static CACHE: OnceLock<String> = OnceLock::new();
+
+    CACHE
+        .get_or_init(|| {
+            let mut entries = env_path_entries();
+            append_unique_path_entries(&mut entries, platform_system_path_entries());
+            append_unique_path_entries(&mut entries, user_shell_path_entries());
+            append_unique_path_entries(&mut entries, common_path_entries());
+            std::env::join_paths(entries)
+                .map(|path| path.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| std::env::var("PATH").unwrap_or_default())
+        })
+        .clone()
+}
+
+fn env_path_entries() -> Vec<PathBuf> {
+    std::env::var_os("PATH")
+        .map(|path| std::env::split_paths(&path).collect())
+        .unwrap_or_default()
+}
+
+fn parse_path_entries(path: &str) -> Vec<PathBuf> {
+    std::env::split_paths(path)
+        .filter(|entry| !entry.as_os_str().is_empty())
+        .collect()
+}
+
+fn append_unique_path_entries(entries: &mut Vec<PathBuf>, extras: Vec<PathBuf>) {
+    for entry in extras {
+        if !entries.iter().any(|existing| existing == &entry) {
+            entries.push(entry);
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn platform_system_path_entries() -> Vec<PathBuf> {
+    let mut entries = Vec::new();
+    if let Ok(output) = Command::new("/usr/libexec/path_helper").arg("-s").output() {
+        if output.status.success() {
+            if let Some(path) = parse_path_helper_path(&output.stdout) {
+                append_unique_path_entries(&mut entries, parse_path_entries(&path));
+            }
+        }
+    }
+    for file in macos_path_files() {
+        append_unique_path_entries(&mut entries, read_path_file_entries(&file));
+    }
+    entries
+}
+
+#[cfg(target_os = "macos")]
+fn macos_path_files() -> Vec<PathBuf> {
+    let mut files = vec![PathBuf::from("/etc/paths")];
+    if let Ok(entries) = std::fs::read_dir("/etc/paths.d") {
+        let mut extra: Vec<_> = entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .collect();
+        extra.sort();
+        files.extend(extra);
+    }
+    files
+}
+
+#[cfg(target_os = "macos")]
+fn read_path_file_entries(path: &Path) -> Vec<PathBuf> {
+    std::fs::read_to_string(path)
+        .map(|content| {
+            content
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty() && !line.starts_with('#'))
+                .map(PathBuf::from)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[cfg(target_os = "macos")]
+fn parse_path_helper_path(output: &[u8]) -> Option<String> {
+    let text = String::from_utf8_lossy(output);
+    for line in text.lines() {
+        if let Some(value) = line.strip_prefix("PATH=") {
+            let value = value.split(';').next().unwrap_or(value).trim();
+            let value = value
+                .strip_prefix('"')
+                .and_then(|value| value.strip_suffix('"'))
+                .unwrap_or(value);
+            return Some(value.to_string());
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn platform_system_path_entries() -> Vec<PathBuf> {
+    read_environment_path_file(Path::new("/etc/environment"))
+}
+
+#[cfg(target_os = "windows")]
+fn platform_system_path_entries() -> Vec<PathBuf> {
+    windows_registry_path_entries()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+fn platform_system_path_entries() -> Vec<PathBuf> {
+    Vec::new()
+}
+
+#[cfg(target_os = "linux")]
+fn read_environment_path_file(path: &Path) -> Vec<PathBuf> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|content| parse_exported_path_value(&content))
+        .map(|path| parse_path_entries(&path))
+        .unwrap_or_default()
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn parse_exported_path_value(content: &str) -> Option<String> {
+    for line in content.lines() {
+        let line = line.trim();
+        let line = line.strip_prefix("export ").unwrap_or(line);
+        let Some(value) = line.strip_prefix("PATH=") else {
+            continue;
+        };
+        let value = value.trim().trim_matches('"').trim();
+        if !value.is_empty() {
+            return Some(value.to_string());
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn windows_registry_path_entries() -> Vec<PathBuf> {
+    let mut entries = Vec::new();
+    for key in [
+        "HKCU\\Environment",
+        "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
+    ] {
+        append_unique_path_entries(&mut entries, windows_registry_path_value(key));
+    }
+    entries
+}
+
+#[cfg(target_os = "windows")]
+fn windows_registry_path_value(key: &str) -> Vec<PathBuf> {
+    let reg = std::env::var("SystemRoot")
+        .map(|root| Path::new(&root).join("System32").join("reg.exe"))
+        .filter(|path| path.is_file())
+        .unwrap_or_else(|| PathBuf::from(r"C:\Windows\System32\reg.exe"));
+    let Ok(output) = Command::new(reg)
+        .args(["query", key, "/v", "Path"])
+        .output()
+    else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+
+    let mut entries = Vec::new();
+    let text = String::from_utf8_lossy(&output.stdout);
+    for line in text.lines() {
+        if let Some(value) = parse_windows_registry_path_line(line) {
+            append_unique_path_entries(
+                &mut entries,
+                parse_path_entries(&expand_environment_vars(&value)),
+            );
+        }
+    }
+    entries
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn parse_windows_registry_path_line(line: &str) -> Option<String> {
+    let line = line.trim();
+    if !line.contains("Path") {
+        return None;
+    }
+    let value = line
+        .split_whitespace()
+        .skip(2)
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim()
+        .trim_matches('"')
+        .to_string();
+    (!value.is_empty()).then_some(value)
+}
+
+#[cfg(target_os = "windows")]
+fn expand_environment_vars(value: &str) -> String {
+    let mut result = String::new();
+    let mut rest = value;
+    while let Some(start) = rest.find('%') {
+        result.push_str(&rest[..start]);
+        let after = &rest[start + 1..];
+        if let Some(end) = after.find('%') {
+            let name = &after[..end];
+            result.push_str(&std::env::var(name).unwrap_or_else(|_| format!("%{name}%")));
+            rest = &after[end + 1..];
+        } else {
+            result.push('%');
+            rest = after;
+        }
+    }
+    result.push_str(rest);
+    result
+}
+
+#[cfg(not(windows))]
+fn user_shell_path_entries() -> Vec<PathBuf> {
+    shell_path()
+        .map(|path| parse_path_entries(&path))
+        .unwrap_or_default()
+}
+
+#[cfg(windows)]
+fn user_shell_path_entries() -> Vec<PathBuf> {
+    Vec::new()
+}
+
+#[cfg(not(windows))]
+fn shell_path() -> Option<String> {
+    let candidates = std::env::var("SHELL")
+        .ok()
+        .map(PathBuf::from)
+        .filter(|path| path.is_file())
+        .into_iter()
+        .chain(
+            [PathBuf::from("/bin/zsh"), PathBuf::from("/bin/bash")]
+                .into_iter()
+                .filter(|path| path.is_file()),
+        );
+
+    for shell in candidates {
+        if let Some(path) = read_shell_path(&shell) {
+            return Some(path);
+        }
+    }
+    None
+}
+
+#[cfg(not(windows))]
+fn read_shell_path(shell: &Path) -> Option<String> {
+    let mut command = Command::new(shell);
+    command
+        .args(["-l", "-i", "-c", "printf '%s\\n' \"$PATH\""])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .env("TERM", "dumb")
+        .env("COLORTERM", "");
+    let mut child = command.spawn().ok()?;
+    let deadline = Instant::now() + Duration::from_millis(1500);
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let mut output = Vec::new();
+                child.stdout.take()?.read_to_end(&mut output).ok()?;
+                let path = String::from_utf8_lossy(&output);
+                let path = path
+                    .lines()
+                    .rev()
+                    .find(|line| !line.trim().is_empty())
+                    .unwrap_or("")
+                    .trim();
+                if status.success() && !path.is_empty() {
+                    return Some(path.to_string());
+                }
+                return None;
+            }
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+            Err(_) => return None,
+        }
+    }
+}
+
+#[cfg(windows)]
+fn shell_path() -> Option<String> {
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn common_path_entries() -> Vec<PathBuf> {
+    ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin"]
+        .into_iter()
+        .map(PathBuf::from)
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
+fn common_path_entries() -> Vec<PathBuf> {
+    [
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+        "/usr/local/sbin",
+        "/usr/sbin",
+        "/sbin",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .collect()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn common_path_entries() -> Vec<PathBuf> {
+    Vec::new()
 }
 
 fn is_health_ready(url: &str) -> bool {
@@ -2812,5 +3228,100 @@ mod tests {
             62359
         );
         assert_eq!(parse_port("http://[::1]:62359/dsh-desktop/health"), 62359);
+    }
+
+    #[test]
+    fn append_unique_path_entries_dedups_preserving_order() {
+        let mut entries = vec![PathBuf::from("/a")];
+        append_unique_path_entries(
+            &mut entries,
+            vec![
+                PathBuf::from("/b"),
+                PathBuf::from("/a"),
+                PathBuf::from("/b"),
+            ],
+        );
+        assert_eq!(entries, vec![PathBuf::from("/a"), PathBuf::from("/b")]);
+    }
+
+    #[test]
+    fn find_in_path_prefers_earlier_entry() {
+        let dir =
+            std::env::temp_dir().join(format!("dsh-desktop-path-test-{}", std::process::id()));
+        let bin = dir.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let node = bin.join("node");
+        std::fs::write(&node, b"").unwrap();
+
+        let result = find_in_path_entries(&[bin.clone(), PathBuf::from("/usr/bin")], "node");
+        assert_eq!(result, Some(node));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn parse_path_helper_path_extracts_value() {
+        assert_eq!(
+            parse_path_helper_path(b"PATH=\"/a:/b\"; export PATH;\n"),
+            Some("/a:/b".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_exported_path_value_parses_common_forms() {
+        assert_eq!(
+            parse_exported_path_value("PATH=\"/a:/b\"\n"),
+            Some("/a:/b".to_string())
+        );
+        assert_eq!(
+            parse_exported_path_value("export PATH=/a:/b\n"),
+            Some("/a:/b".to_string())
+        );
+        assert_eq!(parse_exported_path_value("NO_PATH=/x\n"), None);
+    }
+
+    #[test]
+    fn parse_windows_registry_path_line_extracts_value() {
+        assert_eq!(
+            parse_windows_registry_path_line("    Path    REG_EXPAND_SZ    C:\\node;C:\\Windows"),
+            Some("C:\\node;C:\\Windows".to_string())
+        );
+        assert_eq!(
+            parse_windows_registry_path_line("HKEY_CURRENT_USER\\Environment"),
+            None
+        );
+    }
+
+    #[test]
+    fn navigation_policy_allows_shell_and_loopback_urls() {
+        for url in [
+            "tauri://localhost",
+            "http://localhost:5173",
+            "http://127.0.0.1:49321",
+            "http://[::1]:49321",
+        ] {
+            let parsed = tauri::Url::parse(url).unwrap();
+            assert!(is_shell_url(&parsed), "应允许 {url}");
+        }
+    }
+
+    #[test]
+    fn navigation_policy_rejects_external_urls() {
+        for url in [
+            "https://example.com",
+            "http://0.0.0.0:8080",
+            "file:///tmp/index.html",
+            "about:blank",
+        ] {
+            let parsed = tauri::Url::parse(url).unwrap();
+            assert!(!is_shell_url(&parsed), "应拒绝 {url}");
+        }
+        assert!(is_external_url(
+            &tauri::Url::parse("https://example.com").unwrap()
+        ));
+        assert!(!is_external_url(
+            &tauri::Url::parse("file:///tmp/index.html").unwrap()
+        ));
     }
 }

@@ -1,12 +1,5 @@
 {
   "app": {
-    "windows": [
-      {
-        "label": "main",
-        "decorations": true,
-        "titleBarStyle": "Overlay",
-        "hiddenTitle": true
-      }
-    ]
+    "windows": []
   }
 }

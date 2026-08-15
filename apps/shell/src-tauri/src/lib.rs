@@ -68,6 +68,9 @@ const TRAY_RESTART_DSH: &str = "tray-restart-dsh";
 const TRAY_SHOW_MAIN: &str = "tray-show-main";
 const TRAY_QUIT: &str = "tray-quit";
 
+/// dsh web 注入校验使用的随机 token 查询参数名。
+const HOST_TOKEN_QUERY_KEY: &str = "dsh_desktop_token";
+
 /// 允许 main 窗口导航到的本地 origin：Tauri 本地页面与固定开发服务器。
 fn is_shell_url(url: &tauri::Url) -> bool {
     if url.scheme() == "tauri" && url.host_str() == Some("localhost") {
@@ -88,6 +91,13 @@ fn is_shell_url(url: &tauri::Url) -> bool {
 /// dsh 页面仅允许当前桌面壳托管的 origin，避免任意 loopback 服务复用桥接能力。
 fn is_managed_dsh_url(url: &tauri::Url, managed: Option<&tauri::Url>) -> bool {
     managed.is_some_and(|managed| managed.origin() == url.origin())
+}
+
+/// 生成一次运行使用的 dsh web 注入 token（24 bytes hex）。
+fn generate_host_token() -> String {
+    let mut bytes = [0u8; 24];
+    getrandom::getrandom(&mut bytes).expect("生成 dsh web 注入 token 失败");
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn is_external_url(url: &tauri::Url) -> bool {
@@ -998,6 +1008,7 @@ struct DshManager {
     app: AppHandle,
     inner: Arc<Mutex<Inner>>,
     managed_dsh_url: Arc<Mutex<Option<tauri::Url>>>,
+    host_token: Arc<Mutex<Option<String>>>,
     tx: Sender<ManagerMessage>,
     rx: Receiver<ManagerMessage>,
     child: Option<Child>,
@@ -1016,6 +1027,7 @@ pub fn run() {
 
     let exiting = Arc::new(AtomicBool::new(false));
     let managed_dsh_url = Arc::new(Mutex::new(None));
+    let host_token = Arc::new(Mutex::new(Some(generate_host_token())));
 
     tauri::Builder::default()
         // 单实例锁必须最先注册（插件按注册顺序执行）
@@ -1070,9 +1082,10 @@ pub fn run() {
         // 向 dsh web（loopback 远程页面）注入受控桥接 window.__DSH_DESKTOP__
         .on_page_load({
             let managed_dsh_url = managed_dsh_url.clone();
+            let host_token = host_token.clone();
             move |webview, payload| {
                 if payload.event() == PageLoadEvent::Finished {
-                    inject::inject_dsh_web(webview, payload.url(), &managed_dsh_url);
+                    inject::inject_dsh_web(webview, payload.url(), &managed_dsh_url, &host_token);
                 }
             }
         })
@@ -1134,6 +1147,7 @@ pub fn run() {
                 config_path: config_path.clone(),
                 start_in_tray: start_in_tray.clone(),
                 managed_dsh_url: managed_dsh_url.clone(),
+                host_token: host_token.clone(),
             };
             thread::spawn(move || manager.run());
 
@@ -1653,6 +1667,9 @@ impl DshManager {
             cmd.env("DSH_HOME", home);
         }
         cmd.env("DSH_DESKTOP_MANAGED", "1");
+        if let Some(host_token) = self.host_token.lock().ok().and_then(|guard| guard.clone()) {
+            cmd.env("DSH_DESKTOP_HOST_TOKEN", host_token);
+        }
 
         let mut child = cmd
             .spawn()
@@ -1680,7 +1697,11 @@ impl DshManager {
 
     fn open_window(&self, url: String) {
         if let Some(window) = self.app.get_webview_window("main") {
-            if let Ok(url) = tauri::Url::parse(&url) {
+            if let Ok(mut url) = tauri::Url::parse(&url) {
+                if let Some(token) = self.host_token.lock().ok().and_then(|guard| guard.clone()) {
+                    url.query_pairs_mut()
+                        .append_pair(HOST_TOKEN_QUERY_KEY, &token);
+                }
                 let _ = window.navigate(url);
             }
             if !self.start_in_tray.load(Ordering::Relaxed) {

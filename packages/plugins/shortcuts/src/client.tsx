@@ -16,7 +16,12 @@ import {
 } from "./client/runtime";
 import { SettingsPage, SettingsSection } from "./client/settings-layout";
 import css from "./client/shortcuts.module.css";
-import { normalizeShortcutsSettings, SHORTCUTS_STORAGE_KEY } from "./shared/settings";
+import {
+  normalizeShortcutsSettings,
+  SHORTCUTS_STORAGE_KEY,
+  SHORTCUT_PRESET_IDS,
+  type ShortcutPresetId,
+} from "./shared/settings";
 
 injectPluginCss("@dsh-desktop/plugin-shortcuts", "@dsh-desktop/plugin-shortcuts/ui");
 
@@ -52,10 +57,18 @@ function createLocalSettingsScope(): SettingsScopeLike<ShortcutsSettings> {
       };
     },
     async set(field, value) {
-      localShortcutsSettings = normalizeShortcutsSettings({
-        ...localShortcutsSettings,
-        [field]: value,
-      });
+      // presets 为按 id 稀疏更新的记录，需要与现有值深合并，避免覆盖其他预设。
+      const next =
+        field === "presets" && value && typeof value === "object" && !Array.isArray(value)
+          ? {
+              ...localShortcutsSettings,
+              presets: {
+                ...localShortcutsSettings.presets,
+                ...(value as Partial<Record<ShortcutPresetId, ShortcutPresetSettings>>),
+              },
+            }
+          : { ...localShortcutsSettings, [field]: value };
+      localShortcutsSettings = normalizeShortcutsSettings(next);
       if (typeof localStorage !== "undefined") {
         try {
           localStorage.setItem(SHORTCUTS_STORAGE_KEY, JSON.stringify(localShortcutsSettings));
@@ -125,6 +138,11 @@ interface SessionsLike {
     | undefined;
 }
 
+interface WorkspacesLike {
+  /** 新建会话（复用当前工作区空白会话或新建；无工作区时进入新建会话视图）。 */
+  startSession(workspaceId?: string): void;
+}
+
 /**
  * client 面所需服务的本地结构类型。dsh client 服务（slots / locale / settingsScope /
  * connection / remote）由 dsh 生态注入，这里只声明本插件用到的面。
@@ -132,6 +150,7 @@ interface SessionsLike {
 interface ClientContextLike {
   effect(effect: () => unknown, label?: string): void;
   sessions: SessionsLike;
+  workspaces: WorkspacesLike;
   locale: {
     bind(ns: string): Translate;
     register(ns: string, locale: string, dict: Record<string, string>): unknown;
@@ -143,7 +162,7 @@ interface ClientContextLike {
 }
 
 /** 所需服务（cordis fiber inject）；client 面入口只注册设置节。 */
-export const inject = ["slots", "locale", "sessions"];
+export const inject = ["slots", "locale", "sessions", "workspaces"];
 
 function isCurrentConversationRunning(sessions: SessionsLike): boolean {
   const snapshot = sessions.list.getSnapshot();
@@ -159,6 +178,26 @@ function stopCurrentConversation(sessions: SessionsLike): void {
   void binding.session.cancel().catch((error: unknown) => {
     console.error("[shortcuts] 停止当前对话失败", error);
   });
+}
+
+/** 执行常用动作预设对应的网页侧动作。 */
+function runPresetAction(presetId: ShortcutPresetId, ctx: ClientContextLike): void {
+  switch (presetId) {
+    case "toggleWindow": {
+      const bridge = getBridge();
+      if (!bridge) return;
+      void bridge.windowAction("toggle-visible").catch((error: unknown) => {
+        console.error("[shortcuts] 切换主窗口可见性失败", error);
+      });
+      break;
+    }
+    case "stopConversation":
+      stopCurrentConversation(ctx.sessions);
+      break;
+    case "newConversation":
+      ctx.workspaces.startSession();
+      break;
+  }
 }
 
 function StopShortcutSettings({
@@ -232,6 +271,217 @@ function StopShortcutSettings({
   );
 }
 
+function PresetShortcutInput({
+  value,
+  disabled,
+  onCommit,
+}: {
+  value: string;
+  disabled: boolean;
+  onCommit: (value: string) => void;
+}): JSX.Element {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+  return (
+    <Input
+      className={css.presetInput}
+      value={draft}
+      disabled={disabled}
+      spellCheck={false}
+      onChange={(event) => setDraft(event.currentTarget.value)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") event.currentTarget.blur();
+      }}
+      onBlur={() => onCommit(draft)}
+    />
+  );
+}
+
+/** 常用动作预设区块：把动作绑定到系统级全局快捷键（经壳侧注册并持久化）。 */
+function PresetShortcuts({
+  scope,
+  t,
+}: {
+  scope: SettingsScopeLike<ShortcutsSettings>;
+  t: Translate;
+}): JSX.Element {
+  const snapshot = useSyncExternalStore(
+    (listener) => scope.subscribe(listener),
+    () => scope.getSnapshot(),
+    () => scope.getSnapshot(),
+  );
+  const settings = snapshot.value ?? DEFAULT_SHORTCUTS_SETTINGS;
+  const [shortcuts, setShortcuts] = useState<ShortcutSnapshot[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [busyId, setBusyId] = useState<ShortcutPresetId | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const refresh = async () => {
+    const bridge = getBridge();
+    if (!bridge) return;
+    try {
+      setShortcuts(await bridge.shortcuts.list());
+    } catch (e) {
+      setError(`${t("error.read")}: ${String(e)}`);
+    }
+  };
+
+  // 装载后对齐：已启用但未注册的预设补注册（壳侧重启会从 config.json 恢复已注册项）。
+  useEffect(() => {
+    let disposed = false;
+    const bridge = getBridge();
+    if (!bridge) {
+      setLoaded(true);
+      return;
+    }
+    bridge.shortcuts
+      .list()
+      .then(async (items) => {
+        if (disposed) return;
+        setShortcuts(items);
+        setLoaded(true);
+        const current = scope.getSnapshot().value ?? DEFAULT_SHORTCUTS_SETTINGS;
+        const registered = new Set(items.map((item) => item.shortcut));
+        for (const id of SHORTCUT_PRESET_IDS) {
+          const preset = current.presets[id];
+          if (!preset?.enabled || registered.has(preset.shortcut)) continue;
+          try {
+            await bridge.shortcuts.register(preset.shortcut);
+          } catch (e) {
+            console.error("[shortcuts] 预设快捷键注册失败", preset.shortcut, e);
+          }
+        }
+        if (!disposed) void refresh();
+      })
+      .catch((e: unknown) => {
+        if (!disposed) {
+          setError(`${t("error.read")}: ${String(e)}`);
+          setLoaded(true);
+        }
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [t]);
+
+  const togglePreset = async (id: ShortcutPresetId, enabled: boolean) => {
+    const preset = settings.presets[id];
+    if (!preset) return;
+    const bridge = getBridge();
+    if (!bridge) {
+      setError(t("error.bridge"));
+      return;
+    }
+    if (enabled) {
+      const conflict = SHORTCUT_PRESET_IDS.some(
+        (other) =>
+          other !== id &&
+          settings.presets[other]?.enabled &&
+          settings.presets[other].shortcut === preset.shortcut,
+      );
+      if (conflict) {
+        setError(t("preset.error.duplicate"));
+        return;
+      }
+    }
+    setBusyId(id);
+    try {
+      if (enabled) {
+        await bridge.shortcuts.register(preset.shortcut);
+      } else {
+        await bridge.shortcuts.unregister(preset.shortcut);
+      }
+      await scope.set("presets", { [id]: { ...preset, enabled } });
+      setError(null);
+      setNotice(enabled ? t("preset.added") : t("preset.removed"));
+      await refresh();
+    } catch (e) {
+      setError(`${t(enabled ? "error.register" : "error.remove")}: ${String(e)}`);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const updateShortcut = async (id: ShortcutPresetId, raw: string) => {
+    const preset = settings.presets[id];
+    if (!preset) return;
+    const next = raw.trim();
+    if (!next || next === preset.shortcut) return;
+    const conflict = SHORTCUT_PRESET_IDS.some(
+      (other) => other !== id && settings.presets[other]?.shortcut === next,
+    );
+    if (conflict) {
+      setError(t("preset.error.duplicate"));
+      return;
+    }
+    const bridge = getBridge();
+    if (!bridge) {
+      setError(t("error.bridge"));
+      return;
+    }
+    setBusyId(id);
+    try {
+      if (preset.enabled) {
+        await bridge.shortcuts.unregister(preset.shortcut);
+        await bridge.shortcuts.register(next);
+      }
+      await scope.set("presets", { [id]: { ...preset, shortcut: next } });
+      setError(null);
+      if (preset.enabled) setNotice(t("preset.updated"));
+      await refresh();
+    } catch (e) {
+      setError(`${t("error.register")}: ${String(e)}`);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <div className={css.presetList}>
+      <div className={css.presetIntro}>
+        <span className={css.settingTitle}>{t("preset.title")}</span>
+        <span className={css.settingDesc}>{t("preset.desc")}</span>
+      </div>
+      {SHORTCUT_PRESET_IDS.map((id) => {
+        const preset = settings.presets[id];
+        if (!preset) return null;
+        return (
+          <div key={id} className={css.presetRow}>
+            <div className={css.settingText}>
+              <span className={css.settingTitle}>{t(`preset.${id}.title`)}</span>
+              <span className={css.settingDesc}>{t(`preset.${id}.desc`)}</span>
+            </div>
+            <div className={css.presetControls}>
+              <PresetShortcutInput
+                value={preset.shortcut}
+                disabled={busyId === id}
+                onCommit={(value) => void updateShortcut(id, value)}
+              />
+              <span className={css.presetStatus}>
+                {preset.enabled ? t("preset.status.on") : t("preset.status.off")}
+              </span>
+              <label className={css.toggle}>
+                <input
+                  type="checkbox"
+                  checked={preset.enabled}
+                  disabled={busyId === id}
+                  onChange={(event) => void togglePreset(id, event.currentTarget.checked)}
+                />
+              </label>
+            </div>
+          </div>
+        );
+      })}
+      {!loaded ? <p className={css.empty}>{t("status.loading")}</p> : null}
+      {error ? <p className={css.messageError}>{error}</p> : null}
+      {notice ? <p className={css.messageInfo}>{notice}</p> : null}
+    </div>
+  );
+}
+
 function ShortcutsPanel({
   scope,
   t,
@@ -239,6 +489,12 @@ function ShortcutsPanel({
   scope: SettingsScopeLike<ShortcutsSettings>;
   t: Translate;
 }): JSX.Element {
+  const settingsSnapshot = useSyncExternalStore(
+    (listener) => scope.subscribe(listener),
+    () => scope.getSnapshot(),
+    () => scope.getSnapshot(),
+  );
+  const settings = settingsSnapshot.value ?? DEFAULT_SHORTCUTS_SETTINGS;
   const [shortcuts, setShortcuts] = useState<ShortcutSnapshot[]>([]);
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(true);
@@ -333,6 +589,16 @@ function ShortcutsPanel({
     if (!window.confirm(t("clear.confirm"))) return;
     try {
       await bridge.shortcuts.unregisterAll();
+      // 一并停用常用动作预设，避免“全部移除”后又被预设重新补齐注册。
+      await scope.set(
+        "presets",
+        Object.fromEntries(
+          SHORTCUT_PRESET_IDS.map((id) => {
+            const preset = settings.presets[id];
+            return [id, { ...preset, enabled: false }];
+          }),
+        ),
+      );
       setNotice(t("cleared"));
       setError(null);
       await refresh();
@@ -344,6 +610,7 @@ function ShortcutsPanel({
   return (
     <div className={css.stack}>
       <StopShortcutSettings scope={scope} t={t} />
+      <PresetShortcuts scope={scope} t={t} />
       <div className={css.addRow}>
         <Input
           className={css.addInput}
@@ -460,6 +727,38 @@ export function apply(ctx: ClientContextLike): void {
     };
   }, "shortcuts: 双击 Esc 停止当前对话");
 
+  // 常用动作预设：订阅全局快捷键按下并把字符串映射回对应动作。
+  ctx.effect(() => {
+    let settings = settingsScope.getSnapshot().value ?? DEFAULT_SHORTCUTS_SETTINGS;
+    const unsubscribeSettings = settingsScope.subscribe(() => {
+      settings = settingsScope.getSnapshot().value ?? DEFAULT_SHORTCUTS_SETTINGS;
+    });
+    const bridge = getBridge();
+    if (!bridge) {
+      return () => {
+        unsubscribeSettings();
+      };
+    }
+    let unlisten: (() => void) | undefined;
+    void bridge
+      .onShortcut((shortcut) => {
+        const presetId = SHORTCUT_PRESET_IDS.find(
+          (id) => settings.presets[id]?.enabled && settings.presets[id].shortcut === shortcut,
+        );
+        if (presetId) runPresetAction(presetId, ctx);
+      })
+      .then((dispose) => {
+        unlisten = dispose;
+      })
+      .catch((error: unknown) => {
+        console.error("[shortcuts] 全局快捷键分发监听失败", error);
+      });
+    return () => {
+      unlisten?.();
+      unsubscribeSettings();
+    };
+  }, "shortcuts: 常用动作全局快捷键分发");
+
   ctx.effect(
     () =>
       ctx.locale.register(NS, "zh", {
@@ -487,6 +786,20 @@ export function apply(ctx: ClientContextLike): void {
         "stop.timeoutUnit": "毫秒",
         "stop.error": "保存快捷键设置失败",
         "doubleEscape.hint": "再次按 Esc 终止当前对话",
+        "preset.title": "常用动作",
+        "preset.desc": "把常用操作绑定到系统级全局快捷键，任意应用中按下即生效",
+        "preset.toggleWindow.title": "显示 / 隐藏主窗口",
+        "preset.toggleWindow.desc": "在任意应用中切换主窗口的显示与隐藏",
+        "preset.stopConversation.title": "停止当前对话",
+        "preset.stopConversation.desc": "停止 dsh 当前正在运行的对话",
+        "preset.newConversation.title": "新建对话",
+        "preset.newConversation.desc": "打开 dsh 并新建一个对话",
+        "preset.added": "预设快捷键已启用",
+        "preset.removed": "预设快捷键已停用",
+        "preset.updated": "预设快捷键已更新",
+        "preset.error.duplicate": "该快捷键已分配给其他动作",
+        "preset.status.on": "已启用",
+        "preset.status.off": "未启用",
       }),
     "bridge: 快捷键中文字典",
   );
@@ -517,6 +830,20 @@ export function apply(ctx: ClientContextLike): void {
         "stop.timeoutUnit": "ms",
         "stop.error": "Failed to save shortcut settings",
         "doubleEscape.hint": "Press Esc again to stop",
+        "preset.title": "Common actions",
+        "preset.desc": "Bind common actions to system-wide shortcuts, active in any app",
+        "preset.toggleWindow.title": "Show / hide main window",
+        "preset.toggleWindow.desc": "Toggle main window visibility from any app",
+        "preset.stopConversation.title": "Stop current conversation",
+        "preset.stopConversation.desc": "Stop the running dsh conversation",
+        "preset.newConversation.title": "New conversation",
+        "preset.newConversation.desc": "Open dsh and start a new conversation",
+        "preset.added": "Preset shortcut enabled",
+        "preset.removed": "Preset shortcut disabled",
+        "preset.updated": "Preset shortcut updated",
+        "preset.error.duplicate": "This shortcut is already assigned to another action",
+        "preset.status.on": "Enabled",
+        "preset.status.off": "Disabled",
       }),
     "shortcuts: English dictionary",
   );

@@ -15,6 +15,10 @@ export interface BridgeLike {
     list(): Promise<ShortcutSnapshot[]>;
     unregisterAll(): Promise<void>;
   };
+  /** 订阅任意系统级全局快捷键按下（payload 为快捷键字符串）。 */
+  onShortcut(cb: (shortcut: string) => void): Promise<() => void>;
+  /** 无边框窗口控制（minimize / maximize / close / toggle-visible）。 */
+  windowAction(action: "minimize" | "maximize" | "close" | "toggle-visible"): Promise<void>;
 }
 
 /** 翻译函数形状（ctx.locale.bind 的返回）。 */

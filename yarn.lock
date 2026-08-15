@@ -779,13 +779,58 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"@dsh-desktop/plugin-hello@workspace:packages/plugins/hello":
+"@dsh-desktop/plugin-projects@workspace:packages/plugins/projects":
   version: 0.0.0-use.local
-  resolution: "@dsh-desktop/plugin-hello@workspace:packages/plugins/hello"
+  resolution: "@dsh-desktop/plugin-projects@workspace:packages/plugins/projects"
   dependencies:
     "@deepseek-ai/cordis": "npm:^4.0.1"
+    "@deepseek-ai/dsh-api-remotes": "npm:^0.1.0-rc.6"
+    "@deepseek-ai/dsh-client-connection": "npm:^0.1.0-rc.6"
+    "@deepseek-ai/dsh-client-locale": "npm:^0.1.0-rc.6"
+    "@deepseek-ai/dsh-client-runtime": "npm:^0.1.0-rc.6"
+    "@deepseek-ai/dsh-client-ui-primitives": "npm:^0.1.0-rc.6"
+    "@deepseek-ai/dsh-client-ui-settings": "npm:^0.1.0-rc.6"
+    "@tsdown/css": "npm:0.22.14"
+    "@types/node": "npm:^24.0.0"
+    "@types/react": "npm:~18.3.1"
+    react: "npm:^18.2.0"
     tsdown: "npm:^0.22"
     typescript: "npm:^5"
+  peerDependencies:
+    "@deepseek-ai/dsh-api-remotes": ^0.1.0-rc.6
+    "@deepseek-ai/dsh-client-connection": ^0.1.0-rc.6
+    "@deepseek-ai/dsh-client-locale": ^0.1.0-rc.6
+    "@deepseek-ai/dsh-client-runtime": ^0.1.0-rc.6
+    "@deepseek-ai/dsh-client-ui-primitives": ^0.1.0-rc.6
+    "@deepseek-ai/dsh-client-ui-settings": ^0.1.0-rc.6
+    react: ^18.2.0
+  languageName: unknown
+  linkType: soft
+
+"@dsh-desktop/plugin-shortcuts@workspace:packages/plugins/shortcuts":
+  version: 0.0.0-use.local
+  resolution: "@dsh-desktop/plugin-shortcuts@workspace:packages/plugins/shortcuts"
+  dependencies:
+    "@deepseek-ai/cordis": "npm:^4.0.1"
+    "@deepseek-ai/dsh-api-remotes": "npm:^0.1.0-rc.6"
+    "@deepseek-ai/dsh-client-connection": "npm:^0.1.0-rc.6"
+    "@deepseek-ai/dsh-client-locale": "npm:^0.1.0-rc.6"
+    "@deepseek-ai/dsh-client-runtime": "npm:^0.1.0-rc.6"
+    "@deepseek-ai/dsh-client-ui-primitives": "npm:^0.1.0-rc.6"
+    "@deepseek-ai/dsh-client-ui-settings": "npm:^0.1.0-rc.6"
+    "@tsdown/css": "npm:0.22.14"
+    "@types/react": "npm:~18.3.1"
+    react: "npm:^18.2.0"
+    tsdown: "npm:^0.22"
+    typescript: "npm:^5"
+  peerDependencies:
+    "@deepseek-ai/dsh-api-remotes": ^0.1.0-rc.6
+    "@deepseek-ai/dsh-client-connection": ^0.1.0-rc.6
+    "@deepseek-ai/dsh-client-locale": ^0.1.0-rc.6
+    "@deepseek-ai/dsh-client-runtime": ^0.1.0-rc.6
+    "@deepseek-ai/dsh-client-ui-primitives": ^0.1.0-rc.6
+    "@deepseek-ai/dsh-client-ui-settings": ^0.1.0-rc.6
+    react: ^18.2.0
   languageName: unknown
   linkType: soft
 
@@ -1220,6 +1265,15 @@ __metadata:
   version: 2.1.0
   resolution: "@types/ms@npm:2.1.0"
   checksum: 10c0/5ce692ffe1549e1b827d99ef8ff71187457e0eb44adbae38fdf7b9a74bae8d20642ee963c14516db1d35fa2652e65f47680fdf679dcbde52bbfadd021f497225
+  languageName: node
+  linkType: hard
+
+"@types/node@npm:^24.0.0":
+  version: 24.13.3
+  resolution: "@types/node@npm:24.13.3"
+  dependencies:
+    undici-types: "npm:~7.18.0"
+  checksum: 10c0/a5bc08f49b9581dcdca90e02cd77197a3c799840807664942e5cd5161a553d4d2ae8064f7e3294410d748d7d098b5c1848be7fa50c06f29c4193ab16be4e59eb
   languageName: node
   linkType: hard
 
@@ -3192,6 +3246,13 @@ __metadata:
     "@quansync/fs": "npm:^1.0.0"
     quansync: "npm:^1.0.0"
   checksum: 10c0/9c9f745254aa8e267140430a432353d17ee87f625b0ea0668e189d88736828d117b66bd2dd41f1d48bd40d44d5b7c7d160e8b7996a60c8f484e2975ef73c7cb7
+  languageName: node
+  linkType: hard
+
+"undici-types@npm:~7.18.0":
+  version: 7.18.2
+  resolution: "undici-types@npm:7.18.2"
+  checksum: 10c0/85a79189113a238959d7a647368e4f7c5559c3a404ebdb8fc4488145ce9426fcd82252a844a302798dfc0e37e6fb178ff481ed03bc4caf634c5757d9ef43521d
   languageName: node
   linkType: hard
 

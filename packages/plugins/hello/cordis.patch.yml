@@ -1,4 +1,0 @@
-# 自定义 dsh 插件示例：向 profile 插入插件行
-- insert:
-    - id: hello
-      name: '@dsh-desktop/plugin-hello'

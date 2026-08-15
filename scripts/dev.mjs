@@ -7,6 +7,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 const BUILD_SCRIPT = path.join(ROOT, "scripts", "build-plugins.mjs");
 const WATCH_SCRIPT = path.join(ROOT, "scripts", "watch-plugins.mjs");
+const SHELL_DIR = path.join(ROOT, "apps", "shell");
 const shell = process.platform === "win32";
 
 const initial = spawnSync(process.execPath, [BUILD_SCRIPT], {
@@ -26,7 +27,7 @@ const watch = spawn(process.execPath, [WATCH_SCRIPT, "--no-initial"], {
   shell,
 });
 const vite = spawn("corepack", ["yarn", "web:all"], {
-  cwd: ROOT,
+  cwd: SHELL_DIR,
   stdio: "inherit",
   shell,
 });

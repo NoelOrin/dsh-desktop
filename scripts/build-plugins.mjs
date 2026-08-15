@@ -51,19 +51,49 @@ export function buildDistManifest(src) {
   return dist;
 }
 
-/** 把已装配的 resources 插件包原子复制到 dsh profile 的模块兜底目录。 */
+/**
+ * 把已装配的 resources 插件包原子复制到 dsh profile 的模块兜底目录。
+ * 先复制到临时目录，再把旧目标移到备份目录，最后 rename 上位；
+ * 任一步失败都会保留或回滚旧目标，避免 rename 失败丢失旧版本。
+ */
 export function deployToProfile(srcDir, pkgName, home) {
   const target = path.join(home, "profiles", "node_modules", pkgName);
   const tmp = `${target}.tmp`;
+  const backup = `${target}.backup`;
   try {
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.rmSync(tmp, { recursive: true, force: true });
+    fs.rmSync(backup, { recursive: true, force: true });
     fs.cpSync(srcDir, tmp, { recursive: true });
-    fs.rmSync(target, { recursive: true, force: true });
-    fs.renameSync(tmp, target);
+    if (fs.existsSync(target)) {
+      fs.renameSync(target, backup);
+    }
+    try {
+      fs.renameSync(tmp, target);
+    } catch (error) {
+      if (fs.existsSync(backup) && !fs.existsSync(target)) {
+        fs.renameSync(backup, target);
+      }
+      throw error;
+    }
+    try {
+      fs.rmSync(backup, { recursive: true, force: true });
+    } catch {
+      // 备份清理失败不影响新版本已上位。
+    }
     return null;
   } catch (error) {
+    if (fs.existsSync(backup) && !fs.existsSync(target)) {
+      try {
+        fs.renameSync(backup, target);
+      } catch {
+        // 恢复失败时保留 backup，避免旧版本被误删。
+      }
+    }
     fs.rmSync(tmp, { recursive: true, force: true });
+    if (!fs.existsSync(backup) || fs.existsSync(target)) {
+      fs.rmSync(backup, { recursive: true, force: true });
+    }
     return error instanceof Error ? error.message : String(error);
   }
 }

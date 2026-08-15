@@ -89,6 +89,51 @@ test("deployToProfile 原子复制到 dsh profile", () => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
+test("deployToProfile 复制失败时保留旧目标", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dsh-deploy-fail-"));
+  const home = path.join(root, "home");
+  const target = path.join(home, "profiles", "node_modules", "@dsh-desktop", "plugin-bridge");
+  fs.mkdirSync(target, { recursive: true });
+  fs.writeFileSync(path.join(target, "client.js"), "// old");
+
+  const error = deployToProfile(path.join(root, "missing-src"), "@dsh-desktop/plugin-bridge", home);
+
+  assert.ok(error);
+  assert.equal(fs.readFileSync(path.join(target, "client.js"), "utf8"), "// old");
+  assert.equal(fs.existsSync(`${target}.tmp`), false);
+  assert.equal(fs.existsSync(`${target}.backup`), false);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("deployToProfile rename 失败时回滚旧目标", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dsh-deploy-rename-fail-"));
+  const home = path.join(root, "home");
+  const target = path.join(home, "profiles", "node_modules", "@dsh-desktop", "plugin-bridge");
+  const src = path.join(root, "src");
+  fs.mkdirSync(src, { recursive: true });
+  fs.writeFileSync(path.join(src, "client.js"), "// new");
+  fs.mkdirSync(target, { recursive: true });
+  fs.writeFileSync(path.join(target, "client.js"), "// old");
+
+  const originalRename = fs.renameSync;
+  fs.renameSync = (oldPath, newPath, ...args) => {
+    if (String(oldPath).endsWith(".tmp")) {
+      throw new Error("rename failed");
+    }
+    return originalRename.call(fs, oldPath, newPath, ...args);
+  };
+  try {
+    const error = deployToProfile(src, "@dsh-desktop/plugin-bridge", home);
+    assert.ok(error);
+    assert.equal(fs.readFileSync(path.join(target, "client.js"), "utf8"), "// old");
+    assert.equal(fs.existsSync(`${target}.tmp`), false);
+    assert.equal(fs.existsSync(`${target}.backup`), false);
+  } finally {
+    fs.renameSync = originalRename;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("pruneStaleResources 删除已移除插件的旧 resources 产物", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "dsh-prune-resources-"));
   const resources = path.join(root, "resources", "plugins");

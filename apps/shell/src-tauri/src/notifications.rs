@@ -19,7 +19,7 @@ pub fn show(app: &AppHandle, title: &str, body: &str, action: Option<Notificatio
         .summary(title)
         .body(body);
     #[cfg(target_os = "windows")]
-    notification.app_id(&app.package_info().identifier);
+    notification.app_id(&app.config().identifier);
     if action.is_some() {
         notification.action("default", "打开");
     }

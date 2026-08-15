@@ -68,7 +68,7 @@ function registryOf(ctx: ProjectsContext): WorkspaceRegistryLike | null {
 
 interface SessionLike {
   readonly id: string;
-  readonly header: { readonly cwd?: string };
+  readonly header: SessionHeaderLike;
 }
 
 interface SessionStoreLike {
@@ -79,12 +79,72 @@ interface SessionTitleLike {
   get(session: SessionLike): { readonly title: string } | undefined;
 }
 
+interface SessionHeaderLike {
+  readonly id: string;
+  readonly cwd?: string;
+}
+
+interface ProjectionSnapshotLike {
+  readonly values: Record<string, unknown>;
+}
+
+interface SessionProjectionsLike {
+  snapshot(session: unknown): ProjectionSnapshotLike | undefined;
+}
+
+interface SessionProjectionCacheLike {
+  cachedSnapshot(meta: SessionHeaderLike): ProjectionSnapshotLike | undefined;
+}
+
+interface SessionPersistenceLike {
+  list(): Promise<SessionHeaderLike[]>;
+}
+
 function sessionStoreOf(ctx: ProjectsContext): SessionStoreLike | null {
   return (ctx.get("sessions") as SessionStoreLike | undefined) ?? null;
 }
 
 function sessionTitleOf(ctx: ProjectsContext): SessionTitleLike | null {
   return (ctx.get("sessionTitle") as SessionTitleLike | undefined) ?? null;
+}
+
+function sessionPersistenceOf(ctx: ProjectsContext): SessionPersistenceLike | null {
+  return (ctx.get("sessionPersistence") as SessionPersistenceLike | undefined) ?? null;
+}
+
+function sessionProjectionsOf(ctx: ProjectsContext): SessionProjectionsLike | null {
+  return (ctx.get("sessionProjections") as SessionProjectionsLike | undefined) ?? null;
+}
+
+function sessionProjectionCacheOf(ctx: ProjectsContext): SessionProjectionCacheLike | null {
+  return (ctx.get("sessionProjectionCache") as SessionProjectionCacheLike | undefined) ?? null;
+}
+
+function projectionTitle(snapshot: ProjectionSnapshotLike | undefined): string | undefined {
+  const value = snapshot?.values.title;
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+
+function liveProjectionTitle(
+  projections: SessionProjectionsLike | null,
+  session: SessionLike,
+): string | undefined {
+  try {
+    return projectionTitle(projections?.snapshot(session));
+  } catch {
+    return undefined;
+  }
+}
+
+function cachedProjectionTitle(
+  cache: SessionProjectionCacheLike | null,
+  header: SessionHeaderLike,
+): string | undefined {
+  try {
+    return projectionTitle(cache?.cachedSnapshot(header));
+  } catch {
+    return undefined;
+  }
 }
 
 interface WorkspacePayload {
@@ -117,12 +177,15 @@ function listWorkspaces(ctx: ProjectsContext): WorkspacePayload[] {
 interface SessionPayload {
   id: string;
   title: string;
-  cwd: string | null;
   workspace_name: string | null;
-  pinned: boolean;
 }
 
-function listSessions(ctx: ProjectsContext): SessionPayload[] {
+function displayTitle(id: string, cwd: string | null | undefined, title?: string): string {
+  if (title) return title;
+  return cwd ? basename(cwd) : id;
+}
+
+function listLiveSessions(ctx: ProjectsContext): SessionPayload[] {
   const registry = registryOf(ctx);
   const sessions = sessionStoreOf(ctx);
   if (!registry || !sessions) return [];
@@ -135,9 +198,43 @@ function listSessions(ctx: ProjectsContext): SessionPayload[] {
     return {
       id: session.id,
       title,
-      cwd: cwd ?? null,
       workspace_name: owner?.title ?? null,
-      pinned: owner ? owner.sessionIds[0] === session.id : false,
+    };
+  });
+}
+
+async function listSessions(ctx: ProjectsContext): Promise<SessionPayload[]> {
+  const registry = registryOf(ctx);
+  if (!registry) return [];
+  const liveSessions = sessionStoreOf(ctx)?.list() ?? [];
+  const liveById = new Map(liveSessions.map((session) => [session.id, session]));
+  const persistence = sessionPersistenceOf(ctx);
+  let headers = liveSessions.map((session) => session.header);
+  try {
+    if (persistence) {
+      const persisted = await persistence.list();
+      headers = [...headers, ...persisted.filter((header) => !liveById.has(header.id))];
+    }
+  } catch {
+    return listLiveSessions(ctx);
+  }
+
+  const workspaces = registry.list();
+  const liveTitles = sessionTitleOf(ctx);
+  const projections = sessionProjectionsOf(ctx);
+  const projectionCache = sessionProjectionCacheOf(ctx);
+
+  return headers.map((header) => {
+    const cwd = header.cwd;
+    const owner = cwd ? workspaces.find((workspace) => workspace.path === cwd) : undefined;
+    const live = liveById.get(header.id);
+    const title = live
+      ? (liveTitles?.get(live)?.title ?? liveProjectionTitle(projections, live))
+      : cachedProjectionTitle(projectionCache, header);
+    return {
+      id: header.id,
+      title: displayTitle(header.id, cwd, title),
+      workspace_name: owner?.title ?? null,
     };
   });
 }
@@ -196,34 +293,9 @@ async function runSessionAction(
   if (!registry) return { ok: false, error: "workspaceRegistry 服务不可用" };
   const sessionId = String(body.session_id ?? "");
   switch (action) {
-    case "session-pin": {
-      const owner = registry.list().find((item) => item.sessionIds.includes(sessionId));
-      if (!owner) return { ok: false, error: "会话不存在" };
-      const first = owner.sessionIds[0];
-      if (first && first !== sessionId) {
-        await owner.insertSessionBefore(sessionId, first);
-      }
-      return { ok: true, pinned: true };
-    }
-    case "session-unpin": {
-      const owner = registry.list().find((item) => item.sessionIds.includes(sessionId));
-      if (!owner) return { ok: false, error: "会话不存在" };
-      await owner.insertSessionBefore(sessionId);
-      return { ok: true, pinned: false };
-    }
     case "session-archive":
       await registry.archiveSession(sessionId);
       return { ok: true };
-    case "session-finder": {
-      const session = sessionStoreOf(ctx)
-        ?.list()
-        .find((item) => item.id === sessionId);
-      const path =
-        session?.header.cwd ??
-        registry.list().find((item) => item.sessionIds.includes(sessionId))?.path;
-      if (!path) return { ok: false, error: "会话没有项目目录" };
-      return { ok: true, path };
-    }
     default:
       return { ok: false, error: `未知动作: ${action}` };
   }
@@ -361,8 +433,8 @@ export function apply(ctx: ProjectsContext): void {
         sctx.webServer.register({
           kind: "exact",
           path: "/dsh-desktop/sessions",
-          handler: (_req, res) => {
-            sendJson(res, 200, { ok: true, sessions: listSessions(ctx) });
+          handler: async (_req, res) => {
+            sendJson(res, 200, { ok: true, sessions: await listSessions(ctx) });
           },
         }),
         sctx.webServer.register({

@@ -499,20 +499,8 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
           sidebarToast((result && result.error) || "操作失败");
           return;
         }
-        if (action === "session-pin") {
-          sidebarToast("已置顶");
-        } else if (action === "session-unpin") {
-          sidebarToast("已取消置顶");
-        } else if (action === "session-archive") {
+        if (action === "session-archive") {
           sidebarToast("聊天已归档");
-        } else if (action === "session-finder") {
-          if (window.__DSH_DESKTOP__ && window.__DSH_DESKTOP__.openExternal && result.path) {
-            window.__DSH_DESKTOP__.openExternal(result.path).catch(function (error) {
-              sidebarToast("打开位置失败: " + error);
-            });
-          } else {
-            sidebarToast("桌面桥接不可用");
-          }
         }
         invalidateSidebarWorkspaces();
         hideSidebarMenu();
@@ -527,13 +515,7 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
     var menu = document.createElement("div");
     menu.id = SIDEBAR_MENU_ID;
     var items = [];
-    if (session.workspace_name) {
-      items.push({ id: session.pinned ? "session-unpin" : "session-pin", label: session.pinned ? "取消置顶" : "置顶聊天" });
-    }
     items.push({ id: "session-archive", label: "归档聊天" });
-    if (session.cwd) {
-      items.push({ id: "session-finder", label: "打开位置" });
-    }
     for (var i = 0; i < items.length; i++) {
       var item = items[i];
       var button = document.createElement("button");
@@ -764,7 +746,7 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
   }
 
   // 侧边栏区域（会话树 / 工作区行）：禁用系统原生右键菜单。
-  // 工作区行打开壳侧自定义菜单；会话行复用 dsh 自带的行内会话菜单，避免两套业务逻辑混在一起。
+  // 工作区行与会话行都打开壳侧自定义菜单。
   function installSidebarContextMenu() {
     document.addEventListener("contextmenu", function (event) {
       var target = event.target;

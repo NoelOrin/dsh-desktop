@@ -18,7 +18,6 @@ mod host_lifecycle;
 mod inject;
 mod notifications;
 mod process;
-#[allow(dead_code)]
 mod profiles;
 mod projects;
 mod theme;
@@ -100,6 +99,23 @@ fn generate_host_token() -> String {
     let mut bytes = [0u8; 24];
     getrandom::getrandom(&mut bytes).expect("生成 dsh web 注入 token 失败");
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// 构造 dsh 启动参数：以 --profile <active> 开头，不使用 "web" 别名。
+/// overlay 非 None 时追加 --patch <path>。
+fn dsh_web_args(active: &str, overlay: Option<&Path>) -> Vec<String> {
+    let mut args = vec!["--profile".to_string(), active.to_string()];
+    if let Some(overlay_path) = overlay {
+        args.push("--patch".to_string());
+        args.push(overlay_path.to_string_lossy().into_owned());
+    }
+    args.extend([
+        "--host".to_string(),
+        "127.0.0.1".to_string(),
+        "--port".to_string(),
+        "0".to_string(),
+    ]);
+    args
 }
 
 fn is_external_url(url: &tauri::Url) -> bool {
@@ -1018,6 +1034,8 @@ struct DshManager {
     failed_generation: Option<u64>,
     log_path: PathBuf,
     config_path: PathBuf,
+    profile_state_path: PathBuf,
+    startup_context: Option<profiles::StartupContext>,
     start_in_tray: Arc<AtomicBool>,
 }
 
@@ -1147,6 +1165,8 @@ pub fn run() {
                 failed_generation: None,
                 log_path,
                 config_path: config_path.clone(),
+                profile_state_path: app_data.join("profile-state.json"),
+                startup_context: None,
                 start_in_tray: start_in_tray.clone(),
                 managed_dsh_url: managed_dsh_url.clone(),
                 host_token: host_token.clone(),
@@ -1512,6 +1532,7 @@ impl DshManager {
                             }),
                         );
                         self.open_window(url);
+                        self.commit_profile_healthy();
                     }
                 }
                 Ok(ManagerMessage::ReadyTimeout { generation }) => {
@@ -1551,6 +1572,7 @@ impl DshManager {
                                 self.append_log(&format!(
                                     "[desktop] DSH 进程意外退出 ({exit})，{attempt}/{limit} 自动重启"
                                 ));
+                                self.rollback_profile("进程意外退出自动重启");
                                 self.handle_start();
                             }
                             RestartDecision::Fail => {
@@ -1626,33 +1648,31 @@ impl DshManager {
 
         let generation = self.lifecycle.begin_start();
 
+        // 解析 profile home：配置优先，否则 ~/.dsh；启动前读取 active profile 并保存本次启动上下文
+        let profile_home = match &home {
+            Some(home) => PathBuf::from(home),
+            None => dirs::home_dir()
+                .map(|dir| dir.join(".dsh"))
+                .ok_or_else(|| "无法解析 DSH profile 目录".to_string())?,
+        };
+        let startup_context = profiles::begin_startup(&self.profile_state_path, &profile_home)?;
+        let active = startup_context.active.clone();
+        self.startup_context = Some(startup_context);
+
         // 装配内嵌插件（best-effort）并生成 --patch overlay：任何失败只记日志，不影响 dsh 启动
         let mut log = |line: &str| self.append_log(line);
-        let default_home = dirs::home_dir().map(|h| h.join(".dsh"));
-        let plugins_home = home.as_deref().map(Path::new).or(default_home.as_deref());
         let overlay = embedded::prepare_overlay(
             embedded::plugins_resource_dir(self.app.path().resource_dir().ok().as_deref())
                 .as_deref(),
-            plugins_home,
+            Some(&profile_home),
             self.app.path().app_data_dir().ok().as_deref(),
             cfg!(debug_assertions),
             &mut log,
         );
 
         let mut cmd = Command::new(&node);
-        let mut args = vec!["web".to_string()];
-        if let Some(overlay_path) = &overlay {
-            args.push("--patch".into());
-            args.push(overlay_path.to_string_lossy().into_owned());
-        }
-        args.extend([
-            "--host".into(),
-            "127.0.0.1".into(),
-            "--port".into(),
-            "0".into(),
-        ]);
         cmd.arg(&entry)
-            .args(&args)
+            .args(dsh_web_args(&active, overlay.as_deref()))
             .env("PATH", effective_path())
             .env("NO_COLOR", "1")
             .current_dir(&workspace)
@@ -1669,6 +1689,12 @@ impl DshManager {
             cmd.env("DSH_HOME", home);
         }
         cmd.env("DSH_DESKTOP_MANAGED", "1");
+        cmd.env("DSH_DESKTOP_PROFILE", &active);
+        let profile_dir = profile_home.join("profiles").join(&active);
+        cmd.env("DSH_DESKTOP_PROFILE_DIR", &profile_dir);
+        if let Some(state_dir) = self.app.path().app_data_dir().ok() {
+            cmd.env("DSH_DESKTOP_STATE_DIR", &state_dir);
+        }
         if let Some(host_token) = self.host_token.lock().ok().and_then(|guard| guard.clone()) {
             cmd.env("DSH_DESKTOP_HOST_TOKEN", host_token);
         }
@@ -1681,7 +1707,7 @@ impl DshManager {
             .map(|path| format!(" --patch {}", path.to_string_lossy()))
             .unwrap_or_default();
         self.append_log(&format!(
-            "[desktop] 启动 dsh: {} {} web{overlay_log} --host 127.0.0.1 --port 0",
+            "[desktop] 启动 dsh: {} {} --profile {active}{overlay_log} --host 127.0.0.1 --port 0",
             node.display(),
             entry.display()
         ));
@@ -1695,6 +1721,49 @@ impl DshManager {
         self.spawn_health_checker();
 
         Ok(())
+    }
+
+    /// 健康检查通过后，把当前 active profile 提交为 last_known_good；失败仅记日志。
+    fn commit_profile_healthy(&mut self) {
+        let Some(context) = self.startup_context.as_ref() else {
+            return;
+        };
+        match profiles::mark_healthy(&self.profile_state_path, &context.active) {
+            Ok(_) => {
+                self.append_log(&format!(
+                    "[desktop] profile \"{}\" 健康检查通过，已提交",
+                    context.active
+                ));
+                self.startup_context = None;
+            }
+            Err(error) => {
+                self.append_log(&format!(
+                    "[desktop] 提交 profile \"{}\" 健康状态失败: {error}",
+                    context.active
+                ));
+            }
+        }
+    }
+
+    /// 本次启动失败/自动重启前调用：回滚到 last_known_good 并清空启动上下文。
+    fn rollback_profile(&mut self, reason: &str) {
+        let Some(context) = self.startup_context.take() else {
+            return;
+        };
+        match profiles::rollback_startup(&self.profile_state_path) {
+            Ok(state) => {
+                self.append_log(&format!(
+                    "[desktop] {reason}，回滚 profile \"{}\" -> \"{}\"",
+                    context.active, state.active
+                ));
+            }
+            Err(error) => {
+                self.append_log(&format!(
+                    "[desktop] 回滚 profile \"{}\" 失败: {error}",
+                    context.active
+                ));
+            }
+        }
     }
 
     fn open_window(&self, url: String) {
@@ -1715,6 +1784,7 @@ impl DshManager {
     }
 
     fn fail(&mut self, message: String) {
+        self.rollback_profile("启动失败");
         self.cleanup_child();
         self.append_log(&format!("[desktop] 失败: {message}"));
         self.notify("DSH 启动失败", &message);
@@ -3642,5 +3712,53 @@ mod tests {
         })
         .is_ok());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn dsh_web_args_uses_active_profile_with_overlay() {
+        let overlay = std::env::temp_dir().join("dsh-overlay.yml");
+        let args = dsh_web_args("workbench", Some(&overlay));
+
+        assert_eq!(args.first().map(String::as_str), Some("--profile"));
+        assert_eq!(args.get(1).map(String::as_str), Some("workbench"));
+        assert!(args.iter().any(|arg| arg == "--patch"));
+        assert!(args
+            .iter()
+            .any(|arg| arg == &overlay.to_string_lossy().to_string()));
+        assert!(!args.iter().any(|arg| arg == "web"));
+        assert_eq!(
+            args,
+            vec![
+                "--profile".to_string(),
+                "workbench".to_string(),
+                "--patch".to_string(),
+                overlay.to_string_lossy().into_owned(),
+                "--host".to_string(),
+                "127.0.0.1".to_string(),
+                "--port".to_string(),
+                "0".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn dsh_web_args_omits_patch_without_overlay() {
+        let args = dsh_web_args("workbench", None);
+
+        assert_eq!(args.first().map(String::as_str), Some("--profile"));
+        assert_eq!(args.get(1).map(String::as_str), Some("workbench"));
+        assert!(!args.iter().any(|arg| arg == "--patch"));
+        assert!(!args.iter().any(|arg| arg == "web"));
+        assert_eq!(
+            args,
+            vec![
+                "--profile".to_string(),
+                "workbench".to_string(),
+                "--host".to_string(),
+                "127.0.0.1".to_string(),
+                "--port".to_string(),
+                "0".to_string(),
+            ]
+        );
     }
 }

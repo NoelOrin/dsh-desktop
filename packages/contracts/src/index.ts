@@ -9,6 +9,9 @@ export type RuntimePhase =
 
 export type StartupMode = "normal" | "tray" | "minimized";
 
+/** dsh 桌面运行模式。 */
+export type DesktopMode = "compatibility" | "advanced";
+
 export interface DeepLinkPayload {
   id: string;
   url: string;
@@ -84,6 +87,36 @@ export interface ProjectWorktreeResult {
   branch: string;
 }
 
+/** dsh profile 摘要（profile 发现结果）。 */
+export interface DshProfileSummary {
+  name: string;
+  dir: string;
+  exists: boolean;
+  web_capable: boolean;
+  problem: string | null;
+}
+
+/** profile 切换状态机快照（版本化，便于损坏恢复）。 */
+export interface DesktopProfileState {
+  version: 1;
+  active: string;
+  pending: string | null;
+  last_known_good: string;
+}
+
+/** profile 选择结果。 */
+export interface ProfileSelectionResult {
+  profile: string;
+  restart_required: boolean;
+}
+
+/** 受管 dsh 插件操作结果。 */
+export interface PluginOperationResult {
+  ok: boolean;
+  exit_code: number | null;
+  output: string[];
+}
+
 export interface UiThemeTokens {
   bg: string;
   fg: string;
@@ -128,6 +161,12 @@ export const COMMANDS = {
   archiveProjectChats: "archive_project_chats",
   createProjectWorktree: "create_project_worktree",
   showProjectInFinder: "show_project_in_finder",
+  getProfiles: "get_profiles",
+  selectProfile: "select_profile",
+  getActiveProfile: "get_active_profile",
+  installProfilePlugin: "install_profile_plugin",
+  removeProfilePlugin: "remove_profile_plugin",
+  updateProfilePlugins: "update_profile_plugins",
   getShortcuts: "get_shortcuts",
   unregisterAllShortcuts: "unregister_all_shortcuts",
   getPendingDeepLinks: "get_pending_deeplinks",

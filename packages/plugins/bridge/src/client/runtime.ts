@@ -19,6 +19,16 @@ export interface BridgeLike {
     get(): Promise<DesktopSettings>;
     set(settings: DesktopSettings): Promise<void>;
   };
+  profiles: {
+    list(): Promise<DshProfileSummary[]>;
+    active(): Promise<DesktopProfileState>;
+    select(name: string): Promise<ProfileSelectionResult>;
+  };
+  plugins: {
+    install(spec: string): Promise<PluginOperationResult>;
+    remove(name: string): Promise<PluginOperationResult>;
+    update(): Promise<PluginOperationResult>;
+  };
   openExternal(target: string): Promise<void>;
   update: {
     check(): Promise<string | null>;
@@ -51,6 +61,36 @@ export type StartupMode = "normal" | "tray" | "minimized";
 export interface DesktopSettings {
   autostart: boolean;
   startup_mode: StartupMode;
+}
+
+/** dsh profile 摘要（与 packages/contracts 的 DshProfileSummary 对齐）。 */
+export interface DshProfileSummary {
+  name: string;
+  dir: string;
+  exists: boolean;
+  web_capable: boolean;
+  problem: string | null;
+}
+
+/** profile 状态机快照（与 packages/contracts 的 DesktopProfileState 对齐）。 */
+export interface DesktopProfileState {
+  version: 1;
+  active: string;
+  pending: string | null;
+  last_known_good: string;
+}
+
+/** profile 选择结果（与 packages/contracts 的 ProfileSelectionResult 对齐）。 */
+export interface ProfileSelectionResult {
+  profile: string;
+  restart_required: boolean;
+}
+
+/** 受管插件操作结果（与 packages/contracts 的 PluginOperationResult 对齐）。 */
+export interface PluginOperationResult {
+  ok: boolean;
+  exit_code: number | null;
+  output: string[];
 }
 
 /** SettingsScope<T> 的最小形状：getSnapshot / subscribe / set。 */

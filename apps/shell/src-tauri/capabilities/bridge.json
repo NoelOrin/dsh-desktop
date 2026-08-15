@@ -22,6 +22,12 @@
     "allow-set-autostart",
     "allow-get-desktop-settings",
     "allow-set-desktop-settings",
+    "allow-get-profiles",
+    "allow-select-profile",
+    "allow-get-active-profile",
+    "allow-install-profile-plugin",
+    "allow-remove-profile-plugin",
+    "allow-update-profile-plugins",
     "allow-check-update",
     "allow-install-update",
     "allow-window-action"

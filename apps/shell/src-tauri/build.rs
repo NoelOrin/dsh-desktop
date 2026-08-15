@@ -37,6 +37,12 @@ fn main() {
             "update_dsh",
             "open_paths",
             "import_paths",
+            "get_profiles",
+            "select_profile",
+            "get_active_profile",
+            "install_profile_plugin",
+            "remove_profile_plugin",
+            "update_profile_plugins",
         ]));
     if let Err(error) = tauri_build::try_build(attributes) {
         println!("{error}");

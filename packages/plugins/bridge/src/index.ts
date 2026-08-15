@@ -1,7 +1,11 @@
 import type { Context } from "@deepseek-ai/cordis";
 import type {
+  DesktopProfileState,
   DesktopSettings,
   DshConfig,
+  DshProfileSummary,
+  PluginOperationResult,
+  ProfileSelectionResult,
   RuntimeSnapshot,
   WindowAction,
 } from "@dsh-desktop/contracts";
@@ -33,6 +37,18 @@ export interface DshDesktopBridge {
   desktop: {
     get(): Promise<DesktopSettings>;
     set(settings: DesktopSettings): Promise<void>;
+  };
+  /** profile 发现与切换；active 为状态机快照，pending 需重启后生效。 */
+  profiles: {
+    list(): Promise<DshProfileSummary[]>;
+    active(): Promise<DesktopProfileState>;
+    select(name: string): Promise<ProfileSelectionResult>;
+  };
+  /** 受管 dsh 插件操作；profile 由 Rust 自动取 active。 */
+  plugins: {
+    install(spec: string): Promise<PluginOperationResult>;
+    remove(name: string): Promise<PluginOperationResult>;
+    update(): Promise<PluginOperationResult>;
   };
   shortcuts: {
     register(shortcut: string, cb?: () => void): Promise<() => void>;

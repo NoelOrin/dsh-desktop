@@ -132,6 +132,7 @@ Common flags (env vars `DSH_PROXY_*` take lower precedence than flags):
 ## Configuration
 
 Priority: `config.json` (app data dir) → environment variables → PATH detection.
+PATH detection merges the GUI process PATH, macOS system PATH (`/etc/paths` + `/etc/paths.d`), Linux `/etc/environment`, Windows user/system registry PATH, and non-Windows user shell PATH; the merged PATH is also passed to dsh/npm child processes.
 The Desktop page "Config" section reads/writes `config.json` via `get_config` / `set_config`; fields not set in `config.json` fall back to environment variables.
 
 | Environment variable | Default | Description |

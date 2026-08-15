@@ -134,6 +134,7 @@ yarn lan-proxy --token "一个足够长的随机串"
 ## 配置
 
 配置优先级：`config.json`（应用数据目录）→ 环境变量 → PATH 检测。
+PATH 检测会合并桌面进程自身 PATH、macOS 系统 PATH（`/etc/paths` + `/etc/paths.d`）、Linux `/etc/environment`、Windows 用户/系统注册表 PATH，以及非 Windows 用户 shell PATH；合并结果也会注入 dsh/npm 子进程。
 桌面壳“配置”区通过 `get_config` / `set_config` 读写 `config.json`；未在 `config.json` 设置的字段回退到环境变量。
 
 | 环境变量 | 默认值 | 说明 |

@@ -24,9 +24,10 @@ dsh 插件的开发容器：**每个含 `dsh` 字段的子目录一个 dsh 插�
   的右键菜单；数据与操作经 `window.__DSH_DESKTOP__.projects` 走壳侧命令。
   host 面经 `webServer` 暴露 `/dsh-desktop/workspaces`（工作区列表）与
   `/dsh-desktop/workspaces/action`（置顶 / 取消置顶 / Finder / 工作树 / 改名 / 归档 /
-  移除，走 dsh `workspaceRegistry` 服务），供壳注入脚本渲染
-  dsh 侧边栏工作区右键菜单；会话行右键菜单复用 dsh 自带的行内会话菜单，
-  与工作区菜单分开处理。
+  移除，走 dsh `workspaceRegistry` 服务；会话置顶 / 取消置顶 / 归档 / 打开位置也走
+  该 action 端点）及 `/dsh-desktop/sessions`
+  （会话列表 / 置顶状态 / 工作区归属），供壳注入脚本渲染 dsh 侧边栏右键菜单；
+  会话行使用独立的“置顶聊天 / 归档聊天 / 打开位置”菜单，与工作区菜单分开处理。
   端点只监听循环回环地址，动作均为工作区级最小切片。
 - `client-kit/` — **非插件共享源码**：统一 `window.__DSH_DESKTOP__` 读取、client CSS
   注入与 tsdown 公共插件（CSS 内嵌 + `@deepseek-ai` 值导入 purity gate）；不含

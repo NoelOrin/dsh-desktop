@@ -45,6 +45,7 @@
 ## 配置优先级
 
 `config.json`（应用数据目录）→ 环境变量（`DSH_BIN` / `DSH_NODE` / `DSH_HOME`）→ PATH 检测。
+PATH 检测会合并桌面进程自身 PATH、macOS 系统 PATH（`/etc/paths` + `/etc/paths.d`）、Linux `/etc/environment`、Windows 用户/系统注册表 PATH，以及非 Windows 用户 shell PATH；合并结果也会注入 dsh/npm 子进程。
 前端通过 `get_config` / `set_config` 读写配置；`set_config` 只写 `config.json`，不覆盖环境变量。
 
 ## 项目约定

@@ -46,7 +46,7 @@ DSH Desktop 是 dsh 的桌面套壳：Rust 后端拉起 `dsh web` 子进程，�
 | 职责 | 检测/安装/拉起/监控/停止 dsh 子进程；窗口/菜单/全局快捷键；应用数据目录；`config.json`；原生交互（打开日志目录）；打包分发 |
 | 已声明能力 | capabilities `core:default` + `global-shortcut:default`（覆盖 main 窗口） |
 | 实现契约 | `get_status` / `install_dsh` / `restart` / `open_log_directory` / `get_config` / `set_config` / `get_ui_theme` / `window_action`（类型与常量见 `packages/contracts`） |
-| 配置 | `config.json`（应用数据目录）与 `desktop-settings.json`（自启/启动模式）→ 环境变量（`DSH_BIN`/ `DSH_NODE`/ `DSH_HOME`）→ PATH 检测 |
+| 配置 | `config.json`（应用数据目录）与 `desktop-settings.json`（自启/启动模式）→ 环境变量（`DSH_BIN`/ `DSH_NODE`/ `DSH_HOME`）→ PATH 检测（合并进程、macOS/Linux/Windows 系统 PATH 与非 Windows shell PATH） |
 
 **红线**：Tauri 壳不实现任何 dsh 产品功能——不做 agent、不做工具、不接 LLM、
 不解析 dsh 的配置树、**不重复实现 dsh 的插件管理**。这些永远是 dsh 自己的事。

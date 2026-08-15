@@ -12,7 +12,7 @@
 | host | `src/index.ts` | 插件入口（`export const name` + `apply(ctx)`）；定义 `DshDesktopBridge` 类型；注册 `dsh-desktop/health` 健康端点，不实现 dsh 业务 |
 | client | `src/client.tsx` | 在 dsh WebUI 设置面板注册“桌面”设置节（状态 / 配置 / 工具 / 开机自启与启动模式）与“外观”设置节（主题偏好 / 主题库 / 背景图 / 玻璃透明度 / 自定义主题 / 排版）；`ui-theme` 命名空间只 bind 不注册，快照经 `createThemeStore` 防抖写回，变化时 `applyThemeSection` 实时应用 |
 | shared | `src/shared/theme.ts` | 主题家族、token 推导、背景/玻璃/排版边界与默认值 |
-| client UI | `src/client/*` | 桌面/外观设置节组件（`DesktopPanel.tsx`、`AppearanceSection.tsx` 等）、共享控件（`ui/controls.*`）、运行时类型切片（`runtime.ts`）与主题应用逻辑；桥接读取与样式注入统一走 `../../client-kit/inject.ts` |
+| client UI | `src/client/*` | 桌面/外观设置节组件（`DesktopPanel.tsx`、`AppearanceSection.tsx` 等）、桌面壳形态（`desktop-shell.ts` / `desktop-shell.module.css`）、共享控件（`ui/controls.*`）、运行时类型切片（`runtime.ts`）与主题应用逻辑；桥接读取与样式注入统一走 `../../../client-kit/inject.ts` |
 
 `package.json` 通过 `dsh.client`（platform web）声明 client 面并导出 `./client`；
 client 面依赖 `@deepseek-ai/dsh-client-ui-settings` 等 dsh client 生态（peer 声明）。
@@ -68,6 +68,14 @@ client 面依赖 `@deepseek-ai/dsh-client-ui-settings` 等 dsh client 生态（p
 - 壳侧为启动页/窗口背景读取同一分节（`get_ui_theme` / `dsh-ui-theme`），属 **Tauri 壳域**；
 - 窗口控制按钮经 `windowAction` / `onWindowState` 受控桥接调用 `window_action` /
   `dsh-window-state`。
+
+## 桌面壳形态
+
+- `applyDesktopShell` 在 bridge client 装载时设置
+  `html[data-dsh-desktop]` / `html[data-dsh-desktop-platform]`，并创建拖动条、
+  非 macOS 窗口控制按钮；Shell 注入的 `HARNESS_CHROME_SCRIPT` 只保留侧边栏右键菜单。
+- 普通 `dsh web`（未挂载 bridge）不会应用桌面形态；桌面壳通过 `--patch` 挂载 bridge 后，
+  由插件自己负责平台标记与标题栏，不再由 Rust 注入窗口控制 DOM。
 
 ## 维护约定
 

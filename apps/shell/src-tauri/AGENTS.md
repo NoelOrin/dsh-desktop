@@ -58,7 +58,7 @@ DSH Desktop 的 Rust 后端。职责：检测 / 一键安装或更新 `dsh`、�
 - **残留清理**：启动/重启前经 `process::cleanup_stale_dsh_web` 枚举进程，只清理带应用数据目录 overlay 或 `DSH_DESKTOP_MANAGED` 标记的旧 `dsh web` 实例，不误杀单独启动的 `dsh web`
 - **文件拖放与动作**：main 窗口 `DragDropEvent::Drop` 生成结构化 `dsh-file-drop`；`open_paths` / `import_paths` 命令以 `open` / `import` 动作转发给 dsh web
 - **桥接**：`on_page_load` 经 `inject::inject_dsh_web` 对 loopback dsh web 页面注入 `BRIDGE_SCRIPT` 与 `HARNESS_CHROME_SCRIPT`，暴露 `window.__DSH_DESKTOP__`（通知 / 剪贴板 / 对话框 / openExternal / 状态与日志 / 配置 / 文件动作 / 深链 / 通知权限 / 开机自启与启动模式 / 快捷键 / 项目 / 更新）；`HARNESS_CHROME_SCRIPT` 只保留侧边栏右键菜单，标题栏形态由 bridge client 提供，权限由 `capabilities/bridge.json` remote 白名单收口
-- **无边框窗口**：main 窗口无系统边框（macOS 用 Overlay title bar）；`window_action` 支持 minimize / maximize（切换）/ close；`dsh-window-state` 在 setup、窗口 Resized 与 dsh 就绪导航后广播
+- **无边框窗口**：main 窗口无系统边框（macOS 用 Overlay title bar）；`window_action` 支持 minimize / maximize（切换）/ close / toggle-visible（显示↔隐藏）；`dsh-window-state` 在 setup、窗口 Resized 与 dsh 就绪导航后广播
 - **导航策略**：`create_main_window` 在窗口创建时注册 `on_navigation` / `on_new_window`；只允许 Tauri 本地页面与 loopback HTTP，外部 HTTP/HTTPS 交给系统浏览器，`window.open` 一律拒绝
 - **窗口状态记忆**：window-state 插件保存 main 窗口大小/位置/最大化状态，下次启动恢复
 - **自动更新**：启动后异步查询 GitHub latest release，发现新版本 emit `dsh-update-available`；`check_update` / `install_update` 供桥接“检查更新”使用，静默下载当前平台安装包到 `app_cache_dir()/updates/` 并返回本地路径，由用户手动运行安装

@@ -16,8 +16,9 @@ dsh 插件的开发容器：**每个含 `dsh` 字段的子目录一个 dsh 插�
   在 dsh WebUI 设置面板注册“快捷键”设置节，经 `window.__DSH_DESKTOP__.shortcuts`
   管理壳侧全局快捷键（注册 / 查询 / 移除 / 全部清理）；同时在 client 全局生命周期监听
   双击 Esc 停止当前对话：首次按键经 `shell.overlay` 显示“再次按 Esc 终止当前对话”，
-  第二次按键调用 `ctx.sessions` 当前会话的 `cancel()`。双击 Esc 的开关与判定窗口经
-  localStorage 持久化，职责和维护约定见 `./shortcuts/AGENTS.md`
+  第二次按键调用 `ctx.sessions` 当前会话的 `cancel()`；另提供“常用动作”系统级
+  全局快捷键预设（显示/隐藏主窗口、停止当前对话、新建对话），经 `onShortcut` 分发到
+  对应动作。设置经 localStorage 持久化，职责和维护约定见 `./shortcuts/AGENTS.md`
 - `projects/`（`@dsh-desktop/plugin-projects`）— **项目设置插件**（client + host）：
   在 dsh WebUI 设置面板注册“项目”设置节，展示壳侧持久化的本地项目列表，提供
   置顶 / Finder 显示 / 创建永久工作树 / 编辑 / 全部标为已读 / 归档聊天 / 移除

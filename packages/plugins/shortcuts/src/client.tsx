@@ -410,12 +410,42 @@ function PresetShortcuts({
       return;
     }
     setBusyId(id);
+    let disposeNext: (() => void) | undefined;
+    let oldRemoved = false;
     try {
       if (preset.enabled) {
-        await bridge.shortcuts.unregister(preset.shortcut);
-        await bridge.shortcuts.register(next);
+        disposeNext = await bridge.shortcuts.register(next);
+        try {
+          await bridge.shortcuts.unregister(preset.shortcut);
+          oldRemoved = true;
+        } catch (error) {
+          try {
+            disposeNext();
+          } catch {
+            // 回滚失败时保留原始 unregister 错误。
+          }
+          throw error;
+        }
       }
-      await scope.set("presets", { [id]: { ...preset, shortcut: next } });
+      try {
+        await scope.set("presets", { [id]: { ...preset, shortcut: next } });
+      } catch (error) {
+        if (preset.enabled) {
+          if (oldRemoved) {
+            try {
+              await bridge.shortcuts.register(preset.shortcut);
+            } catch {
+              // 回滚旧键失败时保留原始错误；设置区会提示用户检查系统快捷键。
+            }
+          }
+          try {
+            disposeNext?.();
+          } catch {
+            // 回滚失败时保留原始持久化错误。
+          }
+        }
+        throw error;
+      }
       setError(null);
       if (preset.enabled) setNotice(t("preset.updated"));
     } catch (e) {
@@ -573,18 +603,26 @@ function ShortcutsPanel({
       return;
     }
     if (!window.confirm(t("clear.confirm"))) return;
+    const previousPresets = Object.fromEntries(
+      SHORTCUT_PRESET_IDS.map((id) => [id, settings.presets[id]]),
+    ) as ShortcutsSettings["presets"];
+    const disabledPresets = Object.fromEntries(
+      SHORTCUT_PRESET_IDS.map((id) => [id, { ...settings.presets[id], enabled: false }]),
+    ) as ShortcutsSettings["presets"];
     try {
-      await bridge.shortcuts.unregisterAll();
-      // 一并停用常用动作预设，避免“全部移除”后又被预设重新补齐注册。
-      await scope.set(
-        "presets",
-        Object.fromEntries(
-          SHORTCUT_PRESET_IDS.map((id) => {
-            const preset = settings.presets[id];
-            return [id, { ...preset, enabled: false }];
-          }),
-        ),
-      );
+      // 先停用并持久化预设，再注销系统快捷键：若注销失败，设置状态不会和
+      // 下次装载时仍启用的预设冲突，用户可直接重试。
+      await scope.set("presets", disabledPresets);
+      try {
+        await bridge.shortcuts.unregisterAll();
+      } catch (error) {
+        try {
+          await scope.set("presets", previousPresets);
+        } catch {
+          // 回滚本地状态失败时保留原始错误。
+        }
+        throw error;
+      }
       setNotice(t("cleared"));
       setError(null);
       await refresh();

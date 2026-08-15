@@ -2,8 +2,10 @@
 import {
   appearanceFontStack,
   clampWallpaperEffect,
+  DEFAULT_CODE_FONT_SIZE,
   DEFAULT_CODE_STACK,
   DEFAULT_FAMILY_ID,
+  DEFAULT_INTERFACE_FONT_SIZE,
   DEFAULT_SANS_STACK,
   deriveThemeTokens,
   isWallpaperDataUrl,
@@ -20,6 +22,124 @@ import {
   wallpaperBlurPx,
   wallpaperPixelFactor,
 } from "../shared/theme";
+
+type FontKind = "interface" | "code";
+
+interface FontToken {
+  name: string;
+  size: number;
+  line: number;
+  weight: number | string;
+  style?: "normal" | "italic";
+  kind: FontKind;
+}
+
+/** dsh ui-theme 在 body 上发布的字体 token（gradient-shadow-text.css 同源）。 */
+const FONT_TOKENS: readonly FontToken[] = [
+  { name: "--dsw-font-markdown-h1", size: 24, line: 34, weight: 700, kind: "interface" },
+  { name: "--dsw-font-markdown-h2", size: 22, line: 32, weight: 700, kind: "interface" },
+  { name: "--dsw-font-markdown-h3", size: 20, line: 30, weight: 700, kind: "interface" },
+  { name: "--dsw-font-markdown-h4", size: 16, line: 28, weight: 600, kind: "interface" },
+  { name: "--dsw-font-markdown-base", size: 16, line: 28, weight: 400, kind: "interface" },
+  { name: "--dsw-font-markdown-base-strong", size: 16, line: 28, weight: 600, kind: "interface" },
+  {
+    name: "--dsw-font-markdown-base-italic",
+    size: 16,
+    line: 28,
+    weight: 400,
+    style: "italic",
+    kind: "interface",
+  },
+  {
+    name: "--dsw-font-markdown-base-strong-italic",
+    size: 16,
+    line: 28,
+    weight: 600,
+    style: "italic",
+    kind: "interface",
+  },
+  { name: "--dsw-font-markdown-table", size: 15, line: 25, weight: 400, kind: "interface" },
+  { name: "--dsw-font-markdown-table-head", size: 15, line: 25, weight: 500, kind: "interface" },
+  { name: "--dsw-font-markdown-small", size: 14, line: 24, weight: 400, kind: "interface" },
+  { name: "--dsw-font-markdown-small-strong", size: 14, line: 24, weight: 600, kind: "interface" },
+  {
+    name: "--dsw-font-markdown-small-italic",
+    size: 14,
+    line: 24,
+    weight: 400,
+    style: "italic",
+    kind: "interface",
+  },
+  {
+    name: "--dsw-font-markdown-small-strong-italic",
+    size: 14,
+    line: 24,
+    weight: 600,
+    style: "italic",
+    kind: "interface",
+  },
+  { name: "--dsw-font-markdown-code", size: 14, line: 22, weight: 400, kind: "code" },
+  { name: "--dsw-font-markdown-code-block", size: 13, line: 22, weight: 400, kind: "code" },
+  { name: "--dsw-font-markdown-code-block-small", size: 12, line: 18, weight: 400, kind: "code" },
+  { name: "--dsw-font-xl-24", size: 24, line: 32, weight: 600, kind: "interface" },
+  { name: "--dsw-font-l-20", size: 20, line: 28, weight: 500, kind: "interface" },
+  { name: "--dsw-font-m-18", size: 16, line: 28, weight: 500, kind: "interface" },
+  { name: "--dsw-font-base-16", size: 16, line: 24, weight: 400, kind: "interface" },
+  { name: "--dsw-font-base-strong-16", size: 16, line: 24, weight: 500, kind: "interface" },
+  { name: "--dsw-font-s-14", size: 14, line: 22, weight: 400, kind: "interface" },
+  { name: "--dsw-font-s-strong-14", size: 14, line: 22, weight: 500, kind: "interface" },
+  { name: "--dsw-font-xs-13", size: 13, line: 20, weight: 400, kind: "interface" },
+  { name: "--dsw-font-xs-strong-13", size: 13, line: 20, weight: 500, kind: "interface" },
+  { name: "--dsw-font-xxs-12", size: 12, line: 18, weight: 400, kind: "interface" },
+  { name: "--dsw-font-xxs-strong-12", size: 12, line: 18, weight: 500, kind: "interface" },
+  { name: "--dsw-font-xxxs-11", size: 11, line: 14, weight: 400, kind: "interface" },
+  { name: "--dsw-font-xxxs-strong-11", size: 11, line: 14, weight: 500, kind: "interface" },
+];
+
+function roundPixel(value: number): string {
+  return `${Math.round(value * 100) / 100}px`;
+}
+
+function applyTypographyTokens(
+  body: HTMLElement,
+  section: ThemeSettings,
+  sans: string,
+  code: string,
+  composer: string,
+  terminal: string,
+): void {
+  const interfaceSize = section.fontSizeInterface || DEFAULT_INTERFACE_FONT_SIZE;
+  const codeSize = section.fontSizeCode || DEFAULT_CODE_FONT_SIZE;
+  const interfaceFactor = interfaceSize / DEFAULT_INTERFACE_FONT_SIZE;
+  const codeFactor = codeSize / DEFAULT_CODE_FONT_SIZE;
+
+  for (const token of FONT_TOKENS) {
+    const factor = token.kind === "code" ? codeFactor : interfaceFactor;
+    const size = token.size * factor;
+    const line = token.line * factor;
+    const family = token.kind === "code" ? "var(--ds-font-family-code)" : "var(--dsw-font-family)";
+    const style = token.style ?? "normal";
+    const prefix = style === "italic" ? "italic " : "";
+    body.style.setProperty(
+      token.name,
+      `${prefix}${token.weight} ${roundPixel(size)}/${roundPixel(line)} ${family}`,
+    );
+    body.style.setProperty(`${token.name}-font-family`, family);
+    body.style.setProperty(`${token.name}-font-weight`, String(token.weight));
+    body.style.setProperty(`${token.name}-line-height`, roundPixel(line));
+    body.style.setProperty(`${token.name}-font-size`, roundPixel(size));
+    body.style.setProperty(`${token.name}-font-style`, style);
+  }
+
+  body.style.setProperty("--dsw-font-size-code", `${codeSize}px`);
+  body.style.setProperty("--dsw-font-family", sans);
+  body.style.setProperty("--ds-font-family-code", code);
+  body.style.setProperty("--dsw-font-family-composer", composer);
+  body.style.setProperty("--dsw-font-family-terminal", terminal);
+  body.style.setProperty("--dsw-font-mono", code);
+  body.style.fontFamily = sans;
+  body.style.fontSize = `${interfaceSize}px`;
+}
 
 /** 背景图层样式（上游 rc.6 无 wallpaper.css，由本插件注入）。 */
 export function wallpaperStyleSheet(): string {
@@ -248,6 +368,14 @@ export function applyThemeSection(
   );
   root.style.setProperty(
     "--dsw-font-family-terminal",
+    appearanceFontStack(section.fontFamilyTerminal || "", code),
+  );
+  applyTypographyTokens(
+    body,
+    section,
+    sans,
+    code,
+    appearanceFontStack(section.fontFamilyComposer || "", sans),
     appearanceFontStack(section.fontFamilyTerminal || "", code),
   );
 

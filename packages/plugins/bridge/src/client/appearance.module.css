@@ -164,14 +164,14 @@
 
 .wallpaperPreview {
   box-sizing: border-box;
-  width: 100%;
-  height: 160px;
+  display: block;
+  width: min(100%, 560px);
+  aspect-ratio: 4 / 3;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 8px;
   background-color: var(--dsw-alias-bg-layer-1);
-  background-position: center;
-  background-repeat: no-repeat;
-  background-size: cover;
+  object-fit: cover;
+  object-position: center;
 }
 
 .wallpaperEmpty {
@@ -403,10 +403,6 @@
   .effectStack,
   .typographyGrid {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .wallpaperPreview {
-    height: 128px;
   }
 
   .themeRow {

@@ -1,10 +1,12 @@
+import { injectPluginCss } from "../../client-kit/inject";
 import { AppearanceSection } from "./client/AppearanceSection";
 import { DesktopPanel } from "./client/DesktopPanel";
 import type { SettingsScopeLike, Translate } from "./client/runtime";
-import "./client/style-inject";
 import { applyThemeSection, ensurePageStyle } from "./client/theme-apply";
 import { createThemeStore } from "./client/theme-store";
 import { THEME_SETTINGS_NAMESPACE, type ThemeSettings } from "./shared/theme";
+
+injectPluginCss("@dsh-desktop/plugin-bridge", "@dsh-desktop/plugin-bridge/ui");
 
 /**
  * client 面所需服务的本地结构类型。dsh client 服务（slots / locale / settingsScope / connection /

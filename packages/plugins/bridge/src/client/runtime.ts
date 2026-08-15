@@ -1,4 +1,5 @@
 /** client 面桥接与桌面设置的本地类型切片。 */
+import { getBridge as readBridge } from "../../../client-kit/inject";
 
 /** 桥接对象最小切片（与 src/index.ts 的 DshDesktopBridge 对齐；client 侧内联读取 window，不跨侧 import）。 */
 export interface BridgeLike {
@@ -62,7 +63,4 @@ export interface SettingsScopeLike<T> {
 export type Translate = (key: string) => string;
 
 /** 读取壳注入的桥接对象；未注入（如纯浏览器）时返回 null。 */
-export function getBridge(): BridgeLike | null {
-  const bridge = (window as unknown as { __DSH_DESKTOP__?: BridgeLike }).__DSH_DESKTOP__;
-  return bridge ?? null;
-}
+export const getBridge = () => readBridge<BridgeLike>();

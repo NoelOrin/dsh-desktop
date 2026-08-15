@@ -71,12 +71,7 @@ export function WallpaperRow({
         />
       </div>
       {hasImage ? (
-        <div
-          className={css.wallpaperPreview}
-          style={{ backgroundImage: `url("${wallpaperImage}")` }}
-          role="img"
-          aria-label={t("wallpaper.preview")}
-        />
+        <img className={css.wallpaperPreview} src={wallpaperImage} alt={t("wallpaper.preview")} />
       ) : (
         <div className={css.wallpaperEmpty}>{t("wallpaper.empty")}</div>
       )}

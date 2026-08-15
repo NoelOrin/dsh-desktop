@@ -216,6 +216,11 @@ const BRIDGE_SCRIPT: &str = r#"(function () {
       get: function () { return invoke("get_desktop_settings"); },
       set: function (settings) { return invoke("set_desktop_settings", { settings: settings }); },
     },
+    profiles: {
+      list: function () { return invoke("get_profiles"); },
+      active: function () { return invoke("get_active_profile"); },
+      select: function (name) { return invoke("select_profile", { name: name }); },
+    },
     shortcuts: {
       register: function (s, cb) {
         return invoke("register_shortcut", { shortcut: s }).then(function () {
@@ -968,6 +973,7 @@ struct AppState {
     config_path: PathBuf,
     desktop_settings_path: PathBuf,
     projects_path: PathBuf,
+    profile_state_path: PathBuf,
     /// 应用是否正在退出（托盘"退出"置 true，用于关闭到托盘时区分真正退出）。
     exiting: Arc<AtomicBool>,
     /// --autostart + settings startupMode=tray 时隐藏主窗口，直到用户从托盘唤起。
@@ -1121,6 +1127,7 @@ pub fn run() {
             let config_path = app_data.join("config.json");
             let desktop_settings_path = app_data.join("desktop-settings.json");
             let projects_path = app_data.join("projects.json");
+            let profile_state_path = app_data.join("profile-state.json");
 
             let inner = Arc::new(Mutex::new(Inner {
                 log_dir: Some(log_dir.clone()),
@@ -1184,6 +1191,7 @@ pub fn run() {
                 config_path,
                 desktop_settings_path,
                 projects_path,
+                profile_state_path,
                 exiting: exiting.clone(),
                 start_in_tray: start_in_tray.clone(),
                 shortcuts: Arc::new(Mutex::new(HashMap::new())),
@@ -1302,6 +1310,9 @@ pub fn run() {
             archive_project_chats,
             create_project_worktree,
             show_project_in_finder,
+            get_profiles,
+            get_active_profile,
+            select_profile,
             register_shortcut,
             unregister_shortcut,
             get_shortcuts,
@@ -2124,6 +2135,34 @@ fn get_ui_theme(state: State<AppState>) -> UiThemeSnapshot {
         None => theme::UiThemeSection::default(),
     };
     resolve_ui_theme(&section, system_dark)
+}
+
+#[tauri::command]
+fn get_profiles(state: State<AppState>) -> Vec<profiles::DshProfileSummary> {
+    let home = settings_home(&state.config_path).unwrap_or_default();
+    profiles::list_profiles(&home)
+}
+
+#[tauri::command]
+fn get_active_profile(state: State<AppState>) -> profiles::ProfileState {
+    profiles::load_state(&state.profile_state_path)
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct ProfileSelectionResult {
+    profile: String,
+    restart_required: bool,
+}
+
+#[tauri::command]
+fn select_profile(state: State<AppState>, name: String) -> Result<ProfileSelectionResult, String> {
+    let home = settings_home(&state.config_path).unwrap_or_default();
+    let result = profiles::select_profile(&state.profile_state_path, &home, &name)?;
+    Ok(ProfileSelectionResult {
+        profile: result.pending.unwrap_or(name),
+        restart_required: true,
+    })
 }
 
 #[tauri::command]

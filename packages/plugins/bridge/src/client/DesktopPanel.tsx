@@ -10,7 +10,9 @@ import {
 import { useEffect, useRef, useState } from "react";
 import css from "./desktop.module.css";
 import {
+  type DesktopProfileState,
   type DshConfig,
+  type DshProfileSummary,
   getBridge,
   type RuntimeSnapshot,
   type StartupMode,
@@ -448,6 +450,113 @@ function ToolsPanel({ t }: { t: Translate }): JSX.Element {
   );
 }
 
+function ProfilePanel(): JSX.Element {
+  const [profiles, setProfiles] = useState<DshProfileSummary[]>([]);
+  const [active, setActive] = useState<DesktopProfileState | null>(null);
+  const [selected, setSelected] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [switching, setSwitching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    let disposed = false;
+    const bridge = getBridge();
+    if (!bridge) {
+      setError("桌面壳桥接不可用");
+      setLoading(false);
+      return;
+    }
+    Promise.all([bridge.profiles.list(), bridge.profiles.active()])
+      .then(([list, state]) => {
+        if (disposed) return;
+        setProfiles(list);
+        setActive(state);
+        setSelected(state.pending ?? state.active);
+      })
+      .catch((e: unknown) => {
+        if (!disposed) setError(`读取运行环境失败: ${String(e)}`);
+      })
+      .finally(() => {
+        if (!disposed) setLoading(false);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+  const current = active ? (active.pending ?? active.active) : "";
+  // 当前运行环境若不在可发现列表中，仍作为回显项加入下拉，避免出现空值。
+  const options: DshProfileSummary[] = profiles.some((p) => p.name === current)
+    ? profiles
+    : [
+        ...profiles,
+        {
+          name: current,
+          dir: "",
+          exists: false,
+          web_capable: false,
+          problem: "当前运行环境不在可发现的 profile 列表中",
+        },
+      ].filter((profile) => profile.name !== "");
+
+  const switchProfile = async (name: string) => {
+    const bridge = getBridge();
+    if (!bridge) {
+      setError("桌面壳桥接不可用");
+      return;
+    }
+    setError(null);
+    setNotice(null);
+    setSwitching(true);
+    try {
+      const result = await bridge.profiles.select(name);
+      setSelected(result.profile);
+      setNotice(`已选择 profile “${result.profile}”，重启 dsh 后切换`);
+      await bridge.restart();
+    } catch (e) {
+      setError(`切换 profile 失败: ${String(e)}`);
+      setSelected(current);
+    } finally {
+      setSwitching(false);
+    }
+  };
+
+  const selectedProblem = options.find((p) => p.name === selected)?.problem ?? null;
+
+  return (
+    <div className={css.profileBlock}>
+      <div className={css.profileHead}>
+        <span className={css.profileTitle}>运行环境（Profile）</span>
+        <span className={css.profileCurrent}>
+          {active
+            ? active.pending
+              ? `待切换：${active.pending}（当前 ${active.active}）`
+              : `当前：${active.active}`
+            : "读取中…"}
+        </span>
+      </div>
+      <select
+        id="desktop-profile"
+        className={css.profileSelect}
+        value={selected}
+        disabled={loading || switching}
+        onChange={(event) => void switchProfile(event.currentTarget.value)}
+      >
+        {loading ? <option value="">加载中…</option> : null}
+        {options.map((profile) => (
+          <option key={profile.name} value={profile.name} disabled={!profile.web_capable}>
+            {profile.name}
+          </option>
+        ))}
+      </select>
+      {selectedProblem ? <p className={css.messageError}>{selectedProblem}</p> : null}
+      {notice ? <p className={css.messageInfo}>{notice}</p> : null}
+      {error ? <p className={css.messageError}>{error}</p> : null}
+    </div>
+  );
+}
+
 export function DesktopPanel({ t }: { t: Translate }): JSX.Element {
   return (
     <SettingsPage>
@@ -464,6 +573,13 @@ export function DesktopPanel({ t }: { t: Translate }): JSX.Element {
         description={t("nav.config.desc")}
       >
         <ConfigPanel t={t} />
+      </SettingsSection>
+      <SettingsSection
+        headingId="desktop-profile-heading"
+        title="运行环境"
+        description="选择 dsh web 使用的 profile"
+      >
+        <ProfilePanel />
       </SettingsSection>
       <SettingsSection
         headingId="desktop-tools-heading"

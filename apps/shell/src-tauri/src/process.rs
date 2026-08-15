@@ -65,7 +65,15 @@ fn is_managed_dsh_web(process: &Process, marker: &str) -> bool {
 }
 
 fn is_managed_dsh_cmd(cmd: &[OsString], environ: &[OsString], marker: &str) -> bool {
-    if !cmd.iter().any(|arg| arg.to_string_lossy() == "web") {
+    // 命令以字面量 `web`，或以成对的 `--profile <值>`（值不以 - 开头）识别自管理启动。
+    let has_web = cmd.iter().any(|arg| arg.to_string_lossy() == "web");
+    let has_profile = cmd.iter().enumerate().any(|(idx, arg)| {
+        arg.to_string_lossy() == "--profile"
+            && cmd
+                .get(idx + 1)
+                .is_some_and(|value| !value.to_string_lossy().starts_with('-'))
+    });
+    if !(has_web || has_profile) {
         return false;
     }
     let has_overlay = cmd.iter().any(|arg| arg.to_string_lossy().contains(marker));
@@ -263,6 +271,46 @@ mod tests {
         let environ = [OsString::from(MANAGED_ENV)];
         assert!(is_managed_dsh_cmd(&cmd, &environ, "/tmp"));
         assert!(!is_managed_dsh_cmd(&cmd, &[], "/tmp"));
+    }
+
+    #[test]
+    fn identifies_managed_dsh_by_profile_overlay() {
+        let cmd = [
+            OsString::from("/usr/local/bin/node"),
+            OsString::from("/opt/homebrew/bin/dsh"),
+            OsString::from("--profile"),
+            OsString::from("custom"),
+            OsString::from("--patch"),
+            OsString::from("/tmp/dsh-desktop/embedded-plugins.patch.yml"),
+        ];
+        assert!(is_managed_dsh_cmd(&cmd, &[], "/tmp/dsh-desktop"));
+        assert!(!is_managed_dsh_cmd(&cmd[..3], &[], "/tmp/dsh-desktop"));
+        assert!(!is_managed_dsh_cmd(&cmd, &[], "/other/dsh-desktop"));
+    }
+
+    #[test]
+    fn identifies_managed_dsh_by_profile_env() {
+        let cmd = [
+            OsString::from("node"),
+            OsString::from("dsh"),
+            OsString::from("--profile"),
+            OsString::from("custom"),
+        ];
+        let environ = [OsString::from(MANAGED_ENV)];
+        assert!(is_managed_dsh_cmd(&cmd, &environ, "/tmp"));
+        assert!(!is_managed_dsh_cmd(&cmd, &[], "/tmp"));
+    }
+
+    #[test]
+    fn does_not_match_flag_like_profile_value() {
+        let cmd = [
+            OsString::from("node"),
+            OsString::from("dsh"),
+            OsString::from("--profile"),
+            OsString::from("--help"),
+        ];
+        let environ = [OsString::from(MANAGED_ENV)];
+        assert!(!is_managed_dsh_cmd(&cmd, &environ, "/tmp"));
     }
 
     #[test]

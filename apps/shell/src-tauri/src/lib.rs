@@ -1020,6 +1020,7 @@ enum ManagerMessage {
     ReadinessError { generation: u64, error: String },
     InstallFinished { result: Result<(), String> },
     Unhealthy { generation: u64 },
+    Healthy { generation: u64 },
 }
 
 struct DshManager {
@@ -1532,7 +1533,6 @@ impl DshManager {
                             }),
                         );
                         self.open_window(url);
-                        self.commit_profile_healthy();
                     }
                 }
                 Ok(ManagerMessage::ReadyTimeout { generation }) => {
@@ -1560,6 +1560,11 @@ impl DshManager {
                 Ok(ManagerMessage::Unhealthy { generation }) => {
                     if self.lifecycle.is_current(generation) {
                         self.fail_generation(generation, "DSH 健康检查连续失败".to_string());
+                    }
+                }
+                Ok(ManagerMessage::Healthy { generation }) => {
+                    if self.lifecycle.is_current(generation) {
+                        self.commit_profile_healthy();
                     }
                 }
                 Err(RecvTimeoutError::Timeout) => {
@@ -1655,6 +1660,8 @@ impl DshManager {
                 .map(|dir| dir.join(".dsh"))
                 .ok_or_else(|| "无法解析 DSH profile 目录".to_string())?,
         };
+        // 丢弃上一次启动残留的上下文，避免陈旧 context 影响日志/回滚。
+        self.startup_context = None;
         let startup_context = profiles::begin_startup(&self.profile_state_path, &profile_home)?;
         let active = startup_context.active.clone();
         self.startup_context = Some(startup_context);
@@ -1670,9 +1677,10 @@ impl DshManager {
             &mut log,
         );
 
+        let args = dsh_web_args(&active, overlay.as_deref());
         let mut cmd = Command::new(&node);
         cmd.arg(&entry)
-            .args(dsh_web_args(&active, overlay.as_deref()))
+            .args(&args)
             .env("PATH", effective_path())
             .env("NO_COLOR", "1")
             .current_dir(&workspace)
@@ -1702,14 +1710,11 @@ impl DshManager {
         let mut child = cmd
             .spawn()
             .map_err(|error| format!("无法启动 dsh: {error}"))?;
-        let overlay_log = overlay
-            .as_ref()
-            .map(|path| format!(" --patch {}", path.to_string_lossy()))
-            .unwrap_or_default();
         self.append_log(&format!(
-            "[desktop] 启动 dsh: {} {} --profile {active}{overlay_log} --host 127.0.0.1 --port 0",
+            "[desktop] 启动 dsh: {} {} {}",
             node.display(),
-            entry.display()
+            entry.display(),
+            args.join(" ")
         ));
 
         let stdout = child.stdout.take().expect("stdout 已开启管道");
@@ -1905,9 +1910,14 @@ impl DshManager {
             };
 
             let mut failures = 0u32;
+            let mut healthy_sent = false;
             loop {
                 if is_health_ready(&url) {
                     failures = 0;
+                    if !healthy_sent {
+                        healthy_sent = true;
+                        let _ = tx.send(ManagerMessage::Healthy { generation });
+                    }
                 } else {
                     failures += 1;
                     if failures >= 3 {

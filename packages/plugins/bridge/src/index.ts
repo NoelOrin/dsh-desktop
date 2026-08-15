@@ -46,7 +46,7 @@ export interface DshDesktopBridge {
     saveFile(options?: BridgeOpenDialogOptions): Promise<string | null>;
   };
   openExternal(target: string): Promise<void>;
-  windowAction(action: "minimize" | "maximize" | "close"): Promise<void>;
+  windowAction(action: "minimize" | "maximize" | "close" | "toggle-visible"): Promise<void>;
   onWindowState(cb: (state: { maximized: boolean }) => void): Promise<() => void>;
   getStatus(): Promise<RuntimeSnapshot>;
   restart(): Promise<void>;

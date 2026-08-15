@@ -208,7 +208,70 @@
   font-size: 12px;
 }
 
+.presetList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.presetIntro {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.presetRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+
+.presetControls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.presetInput {
+  box-sizing: border-box;
+  width: 200px;
+  min-height: 32px;
+  min-width: 0;
+}
+
+.presetInput input {
+  width: 100%;
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+}
+
+.presetStatus {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+}
+
 @media (max-width: 640px) {
+  .presetRow {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .presetControls {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .presetInput {
+    width: 100%;
+  }
+
   .addRow,
   .row,
   .settingRow {

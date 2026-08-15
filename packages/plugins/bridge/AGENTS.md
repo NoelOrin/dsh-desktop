@@ -28,7 +28,7 @@ client 面依赖 `@deepseek-ai/dsh-client-ui-settings` 等 dsh client 生态（p
 | `clipboard.readText()` / `writeText(text)` | `plugin:clipboard-manager` | 剪贴板读写 |
 | `dialog.openFile(opts)` / `saveFile(opts)` | `plugin:dialog` | 文件选择 / 保存对话框 |
 | `openExternal(target)` | `open_external` | 用系统默认应用打开目标 |
-| `windowAction(action)` | `window_action` | 无边框窗口控制（minimize / maximize / close） |
+| `windowAction(action)` | `window_action` | 无边框窗口控制（minimize / maximize / close / toggle-visible 显示↔隐藏） |
 | `onWindowState(cb)` | 事件 `dsh-window-state` | 订阅窗口最大化状态 |
 | `getStatus()` / `restart()` / `installDsh()` / `updateDsh()` / `openLogDirectory()` | 对应 native 命令 | dsh 运行状态与控制 |
 | `getConfig()` / `setConfig(config)` | `get_config` / `set_config` | 读写桌面壳配置 |

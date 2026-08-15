@@ -1891,7 +1891,7 @@ fn import_paths(window: tauri::WebviewWindow, paths: Vec<String>) -> Result<(), 
     Ok(())
 }
 
-/// 无边框窗口控制：minimize / maximize（切换）/ close。
+/// 无边框窗口控制：minimize / maximize（切换）/ close / toggle-visible（显示↔隐藏）。
 #[tauri::command]
 fn window_action(window: tauri::WebviewWindow, action: String) -> Result<(), String> {
     match action.as_str() {
@@ -1904,6 +1904,18 @@ fn window_action(window: tauri::WebviewWindow, action: String) -> Result<(), Str
             }
         }
         "close" => window.close().map_err(|e| e.to_string()),
+        "toggle-visible" => {
+            if window.is_visible().unwrap_or(false) {
+                window.hide().map_err(|e| e.to_string())
+            } else {
+                if window.is_minimized().unwrap_or(false) {
+                    window.unminimize().map_err(|e| e.to_string())?;
+                }
+                window.show().map_err(|e| e.to_string())?;
+                let _ = window.set_focus();
+                Ok(())
+            }
+        }
         other => Err(format!("未知窗口动作: {other}")),
     }
 }

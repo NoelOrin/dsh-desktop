@@ -1525,30 +1525,17 @@ impl DshManager {
         let generation = self.generation;
 
         // 装配内嵌插件（best-effort）并生成 --patch overlay：任何失败只记日志，不影响 dsh 启动
-        let overlay = {
-            let plugins_resource =
-                embedded::plugins_resource_dir(self.app.path().resource_dir().ok().as_deref());
-            let home_path = home
-                .as_ref()
-                .map(|h| PathBuf::from(h.as_str()))
-                .or_else(|| dirs::home_dir().map(|h| h.join(".dsh")));
-            let mut log = |line: &str| self.append_log(line);
-            let mounted = match (plugins_resource, home_path) {
-                (Some(res), Some(home)) => {
-                    if cfg!(debug_assertions) {
-                        embedded::assemble_dev(&res, &home, &mut log)
-                    } else {
-                        embedded::assemble(&res, &home, &mut log)
-                    }
-                }
-                _ => Vec::new(),
-            };
-            self.app
-                .path()
-                .app_data_dir()
-                .ok()
-                .and_then(|data_dir| embedded::write_overlay(&data_dir, &mounted))
-        };
+        let mut log = |line: &str| self.append_log(line);
+        let default_home = dirs::home_dir().map(|h| h.join(".dsh"));
+        let plugins_home = home.as_deref().map(Path::new).or(default_home.as_deref());
+        let overlay = embedded::prepare_overlay(
+            embedded::plugins_resource_dir(self.app.path().resource_dir().ok().as_deref())
+                .as_deref(),
+            plugins_home,
+            self.app.path().app_data_dir().ok().as_deref(),
+            cfg!(debug_assertions),
+            &mut log,
+        );
 
         let mut cmd = Command::new(&node);
         let mut args = vec!["web".to_string()];

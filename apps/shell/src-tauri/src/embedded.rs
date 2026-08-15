@@ -29,6 +29,25 @@ pub fn assemble_dev(
     assemble_inner(resource_dir, home, log, true)
 }
 
+/// 装配内嵌插件并生成 `--patch` overlay。
+///
+/// 开发模式使用 `assemble_dev` 强制重装，发布模式使用版本键控的 `assemble`；
+/// 任一阶段失败都不影响 dsh 启动，仅向日志写入原因。
+pub fn prepare_overlay(
+    resource_dir: Option<&Path>,
+    home: Option<&Path>,
+    app_data_dir: Option<&Path>,
+    dev: bool,
+    log: &mut dyn FnMut(&str),
+) -> Option<PathBuf> {
+    let mounted = match (resource_dir, home) {
+        (Some(resource_dir), Some(home)) if dev => assemble_dev(resource_dir, home, log),
+        (Some(resource_dir), Some(home)) => assemble(resource_dir, home, log),
+        _ => Vec::new(),
+    };
+    app_data_dir.and_then(|dir| write_overlay(dir, &mounted))
+}
+
 fn assemble_inner(
     resource_dir: &Path,
     home: &Path,
@@ -236,16 +255,17 @@ mod tests {
                 name: "@dsh-desktop/plugin-bridge".into(),
             },
             MountedPlugin {
-                id: "hello".into(),
-                name: "@dsh-desktop/plugin-hello".into(),
+                id: "projects".into(),
+                name: "@dsh-desktop/plugin-projects".into(),
             },
         ];
         let path = write_overlay(&dir, &mounted).expect("overlay 应生成");
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content
             .contains("- insert:\n    - id: bridge\n      name: '@dsh-desktop/plugin-bridge'\n"));
-        assert!(content
-            .contains("- insert:\n    - id: hello\n      name: '@dsh-desktop/plugin-hello'\n"));
+        assert!(content.contains(
+            "- insert:\n    - id: projects\n      name: '@dsh-desktop/plugin-projects'\n"
+        ));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -375,6 +395,36 @@ mod tests {
             std::fs::read_to_string(target.join("lib/index.js")).unwrap(),
             "// v1-updated"
         );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn prepare_overlay_writes_overlay_when_plugin_mounted() {
+        let root = temp_dir().join(format!("dsh-overlay-prepare-test-{}", std::process::id()));
+        let resources = root.join("resources");
+        let plugins = resources.join("plugins");
+        let home = root.join("home");
+        let app_data = root.join("app-data");
+        std::fs::create_dir_all(&app_data).unwrap();
+        let bridge = plugins.join("bridge");
+        std::fs::create_dir_all(bridge.join("lib")).unwrap();
+        std::fs::write(
+            bridge.join("package.json"),
+            r#"{"name":"@dsh-desktop/plugin-bridge","version":"0.1.0","dshDesktop":{"id":"bridge"}}"#,
+        )
+        .unwrap();
+
+        let overlay = prepare_overlay(
+            Some(&resources),
+            Some(&home),
+            Some(&app_data),
+            false,
+            &mut |_| {},
+        )
+        .expect("overlay 应生成");
+        let content = std::fs::read_to_string(&overlay).unwrap();
+        assert!(content.contains("name: '@dsh-desktop/plugin-bridge'"));
 
         let _ = std::fs::remove_dir_all(&root);
     }

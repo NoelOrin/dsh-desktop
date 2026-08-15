@@ -18,6 +18,8 @@ mod host_lifecycle;
 mod inject;
 mod notifications;
 mod process;
+#[allow(dead_code)]
+mod profiles;
 mod projects;
 mod theme;
 

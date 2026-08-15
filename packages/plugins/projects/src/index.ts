@@ -17,6 +17,7 @@ interface WorkspaceLike {
   readonly path: string;
   readonly sessionIds: readonly string[];
   setTitle(title: string): Promise<void>;
+  insertSessionBefore(sessionId: string, beforeSessionId?: string): Promise<void>;
 }
 
 interface WorkspaceRegistryLike {
@@ -59,6 +60,27 @@ function registryOf(ctx: ProjectsContext): WorkspaceRegistryLike | null {
   return (ctx.get("workspaceRegistry") as WorkspaceRegistryLike | undefined) ?? null;
 }
 
+interface SessionLike {
+  readonly id: string;
+  readonly header: { readonly cwd?: string };
+}
+
+interface SessionStoreLike {
+  list(): SessionLike[];
+}
+
+interface SessionTitleLike {
+  get(session: SessionLike): { readonly title: string } | undefined;
+}
+
+function sessionStoreOf(ctx: ProjectsContext): SessionStoreLike | null {
+  return (ctx.get("sessions") as SessionStoreLike | undefined) ?? null;
+}
+
+function sessionTitleOf(ctx: ProjectsContext): SessionTitleLike | null {
+  return (ctx.get("sessionTitle") as SessionTitleLike | undefined) ?? null;
+}
+
 interface WorkspacePayload {
   id: string;
   name: string;
@@ -84,6 +106,34 @@ function listWorkspaces(ctx: ProjectsContext): WorkspacePayload[] {
       workspace.sessionIds.every((sessionId) => archived.has(sessionId)),
     pinned: workspace.id === pinnedId,
   }));
+}
+
+interface SessionPayload {
+  id: string;
+  title: string;
+  cwd: string | null;
+  workspace_name: string | null;
+  pinned: boolean;
+}
+
+function listSessions(ctx: ProjectsContext): SessionPayload[] {
+  const registry = registryOf(ctx);
+  const sessions = sessionStoreOf(ctx);
+  if (!registry || !sessions) return [];
+  const titles = sessionTitleOf(ctx);
+  const workspaces = registry.list();
+  return sessions.list().map((session) => {
+    const cwd = session.header.cwd;
+    const owner = cwd ? workspaces.find((workspace) => workspace.path === cwd) : undefined;
+    const title = titles?.get(session)?.title ?? (cwd ? basename(cwd) : session.id);
+    return {
+      id: session.id,
+      title,
+      cwd: cwd ?? null,
+      workspace_name: owner?.title ?? null,
+      pinned: owner ? owner.sessionIds[0] === session.id : false,
+    };
+  });
 }
 
 type ActionResult = { ok: true; [key: string]: unknown } | { ok: false; error: string };
@@ -131,12 +181,57 @@ async function createWorktree(
   return { target, branch };
 }
 
+async function runSessionAction(
+  ctx: ProjectsContext,
+  action: string,
+  body: Record<string, unknown>,
+): Promise<ActionResult> {
+  const registry = registryOf(ctx);
+  if (!registry) return { ok: false, error: "workspaceRegistry 服务不可用" };
+  const sessionId = String(body.session_id ?? "");
+  switch (action) {
+    case "session-pin": {
+      const owner = registry.list().find((item) => item.sessionIds.includes(sessionId));
+      if (!owner) return { ok: false, error: "会话不存在" };
+      const first = owner.sessionIds[0];
+      if (first && first !== sessionId) {
+        await owner.insertSessionBefore(sessionId, first);
+      }
+      return { ok: true, pinned: true };
+    }
+    case "session-unpin": {
+      const owner = registry.list().find((item) => item.sessionIds.includes(sessionId));
+      if (!owner) return { ok: false, error: "会话不存在" };
+      await owner.insertSessionBefore(sessionId);
+      return { ok: true, pinned: false };
+    }
+    case "session-archive":
+      await registry.archiveSession(sessionId);
+      return { ok: true };
+    case "session-finder": {
+      const session = sessionStoreOf(ctx)
+        ?.list()
+        .find((item) => item.id === sessionId);
+      const path =
+        session?.header.cwd ??
+        registry.list().find((item) => item.sessionIds.includes(sessionId))?.path;
+      if (!path) return { ok: false, error: "会话没有项目目录" };
+      return { ok: true, path };
+    }
+    default:
+      return { ok: false, error: `未知动作: ${action}` };
+  }
+}
+
 async function runAction(
   ctx: ProjectsContext,
   action: string,
   id: string,
   body: Record<string, unknown>,
 ): Promise<ActionResult> {
+  if (action.startsWith("session-")) {
+    return runSessionAction(ctx, action, body);
+  }
   const registry = registryOf(ctx);
   if (!registry) return { ok: false, error: "workspaceRegistry 服务不可用" };
   const workspace = registry.list().find((item) => item.id === id);
@@ -210,6 +305,13 @@ export function apply(ctx: ProjectsContext): void {
       path: "/dsh-desktop/workspaces",
       handler: (_req, res) => {
         sendJson(res, 200, { ok: true, workspaces: listWorkspaces(ctx) });
+      },
+    });
+    sctx.webServer.register({
+      kind: "exact",
+      path: "/dsh-desktop/sessions",
+      handler: (_req, res) => {
+        sendJson(res, 200, { ok: true, sessions: listSessions(ctx) });
       },
     });
     sctx.webServer.register({

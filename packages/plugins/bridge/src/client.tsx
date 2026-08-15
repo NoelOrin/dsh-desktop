@@ -1,6 +1,7 @@
 import { injectPluginCss } from "../../client-kit/inject";
 import { AppearanceSection } from "./client/AppearanceSection";
 import { DesktopPanel } from "./client/DesktopPanel";
+import { applyDesktopShell } from "./client/desktop-shell";
 import type { SettingsScopeLike, Translate } from "./client/runtime";
 import { applyThemeSection, ensurePageStyle } from "./client/theme-apply";
 import { createThemeStore } from "./client/theme-store";
@@ -36,6 +37,7 @@ export function apply(ctx: ClientContextLike): void {
   const t = ctx.locale.bind(NS);
 
   ctx.effect(() => ensurePageStyle(), "bridge: 全局页面样式");
+  ctx.effect(applyDesktopShell, "bridge: 桌面壳形态");
 
   // ── 主题与背景（ui-theme 命名空间由上游 dsh-client-ui-theme host 注册，这里只 bind）──
   const THEME_NS = "settings.appearance";

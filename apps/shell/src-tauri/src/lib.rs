@@ -226,109 +226,15 @@ const BRIDGE_SCRIPT: &str = r#"(function () {
   };
 })();"#;
 
-/// 注入 dsh web 的自绘标题栏脚本（参考参考仓库 harness-chrome-inject.js，适配 Tauri data-tauri-drag-region）。
+/// 注入 dsh web 的侧边栏右键菜单脚本；标题栏形态已由 bridge client 提供。
 const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
   "use strict";
-  if (document.getElementById("dsh-shell-controls")) return;
-  var STYLE_ID = "dsh-shell-chrome-style";
-  var CONTROLS_ID = "dsh-shell-controls";
-  var DRAG_ID = "dsh-shell-drag-strip";
-  var EDGE = 8;
-  var SIZE = 32;
-  var GAP = 0;
-  var MAC_TRAFFIC_WIDTH = 80;
-  var MAC_DRAG_HEIGHT = 16;
-  var MAC_SIDEBAR_INSET = 20;
-
-  function detectPlatform() {
-    var ua = navigator.userAgent || "";
-    if (/Mac|iPhone|iPad/.test(ua) && !/Windows/.test(ua)) return "macos";
-    if (/Win/.test(ua)) return "windows";
-    return "linux";
-  }
-
-  var PLATFORM = detectPlatform();
-
-  var ICON_MIN = '<svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="5.4" width="8" height="1.2" rx="0.6" fill="currentColor"/></svg>';
-  var ICON_MAX = '<svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.4" y="2.4" width="7.2" height="7.2" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>';
-  var ICON_RESTORE = '<svg viewBox="0 0 12 12" aria-hidden="true"><rect x="3.4" y="2.2" width="6.2" height="6.2" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.15"/><rect x="2.2" y="3.6" width="6.2" height="6.2" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.15"/></svg>';
-  var ICON_CLOSE = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 3l6 6M9 3L3 9" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg>';
-
-  function reservedEdge() {
-    return EDGE + SIZE * 3 + GAP * 2;
-  }
-
-  function ensureStyle() {
-    var style = document.getElementById(STYLE_ID);
-    if (style) return;
-    style = document.createElement("style");
-    style.id = STYLE_ID;
-    style.textContent = [
-      '[data-slot="sidebar"], [data-slot^="sidebar"] {',
-      "  user-select: none;",
-      "  -webkit-user-select: none;",
-      "}",
-      "#" + CONTROLS_ID + " {",
-      "  position: fixed;",
-      "  top: 4px;",
-      "  " + (PLATFORM === "macos" ? "left" : "right") + ": " + EDGE + "px;",
-      "  z-index: 2147483647;",
-      "  display: flex;",
-      "  gap: " + GAP + "px;",
-      "  height: " + SIZE + "px;",
-      "}",
-      "#" + CONTROLS_ID + " button {",
-      "  width: " + SIZE + "px;",
-      "  height: " + SIZE + "px;",
-      "  margin: 0;",
-      "  padding: 0;",
-      "  display: inline-flex;",
-      "  align-items: center;",
-      "  justify-content: center;",
-      "  border: 0;",
-      "  border-radius: 8px;",
-      "  background: transparent;",
-      "  color: var(--dsh-ctrl-fg, #3f3f46);",
-      "  cursor: pointer;",
-      "}",
-      "#" + CONTROLS_ID + " button svg { width: 12px; height: 12px; display: block; }",
-      "#" + CONTROLS_ID + " button:hover { background: var(--dsh-ctrl-hover, rgba(0, 0, 0, 0.08)); }",
-      "#" + CONTROLS_ID + " button[data-act=close]:hover { background: #e81123; color: #fff; }",
-      "#" + CONTROLS_ID + "[data-platform=macos] { right: auto; }",
-      "#" + CONTROLS_ID + "[data-platform=macos] { display: none; }",
-      "#" + CONTROLS_ID + "[data-platform=macos] button { width: 12px; height: 12px; border-radius: 50%; color: transparent; }",
-      "#" + CONTROLS_ID + "[data-platform=macos] button svg { display: none; }",
-      "#" + CONTROLS_ID + "[data-platform=macos] button[data-act=close] { order: 1; background: #ff5f57; }",
-      "#" + CONTROLS_ID + "[data-platform=macos] button[data-act=minimize] { order: 2; background: #febc2e; }",
-      "#" + CONTROLS_ID + "[data-platform=macos] button[data-act=maximize] { order: 3; background: #28c840; }",
-      "#" + CONTROLS_ID + "[data-platform=macos] button:hover { background: inherit; filter: brightness(0.92); color: transparent; }",
-      "#" + CONTROLS_ID + "[data-platform=macos] button[data-act=close]:hover { background: #ff5f57; color: transparent; }",
-      "#" + DRAG_ID + " {",
-      "  position: fixed;",
-      "  top: 0;",
-      "  " + (PLATFORM === "macos" ? "left: " + MAC_TRAFFIC_WIDTH + "px;" : "left: 0;"),
-      "  " + (PLATFORM === "macos" ? "right: 0;" : "right: " + reservedEdge() + "px;"),
-      "  height: " + (PLATFORM === "macos" ? MAC_DRAG_HEIGHT : 44) + "px;",
-      "  z-index: 2147483644;",
-      "}"
-    ].join("\n");
-    (document.head || document.documentElement).appendChild(style);
-  }
 
   function findSidebarRoot() {
     // 侧栏根节点用稳定的 data-slot 定位，避免依赖 CSS module 哈希 class。
     var slot = document.querySelector('[data-slot="sidebar"]');
     var root = slot && slot.firstElementChild;
     return root instanceof HTMLElement ? root : null;
-  }
-
-  function applyMacSidebarInset() {
-    if (PLATFORM !== "macos") return true;
-    var sidebar = findSidebarRoot();
-    if (!sidebar) return false;
-    var prevTop = parseFloat(sidebar.style.paddingTop) || 0;
-    sidebar.style.paddingTop = Math.max(prevTop, MAC_SIDEBAR_INSET) + "px";
-    return true;
   }
 
   // ── 侧边栏右键菜单 ─────────────────────────────────────────────
@@ -339,6 +245,8 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
   var SIDEBAR_MENU_STYLE_ID = "dsh-shell-context-style";
   var sidebarWorkspacesCache = null;
   var sidebarWorkspacesCacheAt = 0;
+  var sidebarSessionsCache = null;
+  var sidebarSessionsCacheAt = 0;
   var sidebarMenuDismiss = null;
 
   function sidebarMenuStyleText() {
@@ -484,13 +392,47 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
       });
   }
 
+  function loadSidebarSessions() {
+    var now = Date.now();
+    if (sidebarSessionsCache && now - sidebarSessionsCacheAt < 5000) {
+      return Promise.resolve(sidebarSessionsCache);
+    }
+    return fetch("/dsh-desktop/sessions", { headers: { accept: "application/json" } })
+      .then(function (response) {
+        if (!response.ok) throw new Error("HTTP " + response.status);
+        return response.json();
+      })
+      .then(function (data) {
+        var list = Array.isArray(data && data.sessions) ? data.sessions : [];
+        sidebarSessionsCache = list;
+        sidebarSessionsCacheAt = Date.now();
+        return list;
+      });
+  }
+
   function invalidateSidebarWorkspaces() {
     sidebarWorkspacesCache = null;
     sidebarWorkspacesCacheAt = 0;
+    sidebarSessionsCache = null;
+    sidebarSessionsCacheAt = 0;
   }
 
   function postWorkspaceAction(id, action, extra) {
     var payload = { id: id, action: action };
+    if (extra) {
+      for (var key in extra) payload[key] = extra[key];
+    }
+    return fetch("/dsh-desktop/workspaces/action", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload)
+    }).then(function (response) {
+      return response.json();
+    });
+  }
+
+  function postSidebarAction(action, extra) {
+    var payload = { action: action };
     if (extra) {
       for (var key in extra) payload[key] = extra[key];
     }
@@ -528,12 +470,109 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
     var row = target.closest('[data-slot="sidebar.workspaces"] [role="treeitem"][aria-selected]');
     if (!(row instanceof HTMLElement)) return null;
     var button = row.querySelector && row.querySelector('button[aria-label^="会话"]');
-    return button instanceof HTMLElement ? { row: row, button: button } : null;
+    if (!(button instanceof HTMLElement)) return null;
+    var aria = button.getAttribute("aria-label");
+    var match = aria && aria.match(/^会话“(.+)”的操作$/);
+    var workspaceName = null;
+    var node = row.parentElement;
+    while (node && node !== document.body && node !== document.documentElement) {
+      for (var i = 0; i < node.children.length; i++) {
+        var child = node.children[i];
+        if (child instanceof HTMLElement && child.getAttribute("role") === "treeitem" && child.getAttribute("aria-expanded") !== null) {
+          workspaceName = findSidebarWorkspaceName(child);
+          break;
+        }
+      }
+      if (workspaceName) break;
+      node = node.parentElement;
+    }
+    return {
+      row: row,
+      button: button,
+      title: match ? match[1] : null,
+      workspaceName: workspaceName
+    };
   }
 
-  function openSidebarSessionMenu(session) {
+  function runSidebarSessionAction(session, action, menu) {
+    postSidebarAction(action, { session_id: session.id })
+      .then(function (result) {
+        if (!result || !result.ok) {
+          sidebarToast((result && result.error) || "操作失败");
+          return;
+        }
+        if (action === "session-pin") {
+          sidebarToast("已置顶");
+        } else if (action === "session-unpin") {
+          sidebarToast("已取消置顶");
+        } else if (action === "session-archive") {
+          sidebarToast("聊天已归档");
+        } else if (action === "session-finder") {
+          if (window.__DSH_DESKTOP__ && window.__DSH_DESKTOP__.openExternal && result.path) {
+            window.__DSH_DESKTOP__.openExternal(result.path).catch(function (error) {
+              sidebarToast("打开位置失败: " + error);
+            });
+          } else {
+            sidebarToast("桌面桥接不可用");
+          }
+        }
+        invalidateSidebarWorkspaces();
+        hideSidebarMenu();
+      })
+      .catch(function (error) {
+        sidebarToast("操作失败: " + error.message);
+        hideSidebarMenu();
+      });
+  }
+
+  function buildSidebarSessionMenu(session, x, y) {
+    var menu = document.createElement("div");
+    menu.id = SIDEBAR_MENU_ID;
+    var items = [];
+    if (session.workspace_name) {
+      items.push({ id: session.pinned ? "session-unpin" : "session-pin", label: session.pinned ? "取消置顶" : "置顶聊天" });
+    }
+    items.push({ id: "session-archive", label: "归档聊天" });
+    if (session.cwd) {
+      items.push({ id: "session-finder", label: "打开位置" });
+    }
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i];
+      var button = document.createElement("button");
+      button.type = "button";
+      button.textContent = item.label;
+      button.addEventListener("click", function (entry) {
+        return function () {
+          runSidebarSessionAction(session, entry.id, menu);
+        };
+      }(item));
+      menu.appendChild(button);
+    }
+    (document.body || document.documentElement).appendChild(menu);
+    positionSidebarMenu(menu, x, y);
+  }
+
+  function openSidebarSessionMenu(session, x, y) {
     hideSidebarMenu();
-    if (session && session.button) session.button.click();
+    ensureSidebarMenuStyle();
+    loadSidebarSessions()
+      .then(function (sessions) {
+        var found = null;
+        for (var i = 0; i < sessions.length; i++) {
+          if (sessions[i].title !== session.title) continue;
+          if (session.workspaceName && sessions[i].workspace_name !== session.workspaceName) continue;
+          found = sessions[i];
+          break;
+        }
+        if (!found) {
+          sidebarToast("未找到会话“" + session.title + "”");
+          return;
+        }
+        buildSidebarSessionMenu(found, x, y);
+      })
+      .catch(function (error) {
+        sidebarToast("会话菜单不可用: " + error.message);
+      });
   }
 
   function runSidebarMenuAction(workspace, action, menu) {
@@ -659,6 +698,16 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
     menu.appendChild(row);
   }
 
+  function positionSidebarMenu(menu, x, y) {
+    var MARGIN = 8;
+    var rect = menu.getBoundingClientRect();
+    var left = Math.min(Math.max(x, MARGIN), window.innerWidth - rect.width - MARGIN);
+    var top = Math.min(Math.max(y, MARGIN), window.innerHeight - rect.height - MARGIN);
+    menu.style.left = Math.max(left, 0) + "px";
+    menu.style.top = Math.max(top, 0) + "px";
+    sidebarMenuDismiss = bindSidebarMenuDismiss();
+  }
+
   function buildSidebarMenu(workspace, x, y) {
     var menu = document.createElement("div");
     menu.id = SIDEBAR_MENU_ID;
@@ -691,13 +740,7 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
       menu.appendChild(button);
     }
     (document.body || document.documentElement).appendChild(menu);
-    var MARGIN = 8;
-    var rect = menu.getBoundingClientRect();
-    var left = Math.min(Math.max(x, MARGIN), window.innerWidth - rect.width - MARGIN);
-    var top = Math.min(Math.max(y, MARGIN), window.innerHeight - rect.height - MARGIN);
-    menu.style.left = Math.max(left, 0) + "px";
-    menu.style.top = Math.max(top, 0) + "px";
-    sidebarMenuDismiss = bindSidebarMenuDismiss();
+    positionSidebarMenu(menu, x, y);
   }
 
   function openSidebarMenu(name, x, y) {
@@ -738,7 +781,7 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
       event.preventDefault();
       var session = findSidebarSession(target);
       if (session) {
-        openSidebarSessionMenu(session);
+        openSidebarSessionMenu(session, event.clientX, event.clientY);
         return;
       }
       var name = findSidebarWorkspaceName(target);
@@ -746,101 +789,10 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
     }, true);
   }
 
-  function findTopBar() {
-    var buttons = document.querySelectorAll("button");
-    for (var i = 0; i < buttons.length; i++) {
-      var label = (buttons[i].getAttribute("aria-label") || "") + " " + (buttons[i].textContent || "");
-      if (/session\s*log/i.test(label)) {
-        var header = buttons[i].closest("header");
-        if (header) return header;
-      }
-    }
-    var nodes = document.querySelectorAll("header, [role=banner]");
-    for (var j = 0; j < nodes.length; j++) {
-      var rect = nodes[j].getBoundingClientRect();
-      if (rect.top <= 8 && rect.height >= 32 && rect.height <= 160) return nodes[j];
-    }
-    return null;
-  }
-
-  function ensureControls() {
-    var host = document.getElementById(CONTROLS_ID);
-    if (host) return host;
-    host = document.createElement("div");
-    host.id = CONTROLS_ID;
-    host.innerHTML = [
-      '<button type="button" data-act="minimize" aria-label="最小化">' + ICON_MIN + "</button>",
-      '<button type="button" data-act="maximize" aria-label="最大化">' + ICON_MAX + "</button>",
-      '<button type="button" data-act="close" aria-label="关闭">' + ICON_CLOSE + "</button>"
-    ].join("");
-    host.setAttribute("data-platform", PLATFORM);
-    host.addEventListener("click", function (event) {
-      var button = event.target.closest("[data-act]");
-      if (!button || !window.__DSH_DESKTOP__) return;
-      window.__DSH_DESKTOP__.windowAction(button.dataset.act);
-    });
-    (document.body || document.documentElement).appendChild(host);
-    return host;
-  }
-
-  function ensureDragStrip() {
-    var strip = document.getElementById(DRAG_ID);
-    if (!strip) {
-      strip = document.createElement("div");
-      strip.id = DRAG_ID;
-      strip.setAttribute("data-tauri-drag-region", "deep");
-      (document.body || document.documentElement).appendChild(strip);
-    }
-    return strip;
-  }
-
-  function applyControlTheme(host) {
-    var fg = getComputedStyle(document.body).getPropertyValue("--dsw-alias-label-primary").trim();
-    if (!fg) {
-      fg = getComputedStyle(document.body).getPropertyValue("color") || "#3f3f46";
-    }
-    host.style.setProperty("--dsh-ctrl-fg", fg);
-    host.style.setProperty("--dsh-ctrl-hover", "rgba(128, 128, 128, 0.18)");
-  }
-
   function install() {
+    // 标题栏与窗口控制已迁移到 @dsh-desktop/plugin-bridge 的 client 面；
+    // 壳侧仅保留侧边栏右键菜单，避免与 bridge 注入的桌面形态重复。
     installSidebarContextMenu();
-    ensureStyle();
-    var host = PLATFORM === "macos" ? null : ensureControls();
-    var bar = findTopBar();
-    var strip = ensureDragStrip();
-    if (!applyMacSidebarInset()) {
-      var observer = new MutationObserver(function () {
-        if (applyMacSidebarInset()) observer.disconnect();
-      });
-      observer.observe(document.documentElement || document.body, { childList: true, subtree: true });
-    }
-    if (bar && bar instanceof HTMLElement) {
-      if (PLATFORM !== "macos") {
-        // 非 mac 顶部栏自身作为拖拽区，注入条不拦截原按钮交互。
-        strip.style.pointerEvents = "none";
-        bar.setAttribute("data-tauri-drag-region", "deep");
-      }
-      var reserved = PLATFORM === "macos" ? MAC_TRAFFIC_WIDTH : reservedEdge();
-      var prev = parseFloat(PLATFORM === "macos" ? bar.style.paddingLeft : bar.style.paddingRight) || 0;
-      var nextPadding = Math.max(prev, reserved) + "px";
-      if (PLATFORM === "macos") {
-        bar.style.paddingLeft = nextPadding;
-      } else {
-        bar.style.paddingRight = nextPadding;
-      }
-    }
-    if (host) applyControlTheme(host);
-    if (host && window.__DSH_DESKTOP__ && typeof window.__DSH_DESKTOP__.onWindowState === "function") {
-      window.__DSH_DESKTOP__.onWindowState(function (state) {
-        var maximized = !!(state && state.maximized);
-        var maxBtn = host.querySelector("[data-act=maximize]");
-        if (maxBtn) {
-          maxBtn.innerHTML = maximized ? ICON_RESTORE : ICON_MAX;
-          maxBtn.setAttribute("aria-label", maximized ? "还原" : "最大化");
-        }
-      });
-    }
   }
 
   install();

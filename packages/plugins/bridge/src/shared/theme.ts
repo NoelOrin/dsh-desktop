@@ -369,7 +369,9 @@ export function deriveThemeTokens(seeds: ThemeSeeds): ThemeTokens {
   };
   if (seeds.overrides) {
     for (const [name, value] of Object.entries(seeds.overrides)) {
-      if (value) tokens[name] = value;
+      if (!name.startsWith(ALIAS_OVERRIDE_PREFIX)) continue;
+      const normalized = normalizeHexColor(value);
+      if (normalized !== undefined) tokens[name] = normalized;
     }
   }
   return tokens;
@@ -378,6 +380,10 @@ export function deriveThemeTokens(seeds: ThemeSeeds): ThemeTokens {
 // ── 自定义主题 CRUD（移植自参考 theme-family.ts）────────────────────────────
 
 const HEX_COLOR = /^#(?:[0-9a-fA-F]{6})$/;
+const ALIAS_OVERRIDE_PREFIX = "--dsw-alias-";
+const DEFAULT_SEED_ACCENT = "#4176e6";
+const DEFAULT_SEED_BACKGROUND = "#ffffff";
+const DEFAULT_SEED_FOREGROUND = "#0f1115";
 
 export function normalizeHexColor(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -446,16 +452,28 @@ export function canonicalizeThemeFamily(
 }
 
 function canonicalizeSeeds(s: ThemeSeeds): ThemeSeeds {
-  const overrides = s.overrides
-    ? Object.fromEntries(Object.entries(s.overrides).filter(([, value]) => value !== ""))
-    : undefined;
+  const overrides = canonicalizeOverrides(s.overrides);
+  const contrast = Number.isFinite(s.contrast)
+    ? Math.min(100, Math.max(0, Math.round(s.contrast)))
+    : DEFAULT_CONTRAST;
   return {
-    accent: s.accent,
-    background: s.background,
-    foreground: s.foreground,
-    contrast: s.contrast,
+    accent: normalizeHexColor(s.accent) ?? DEFAULT_SEED_ACCENT,
+    background: normalizeHexColor(s.background) ?? DEFAULT_SEED_BACKGROUND,
+    foreground: normalizeHexColor(s.foreground) ?? DEFAULT_SEED_FOREGROUND,
+    contrast,
     ...(overrides && Object.keys(overrides).length > 0 ? { overrides } : {}),
   };
+}
+
+function canonicalizeOverrides(overrides: ThemeSeeds["overrides"]): ThemeSeeds["overrides"] {
+  if (overrides === undefined || typeof overrides !== "object") return undefined;
+  const next: Record<string, string> = {};
+  for (const [name, value] of Object.entries(overrides)) {
+    if (!name.startsWith(ALIAS_OVERRIDE_PREFIX)) continue;
+    const normalized = normalizeHexColor(value);
+    if (normalized !== undefined) next[name] = normalized;
+  }
+  return Object.keys(next).length > 0 ? next : undefined;
 }
 
 export function serializeThemeFamily(family: ThemeFamily): string {

@@ -53,6 +53,7 @@ export function CustomThemeEditor({
     () => store.getSnapshot(),
   );
   const [draft, setDraft] = useState<ThemeFamily | null>(null);
+  const [draftOriginalId, setDraftOriginalId] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const existingIds = new Set([
@@ -67,6 +68,7 @@ export function CustomThemeEditor({
   const create = (): void => {
     const id = ensureUniqueThemeId(slugifyThemeId(t("custom.newName")), existingIds);
     setDraft(blankFamily(t("custom.newName"), id));
+    setDraftOriginalId(null);
   };
 
   const exportFamily = (family: ThemeFamily): void => {
@@ -133,7 +135,10 @@ export function CustomThemeEditor({
                 icon={<IconEditOutline16 />}
                 aria-label={t("custom.edit")}
                 title={t("custom.edit")}
-                onClick={() => setDraft(family)}
+                onClick={() => {
+                  setDraft(family);
+                  setDraftOriginalId(family.id);
+                }}
               />
               <Button
                 type="button"
@@ -181,13 +186,14 @@ export function CustomThemeEditor({
               className={css.input}
               id="custom-theme-name"
               value={draft.name}
-              onChange={(e) =>
+              onChange={(e) => {
+                const name = e.currentTarget.value;
                 setDraft({
                   ...draft,
-                  name: e.currentTarget.value,
-                  id: slugifyThemeId(e.currentTarget.value),
-                })
-              }
+                  name,
+                  ...(draftOriginalId === null ? { id: slugifyThemeId(name) } : {}),
+                });
+              }}
             />
           </label>
           <div className={css.editorGrid}>
@@ -244,6 +250,7 @@ export function CustomThemeEditor({
               variant="ghost"
               onClick={() => {
                 setDraft(null);
+                setDraftOriginalId(null);
                 store.previewFamily(null);
               }}
             >
@@ -252,8 +259,11 @@ export function CustomThemeEditor({
             <Button
               type="button"
               onClick={() => {
-                save(draft);
+                const savedId =
+                  draftOriginalId ?? ensureUniqueThemeId(slugifyThemeId(draft.name), existingIds);
+                save({ ...draft, id: savedId });
                 setDraft(null);
+                setDraftOriginalId(null);
                 store.previewFamily(null);
               }}
             >

@@ -37,6 +37,7 @@ const clampInt = (value: number, min: number, max: number): number =>
 export interface ThemeStore {
   getSnapshot(): ThemeSettings;
   getPreview(): ThemeFamily | null;
+  getWriteError(): string | null;
   subscribe(listener: () => void): () => void;
   setPreference(preference: ThemePreference): void;
   setThemeHalf(mode: "light" | "dark", familyId: string): void;
@@ -64,6 +65,7 @@ export interface ThemeStore {
 export function createThemeStore(scope: ThemeScopeLike<ThemeSettings>): ThemeStore {
   let settings: ThemeSettings = { ...DEFAULT_THEME_SETTINGS, customThemes: [] };
   let preview: ThemeFamily | null = null;
+  let writeError: string | null = null;
   const listeners = new Set<() => void>();
 
   const pendingWrites = new Map<string, unknown>();
@@ -106,12 +108,29 @@ export function createThemeStore(scope: ThemeScopeLike<ThemeSettings>): ThemeSto
     if (pendingWrites.size === 0) return;
     const writes = [...pendingWrites];
     pendingWrites.clear();
+    let failed = false;
     for (const [field, value] of writes) {
       inFlightWrites += 1;
-      await scope.set(field, value).catch(() => {});
-      inFlightWrites -= 1;
+      try {
+        await scope.set(field, value);
+      } catch (error) {
+        failed = true;
+        writeError = `${field}: ${String(error)}`;
+        console.error("[theme-store] 主题设置写回失败", field, error);
+        publish();
+      } finally {
+        inFlightWrites -= 1;
+      }
     }
-    if (inFlightWrites === 0 && pendingWrites.size === 0) adopt();
+    if (inFlightWrites === 0 && pendingWrites.size === 0) {
+      if (!failed) {
+        if (writeError !== null) {
+          writeError = null;
+          publish();
+        }
+        adopt();
+      }
+    }
   };
 
   scope.subscribe(adopt);
@@ -120,6 +139,7 @@ export function createThemeStore(scope: ThemeScopeLike<ThemeSettings>): ThemeSto
   const store: ThemeStore = {
     getSnapshot: () => settings,
     getPreview: () => preview,
+    getWriteError: () => writeError,
     subscribe: (listener) => {
       listeners.add(listener);
       return () => {

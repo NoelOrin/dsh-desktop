@@ -86,3 +86,48 @@ test("自定义主题复制与导入生成唯一 id", () => {
   assert.equal(slugifyThemeId("  我的 主题! "), "我的-主题");
   assert.equal(JSON.parse(serializeThemeFamily(dup)).name, "暮紫 Copy");
 });
+
+test("导入主题规范化颜色、contrast 与 override 白名单", () => {
+  const imported = normalizeImportedThemeFamily(
+    {
+      id: "weird",
+      name: "Weird",
+      origin: "custom",
+      light: {
+        accent: " #7C3AED ",
+        background: "#fff",
+        foreground: "not-a-color",
+        contrast: 120,
+        overrides: {
+          "--dsw-alias-bg-base": "#000000",
+          "--dsw-alias-brand-primary": "#FF0000",
+          "--dsw-specific-sidebar-fill": "#123456",
+          color: "#abcdef",
+        },
+      },
+      dark: {
+        accent: "#c4a1ff",
+        background: "#120e18",
+        foreground: "#f3eefc",
+        contrast: 50,
+      },
+    },
+    new Set(),
+  );
+  assert.equal(imported.light.accent, "#7c3aed");
+  assert.equal(imported.light.background, "#ffffff");
+  assert.equal(imported.light.foreground, "#0f1115");
+  assert.equal(imported.light.contrast, 100);
+  assert.deepEqual(imported.light.overrides, {
+    "--dsw-alias-bg-base": "#000000",
+    "--dsw-alias-brand-primary": "#ff0000",
+  });
+  const tokens = deriveThemeTokens({
+    accent: "#7c3aed",
+    background: "#ffffff",
+    foreground: "#0f1115",
+    contrast: 50,
+    overrides: { "--dsw-specific-sidebar-fill": "red" },
+  });
+  assert.notEqual(tokens["--dsw-specific-sidebar-fill"], "red");
+});

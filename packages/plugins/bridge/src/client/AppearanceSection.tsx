@@ -21,6 +21,11 @@ export function AppearanceSection({
     (listener) => store.subscribe(listener),
     () => store.getSnapshot(),
   );
+  const writeError = useSyncExternalStore(
+    (listener) => store.subscribe(listener),
+    () => store.getWriteError(),
+    () => store.getWriteError(),
+  );
   const setPreference = (preference: ThemePreference): void => {
     if (preference === DEFAULT_PREFERENCE || THEME_PREFERENCES.includes(preference)) {
       store.setPreference(preference);
@@ -59,6 +64,11 @@ export function AppearanceSection({
         t={t}
         onChange={(patch) => store.setTypography(patch)}
       />
+      {writeError ? (
+        <p role="alert">
+          {t("saveError")}: {writeError}
+        </p>
+      ) : null}
     </SettingsPage>
   );
 }

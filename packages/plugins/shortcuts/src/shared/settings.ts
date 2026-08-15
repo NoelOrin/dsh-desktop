@@ -46,7 +46,7 @@ export function normalizeShortcutsSettings(
   value: Partial<ShortcutsSettings> | undefined,
 ): ShortcutsSettings {
   const defaults = defaultPresetSettings();
-  const incoming = value?.presets ?? {};
+  const incoming: Partial<Record<ShortcutPresetId, ShortcutPresetSettings>> = value?.presets ?? {};
   const presets = SHORTCUT_PRESET_IDS.reduce<Record<ShortcutPresetId, ShortcutPresetSettings>>(
     (acc, id) => {
       const item = incoming[id];

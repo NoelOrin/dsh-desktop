@@ -22,7 +22,12 @@ interface DesktopBridgeLike {
 
 export function resolveDesktopPlatform(raw: string | undefined): DesktopPlatform {
   const value = (raw ?? navigator.platform ?? "").toLowerCase();
-  if (value.includes("mac") || value.includes("darwin") || value.includes("iphone") || value.includes("ipad")) {
+  if (
+    value.includes("mac") ||
+    value.includes("darwin") ||
+    value.includes("iphone") ||
+    value.includes("ipad")
+  ) {
     return "darwin";
   }
   if (value.includes("win")) {
@@ -141,7 +146,9 @@ export function applyDesktopShell(): () => void {
   let unlistenWindowState: (() => void) | null = null;
   if (controls && bridge?.onWindowState) {
     bridge
-      .onWindowState((state: { maximized: boolean }) => updateMaximizeIcon(controls, state.maximized))
+      .onWindowState((state: { maximized: boolean }) =>
+        updateMaximizeIcon(controls, state.maximized),
+      )
       .then((unlisten: () => void) => {
         unlistenWindowState = unlisten;
       })

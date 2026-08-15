@@ -18,9 +18,10 @@ import { SettingsPage, SettingsSection } from "./client/settings-layout";
 import css from "./client/shortcuts.module.css";
 import {
   normalizeShortcutsSettings,
-  SHORTCUTS_STORAGE_KEY,
   SHORTCUT_PRESET_IDS,
+  SHORTCUTS_STORAGE_KEY,
   type ShortcutPresetId,
+  type ShortcutPresetSettings,
 } from "./shared/settings";
 
 injectPluginCss("@dsh-desktop/plugin-shortcuts", "@dsh-desktop/plugin-shortcuts/ui");
@@ -313,21 +314,10 @@ function PresetShortcuts({
     () => scope.getSnapshot(),
   );
   const settings = snapshot.value ?? DEFAULT_SHORTCUTS_SETTINGS;
-  const [shortcuts, setShortcuts] = useState<ShortcutSnapshot[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [busyId, setBusyId] = useState<ShortcutPresetId | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-
-  const refresh = async () => {
-    const bridge = getBridge();
-    if (!bridge) return;
-    try {
-      setShortcuts(await bridge.shortcuts.list());
-    } catch (e) {
-      setError(`${t("error.read")}: ${String(e)}`);
-    }
-  };
 
   // 装载后对齐：已启用但未注册的预设补注册（壳侧重启会从 config.json 恢复已注册项）。
   useEffect(() => {
@@ -341,7 +331,6 @@ function PresetShortcuts({
       .list()
       .then(async (items) => {
         if (disposed) return;
-        setShortcuts(items);
         setLoaded(true);
         const current = scope.getSnapshot().value ?? DEFAULT_SHORTCUTS_SETTINGS;
         const registered = new Set(items.map((item) => item.shortcut));
@@ -354,7 +343,6 @@ function PresetShortcuts({
             console.error("[shortcuts] 预设快捷键注册失败", preset.shortcut, e);
           }
         }
-        if (!disposed) void refresh();
       })
       .catch((e: unknown) => {
         if (!disposed) {
@@ -365,7 +353,7 @@ function PresetShortcuts({
     return () => {
       disposed = true;
     };
-  }, [t]);
+  }, [scope.getSnapshot, t]);
 
   const togglePreset = async (id: ShortcutPresetId, enabled: boolean) => {
     const preset = settings.presets[id];
@@ -397,7 +385,6 @@ function PresetShortcuts({
       await scope.set("presets", { [id]: { ...preset, enabled } });
       setError(null);
       setNotice(enabled ? t("preset.added") : t("preset.removed"));
-      await refresh();
     } catch (e) {
       setError(`${t(enabled ? "error.register" : "error.remove")}: ${String(e)}`);
     } finally {
@@ -431,7 +418,6 @@ function PresetShortcuts({
       await scope.set("presets", { [id]: { ...preset, shortcut: next } });
       setError(null);
       if (preset.enabled) setNotice(t("preset.updated"));
-      await refresh();
     } catch (e) {
       setError(`${t("error.register")}: ${String(e)}`);
     } finally {

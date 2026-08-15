@@ -7,7 +7,7 @@
 }
 
 :global(html[data-dsh-desktop-platform="darwin"]) [data-slot="sidebar"] > * {
-  padding-top: 48px !important;
+  padding-top: 48px;
 }
 
 :global(#dsh-desktop-drag) {

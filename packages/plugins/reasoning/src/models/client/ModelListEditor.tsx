@@ -224,17 +224,23 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
   // the abandoned one would render its stored NaN as the literal `NaN`.
   const [editing, setEditing] = useState<ReadonlyMap<string, string>>(new Map());
 
-  /** Buffer key for one capacity field; the row half moves when rows do. */
-  const bufferKey = (index: number, field: CapacityField): string => `${String(index)}:${field}`;
+  /** Buffer key for one capacity field; a model id keeps it stable across row reorders. */
+  const bufferKey = (model: ModelDraft, index: number, field: CapacityField): string =>
+    `${textOf(model, "id") || `row:${String(index)}`}:${field}`;
 
-  const editCapacity = (index: number, field: CapacityField, text: string): void => {
-    setEditing((current) => new Map(current).set(bufferKey(index, field), text));
+  const editCapacity = (
+    index: number,
+    model: ModelDraft,
+    field: CapacityField,
+    text: string,
+  ): void => {
+    setEditing((current) => new Map(current).set(bufferKey(model, index, field), text));
     patch(index, { [field]: parseCapacity(text) });
   };
 
   /** What a capacity field shows: the buffer while typing, else the stored count. */
   const capacityText = (model: ModelDraft, index: number, field: CapacityField): string =>
-    editing.get(bufferKey(index, field)) ?? capacitySpelling(numberOf(model, field));
+    editing.get(bufferKey(model, index, field)) ?? capacitySpelling(numberOf(model, field));
 
   /** Drop one row's entries and shift the rows after it down, in one pass. */
   const reindexOnRemove = (
@@ -243,10 +249,14 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
   ): Map<string, string> => {
     const next = new Map<string, string>();
     for (const [key, value] of current) {
-      const at = Number(key.slice(0, key.indexOf(":")));
+      const fallback = /^row:(\d+):/.exec(key);
+      if (fallback === null) {
+        next.set(key, value);
+        continue;
+      }
+      const at = Number(fallback[1]);
       if (at === index) continue;
-      // Only the row number moves; the field half of the key is untouched.
-      next.set(at > index ? key.replace(/^\d+/, String(at - 1)) : key, value);
+      next.set(at > index ? key.replace(/^row:\d+/, `row:${String(at - 1)}`) : key, value);
     }
     return next;
   };
@@ -453,10 +463,8 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
               disabled={disabled}
               onClick={() => {
                 onChange(models.filter((_model, at) => at !== index));
-                // Both stores are keyed by position, so every row after this
-                // one shifts down and would otherwise inherit its neighbour's
-                // state — a different row's capacities popping open, or its
-                // half-typed text appearing in another row's field.
+                // Expanded rows are position-keyed; capacity buffers keep their
+                // model id, and only id-less drafts need a row-index fallback.
                 setExpanded((current) => {
                   const next = new Set<number>();
                   for (const at of current) {
@@ -506,7 +514,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
                   aria-label={`${t("modelContextWindow")} ${index + 1}`}
                   disabled={disabled}
                   onChange={(event) => {
-                    editCapacity(index, "contextWindow", event.target.value);
+                    editCapacity(index, model, "contextWindow", event.target.value);
                   }}
                 />
               </label>
@@ -521,7 +529,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
                   aria-label={`${t("modelMaxTokens")} ${index + 1}`}
                   disabled={disabled}
                   onChange={(event) => {
-                    editCapacity(index, "maxTokens", event.target.value);
+                    editCapacity(index, model, "maxTokens", event.target.value);
                   }}
                 />
               </label>

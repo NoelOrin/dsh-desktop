@@ -31,6 +31,7 @@ interface WorkspaceRegistryLike {
 
 interface IncomingMessageLike {
   method?: string;
+  headers?: Record<string, string | string[] | undefined>;
   on(event: string, listener: (chunk?: unknown) => void): unknown;
 }
 
@@ -47,11 +48,16 @@ interface WebServerLike {
   }): () => void;
 }
 
+interface ProjectsInjectContext {
+  webServer: WebServerLike;
+  effect(execute: () => unknown, label?: string): unknown;
+}
+
 /** 壳注入脚本需要的服务面：webServer 走 inject，workspaceRegistry 按需 ctx.get。 */
 interface ProjectsContext {
   inject(
     dependencies: readonly string[],
-    callback: (ctx: { webServer: WebServerLike }) => unknown,
+    callback: (ctx: ProjectsInjectContext) => unknown,
   ): unknown;
   get(name: string, strict?: boolean): unknown;
 }
@@ -287,6 +293,26 @@ function sendJson(res: ServerResponseLike, code: number, payload: unknown): void
   res.end(JSON.stringify(payload));
 }
 
+function headerValue(req: IncomingMessageLike, name: string): string {
+  const value = req.headers?.[name.toLowerCase()];
+  return Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
+}
+
+/** 仅接受来自当前 dsh web loopback origin 的请求，防止其他本地页面构造动作 POST。 */
+function isTrustedActionRequest(req: IncomingMessageLike): boolean {
+  const host = headerValue(req, "host").toLowerCase();
+  const origin = headerValue(req, "origin") || headerValue(req, "referer");
+  if (host && origin) {
+    try {
+      const parsed = new URL(origin);
+      return parsed.protocol === "http:" && parsed.host.toLowerCase() === host;
+    } catch {
+      return false;
+    }
+  }
+  return headerValue(req, "sec-fetch-site").toLowerCase() === "same-origin";
+}
+
 const MAX_ACTION_BODY_BYTES = 64 * 1024;
 
 function readBody(req: IncomingMessageLike): Promise<string> {
@@ -323,45 +349,56 @@ function readBody(req: IncomingMessageLike): Promise<string> {
 
 export function apply(ctx: ProjectsContext): void {
   (ctx as unknown as ProjectsContext).inject(["webServer"] as never, (sctx) => {
-    sctx.webServer.register({
-      kind: "exact",
-      path: "/dsh-desktop/workspaces",
-      handler: (_req, res) => {
-        sendJson(res, 200, { ok: true, workspaces: listWorkspaces(ctx) });
-      },
-    });
-    sctx.webServer.register({
-      kind: "exact",
-      path: "/dsh-desktop/sessions",
-      handler: (_req, res) => {
-        sendJson(res, 200, { ok: true, sessions: listSessions(ctx) });
-      },
-    });
-    sctx.webServer.register({
-      kind: "exact",
-      path: "/dsh-desktop/workspaces/action",
-      handler: async (req, res) => {
-        if ((req.method ?? "GET").toUpperCase() !== "POST") {
-          sendJson(res, 405, { ok: false, error: "method not allowed" });
-          return;
-        }
-        try {
-          const raw = await readBody(req);
-          const body = (JSON.parse(raw || "{}") ?? {}) as Record<string, unknown>;
-          const result = await runAction(
-            ctx,
-            String(body.action ?? ""),
-            String(body.id ?? ""),
-            body,
-          );
-          sendJson(res, result.ok ? 200 : 400, result);
-        } catch (error) {
-          sendJson(res, 400, {
-            ok: false,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      },
-    });
+    sctx.effect(() => {
+      const disposers = [
+        sctx.webServer.register({
+          kind: "exact",
+          path: "/dsh-desktop/workspaces",
+          handler: (_req, res) => {
+            sendJson(res, 200, { ok: true, workspaces: listWorkspaces(ctx) });
+          },
+        }),
+        sctx.webServer.register({
+          kind: "exact",
+          path: "/dsh-desktop/sessions",
+          handler: (_req, res) => {
+            sendJson(res, 200, { ok: true, sessions: listSessions(ctx) });
+          },
+        }),
+        sctx.webServer.register({
+          kind: "exact",
+          path: "/dsh-desktop/workspaces/action",
+          handler: async (req, res) => {
+            if (!isTrustedActionRequest(req)) {
+              sendJson(res, 403, { ok: false, error: "untrusted action origin" });
+              return;
+            }
+            if ((req.method ?? "GET").toUpperCase() !== "POST") {
+              sendJson(res, 405, { ok: false, error: "method not allowed" });
+              return;
+            }
+            try {
+              const raw = await readBody(req);
+              const body = (JSON.parse(raw || "{}") ?? {}) as Record<string, unknown>;
+              const result = await runAction(
+                ctx,
+                String(body.action ?? ""),
+                String(body.id ?? ""),
+                body,
+              );
+              sendJson(res, result.ok ? 200 : 400, result);
+            } catch (error) {
+              sendJson(res, 400, {
+                ok: false,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+          },
+        }),
+      ];
+      return () => {
+        for (const dispose of disposers) dispose();
+      };
+    }, "projects: 桌面壳 loopback 端点");
   });
 }

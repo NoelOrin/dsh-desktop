@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.1] - 2026-08-15
+
+### Bug Fixes
+
+- fix: 修复 Windows 编译错误 (#2)
+
 ## [0.2.0] - 2026-08-15
 
 ### Features

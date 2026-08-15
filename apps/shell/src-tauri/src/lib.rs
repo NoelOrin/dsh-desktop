@@ -451,15 +451,32 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
     return row instanceof HTMLElement ? row : null;
   }
 
+  function sidebarActionName(label, kind) {
+    if (typeof label !== "string") return null;
+    if (kind === "workspace") {
+      var match = label.match(/^工作区“(.+)”的操作$/);
+      if (match) return match[1];
+      match = label.match(/^Workspace actions for (.+)$/);
+      return match ? match[1] : null;
+    }
+    var match = label.match(/^会话“(.+)”的操作$/);
+    if (match) return match[1];
+    match = label.match(/^Session actions for (.+)$/);
+    return match ? match[1] : null;
+  }
+
   function findSidebarWorkspaceName(target) {
     var row = findSidebarWorkspaceRow(target);
     if (!row) return null;
     var node = row;
     while (node && node !== document.body && node !== document.documentElement) {
-      var button = node.querySelector && node.querySelector('[role="treeitem"] button[aria-label^="工作区"]');
-      var aria = button && button.getAttribute("aria-label");
-      var match = aria && aria.match(/^工作区“(.+)”的操作$/);
-      if (match) return match[1];
+      var buttons = node.querySelectorAll && node.querySelectorAll('[role="treeitem"] button[aria-label^="工作区"], [role="treeitem"] button[aria-label^="Workspace"]');
+      if (buttons) {
+        for (var i = 0; i < buttons.length; i++) {
+          var name = sidebarActionName(buttons[i].getAttribute("aria-label"), "workspace");
+          if (name) return name;
+        }
+      }
       node = node.parentElement;
     }
     return null;
@@ -469,10 +486,10 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
     if (!target || typeof target.closest !== "function") return null;
     var row = target.closest('[data-slot="sidebar.workspaces"] [role="treeitem"][aria-selected]');
     if (!(row instanceof HTMLElement)) return null;
-    var button = row.querySelector && row.querySelector('button[aria-label^="会话"]');
+    var button = row.querySelector && row.querySelector('button[aria-label^="会话"], button[aria-label^="Session"]');
     if (!(button instanceof HTMLElement)) return null;
     var aria = button.getAttribute("aria-label");
-    var match = aria && aria.match(/^会话“(.+)”的操作$/);
+    var title = sidebarActionName(aria, "session");
     var workspaceName = null;
     var node = row.parentElement;
     while (node && node !== document.body && node !== document.documentElement) {
@@ -489,7 +506,7 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
     return {
       row: row,
       button: button,
-      title: match ? match[1] : null,
+      title: title,
       workspaceName: workspaceName
     };
   }
@@ -796,6 +813,45 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
   }
 
   install();
+})();"##;
+
+#[cfg(debug_assertions)]
+/// 开发热更新：dsh-client-hmr 广播 rebuilt 帧后自动整页刷新，
+/// 作为模块热替换的页面级兜底，避免个别 client 状态未能随 HMR 更新。
+const DEV_RELOAD_SCRIPT: &str = r##"(function () {
+  "use strict";
+  if (window.__DSH_DEV_RELOAD__) return;
+  window.__DSH_DEV_RELOAD__ = true;
+
+  var RELOAD_DELAY_MS = 800;
+  var source = null;
+
+  function scheduleReload() {
+    if (!source) return;
+    source.close();
+    source = null;
+    setTimeout(function () {
+      window.location.reload();
+    }, RELOAD_DELAY_MS);
+  }
+
+  try {
+    source = new EventSource("/plugins/events");
+  } catch (_) {
+    return;
+  }
+
+  source.addEventListener("message", function (event) {
+    var frame;
+    try {
+      frame = JSON.parse(event.data);
+    } catch (_) {
+      return;
+    }
+    if (frame && frame.type === "rebuilt") {
+      scheduleReload();
+    }
+  });
 })();"##;
 
 #[derive(Clone, Default, Serialize)]
@@ -1933,17 +1989,16 @@ fn parse_window_color(hex: &str) -> Option<tauri::window::Color> {
 }
 
 #[tauri::command]
-fn get_ui_theme(app: AppHandle) -> UiThemeSnapshot {
-    let system_dark = app
+fn get_ui_theme(state: State<AppState>) -> UiThemeSnapshot {
+    let system_dark = state
+        .app
         .get_webview_window("main")
         .and_then(|w| w.theme().ok())
         .map(|t| t == tauri::Theme::Dark)
         .unwrap_or(false);
-    let home = std::env::var("DSH_HOME")
-        .ok()
-        .or_else(|| std::env::var("HOME").ok().map(|h| format!("{h}/.dsh")));
+    let home = settings_home(&state.config_path);
     let section = match home {
-        Some(home) => read_ui_theme_section(&Path::new(&home).join("settings.yaml")),
+        Some(home) => read_ui_theme_section(&home.join("settings.yaml")),
         None => theme::UiThemeSection::default(),
     };
     resolve_ui_theme(&section, system_dark)
@@ -2013,10 +2068,13 @@ fn update_dsh(state: State<AppState>) -> Result<(), String> {
             &log_path,
             "[desktop] 执行: npm install -g @deepseek-ai/dsh@latest",
         );
-        let child = Command::new(&npm)
+        let mut command = Command::new(&npm);
+        command
+            .env("PATH", effective_path())
             .args(["install", "-g", "@deepseek-ai/dsh@latest"])
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::piped());
+        let child = command
             .spawn()
             .map_err(|error| format!("无法启动 npm: {error}"));
         let result = child.and_then(|mut child| {
@@ -2088,6 +2146,13 @@ fn get_desktop_settings(
 ) -> Result<desktop_settings::DesktopSettings, String> {
     let autostart = app.autolaunch().is_enabled().map_err(|e| e.to_string())?;
     let startup_mode = desktop_settings::read_startup_mode(&state.desktop_settings_path)
+        .or_else(|| {
+            settings_home(&state.config_path).map(|home| {
+                desktop_settings::startup_mode(&desktop_settings::read_desktop_section(
+                    &home.join("settings.yaml"),
+                ))
+            })
+        })
         .unwrap_or(desktop_settings::StartupMode::Normal);
     Ok(desktop_settings::DesktopSettings {
         autostart,
@@ -2337,11 +2402,12 @@ fn register_shortcut(state: State<AppState>, shortcut: String) -> Result<Shortcu
 #[tauri::command]
 fn unregister_shortcut(state: State<AppState>, shortcut: String) -> Result<(), String> {
     let app = state.app.clone();
-    if let Some(s) = state.shortcuts.lock().unwrap().remove(&shortcut) {
+    if state.shortcuts.lock().unwrap().contains_key(&shortcut) {
         app.global_shortcut()
-            .unregister(s)
+            .unregister(shortcut.as_str())
             .map_err(|e| e.to_string())?;
     }
+    state.shortcuts.lock().unwrap().remove(&shortcut);
     let shortcuts = state
         .shortcuts
         .lock()
@@ -2484,7 +2550,12 @@ async fn install_update(app: AppHandle) -> Result<String, String> {
     let cache_dir = app.path().app_cache_dir().map_err(|e| e.to_string())?;
     let updates_dir = cache_dir.join("updates");
     std::fs::create_dir_all(&updates_dir).map_err(|e| format!("创建更新目录失败: {e}"))?;
-    let dest = updates_dir.join(name);
+    let safe_name = Path::new(name)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty() && *value != "." && *value != "..")
+        .ok_or_else(|| format!("资产名称无效: {name}"))?;
+    let dest = updates_dir.join(safe_name);
 
     let mut resp = client
         .get(url)
@@ -2647,7 +2718,9 @@ fn run_install(
     cmd.env("PATH", effective_path())
         .arg("install")
         .arg("-g")
-        .arg("@deepseek-ai/dsh");
+        .arg("@deepseek-ai/dsh")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     let mut child = cmd
         .spawn()
         .map_err(|error| format!("无法启动 npm ({}): {error}", npm.display()))?;
@@ -2748,6 +2821,19 @@ fn npm_global_prefix(config: &DshConfig) -> Option<PathBuf> {
 
 fn home_dir() -> Option<PathBuf> {
     std::env::var("HOME").ok().map(PathBuf::from)
+}
+
+fn settings_home(config_path: &Path) -> Option<PathBuf> {
+    let config = config::load(config_path).effective(|k| std::env::var(k).ok());
+    config
+        .dsh_home
+        .map(PathBuf::from)
+        .or_else(|| std::env::var("DSH_HOME").ok().map(PathBuf::from))
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|h| PathBuf::from(format!("{h}/.dsh")))
+        })
 }
 
 fn find_in_path(name: &str) -> Option<PathBuf> {
@@ -3097,6 +3183,12 @@ fn is_health_ready(url: &str) -> bool {
     ) else {
         return false;
     };
+    if stream
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .is_err()
+    {
+        return false;
+    }
     let request = "GET /dsh-desktop/health HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n";
     if stream.write_all(request.as_bytes()).is_err() {
         return false;

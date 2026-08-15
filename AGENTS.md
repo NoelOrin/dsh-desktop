@@ -24,7 +24,7 @@
 - `apps/shell/` - main 窗口：启动页前端（Vite + TypeScript）与 `src-tauri/`（Tauri 2 + Rust 后端）
 - `apps/shell/src-tauri/` - Rust 后端：进程管理、IPC、窗口/托盘、主题、插件装配与桥接注入
 - `packages/contracts/` - 前后端共享的 native IPC 契约类型与常量（`@dsh-desktop/contracts`）
-- `packages/plugins/` - dsh 插件容器：`bridge/`（桥接 Tauri 壳能力）+ `projects/`（项目列表与右键管理设置页）+ `shortcuts/`（全局快捷键设置页），每个含 `dsh` 字段的子目录一个 cordis 插件；`client-kit/` 为共享注入/构建 helper，不进入插件 resources
+- `packages/plugins/` - dsh 插件容器：`bridge/`（桥接 Tauri 壳能力）+ `projects/`（项目列表与右键管理设置页）+ `shortcuts/`（全局快捷键设置页）+ `reasoning/`（模型设置页，含第三方思考强度），每个含 `dsh` 字段的子目录一个 cordis 插件；`client-kit/` 为共享注入/构建 helper，不进入插件 resources
 - `scripts/` - 根级开发脚本：`dev.mjs` / `watch-plugins.mjs` / `build-plugins.mjs` / `lan-proxy.mjs`
 - `.github/` - 三平台 CI 构建、自动发布与版本号脚本
 - `docs/` - 插件边界文档、设计/实施记录与截图等资源
@@ -39,7 +39,7 @@
 6. **桌面壳设置**：经 `packages/plugins/bridge` 插件在 dsh WebUI 设置面板提供“桌面”页（状态 / 配置 / 工具 / 开机自启与启动模式）与“外观”页（主题偏好 / 主题库 / 背景图 / 玻璃透明度 / 自定义主题 / 排版），通过 `window.__DSH_DESKTOP__` 桥接调用壳能力；原独立控制中心已迁移至此并移除
 7. **内嵌插件自动挂载**：`packages/plugins` 各插件经 `yarn build:plugins` 编译打包进 Tauri resources（`apps/shell/src-tauri/resources/plugins/`），应用启动时 Rust 侧把插件包装配到 `$DSH_HOME/profiles/node_modules/@dsh-desktop/<name>/`（版本键控幂等、原子替换、best-effort）并生成 `embedded-plugins.patch.yml` overlay，以 `dsh web --patch <overlay>` 挂载（host 走 loader、client 走 dsh-client-modules）；不写 profile manifest、不下载；单独 `dsh web`（不带 `--patch`）不挂载内嵌插件
    - 发布模式按版本号幂等装配；开发模式 `assemble_dev` 强制重装，避免源码更新后仍加载旧产物
-   - `yarn dev` 下由 `scripts/watch-plugins.mjs` 监听插件源码并热部署到 profile，client bundle 经 dsh 自带 `dsh-client-hmr` 热替换
+   - `yarn dev` 下由 `scripts/watch-plugins.mjs` 监听插件源码并热部署到 profile，client bundle 经 dsh 自带 `dsh-client-hmr` 热替换，开发模式收到 rebuilt 帧后自动刷新 Web UI
 8. **主题与无边框窗口**：壳侧读取 `settings.yaml` 的 `ui-theme` 分节与壳侧 `desktop-settings.json` 的 `startupMode`，通过 `get_ui_theme` / `dsh-ui-theme` 让启动页和窗口背景跟随；main 窗口无系统边框（macOS 使用 Overlay title bar），启动页与 dsh web 注入自绘标题栏（拖动、双击最大化、窗口控制按钮）
 
 ## 配置优先级

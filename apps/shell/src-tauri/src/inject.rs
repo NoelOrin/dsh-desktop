@@ -1,4 +1,4 @@
-//! dsh web 页面注入：负责把受控桥接与自绘标题栏脚本注入 loopback 页面。
+//! dsh web 页面注入：负责把受控桥接、侧边栏右键菜单与开发热更新脚本注入 loopback 页面。
 
 /// 判断是否为 dsh web 的 loopback 页面（用于桥接注入）。
 pub fn is_dsh_web_url(url: &tauri::Url) -> bool {
@@ -16,6 +16,10 @@ pub fn inject_dsh_web<R: tauri::Runtime>(webview: &tauri::Webview<R>, url: &taur
     }
     let _ = webview.eval(super::BRIDGE_SCRIPT);
     let _ = webview.eval(super::HARNESS_CHROME_SCRIPT);
+    #[cfg(debug_assertions)]
+    {
+        let _ = webview.eval(super::DEV_RELOAD_SCRIPT);
+    }
 }
 
 #[cfg(test)]

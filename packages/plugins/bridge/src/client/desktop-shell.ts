@@ -5,7 +5,6 @@
  * 不会触发这些改动。
  */
 import { getBridge } from "../../../client-kit/inject";
-import "./desktop-shell.module.css";
 
 const CONTROLS_ID = "dsh-desktop-controls";
 const DRAG_ID = "dsh-desktop-drag";

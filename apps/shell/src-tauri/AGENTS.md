@@ -33,6 +33,8 @@ DSH Desktop 的 Rust 后端。职责：检测 / 一键安装或更新 `dsh`、�
 - 子进程管道：stdout/stderr 各起一个 reader 线程，经 `append_line` 写入 `logs/dsh.log`、维护环形缓冲（`MAX_LOGS=500`）与日志轮转（`MAX_LOG_BYTES=2MB`）并 emit `dsh-log`
 - 启动方式：`dsh web [--patch <overlay>] --host 127.0.0.1 --port 0`，由 `process::parse_dsh_web_url` 解析 `dsh web: http://127.0.0.1:<port>`，再用原始 TCP 持续探测 `/dsh-desktop/health`
 - 内嵌插件：启动前经 `embedded::prepare_overlay` 统一完成装配与 overlay 生成（开发模式 `assemble_dev` / 发布模式 `assemble`），装配到 `$DSH_HOME/profiles/node_modules/@dsh-desktop/<name>/` 后随 `--patch` 挂载
+- 插件若声明 `dshDesktop.overlay: true`，`write_overlay` 会把该包 `cordis.patch.yml`
+  原样写入桌面 overlay，用于同时停用/替换官方插件行
 
 ## 消息协议（ManagerMessage）
 

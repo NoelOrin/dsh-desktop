@@ -269,6 +269,18 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@deepseek-ai/dsh-client-schema-form@npm:^0.1.0-rc.6":
+  version: 0.1.0-rc.6
+  resolution: "@deepseek-ai/dsh-client-schema-form@npm:0.1.0-rc.6"
+  dependencies:
+    "@deepseek-ai/schemastery": "npm:^3.18.1"
+  peerDependencies:
+    "@deepseek-ai/cordis": ^4.0.1
+    "@deepseek-ai/dsh-invariants": ^0.1.0-rc.6
+  checksum: 10c0/1a160b8de49b57527559b93d27241fe16f8f22f4017d8d7e90ea3386ad099b20074c424a05050026f5ccd6fd73970b16b28eebf0e5a07f70b0f384e98c49dbc0
+  languageName: node
+  linkType: hard
+
 "@deepseek-ai/dsh-client-ui-primitives@npm:^0.1.0-rc.6":
   version: 0.1.0-rc.6
   resolution: "@deepseek-ai/dsh-client-ui-primitives@npm:0.1.0-rc.6"
@@ -324,6 +336,20 @@ __metadata:
     "@deepseek-ai/cordis": ^4.0.1
     "@deepseek-ai/dsh-invariants": ^0.1.0-rc.6
   checksum: 10c0/b8c26fdd875df274c5caa1757b3d05d2b2ba5fead11b45898f933dea70c16d2c94fce83a849341df18adfd08d4cc0b42b576668cdba12713f6fd8dfb9485c5fc
+  languageName: node
+  linkType: hard
+
+"@deepseek-ai/dsh-client-web-react@npm:^0.1.0-rc.6":
+  version: 0.1.0-rc.6
+  resolution: "@deepseek-ai/dsh-client-web-react@npm:0.1.0-rc.6"
+  dependencies:
+    "@deepseek-ai/dsh-client-ui-slots": "npm:^0.1.0-rc.6"
+    react: "npm:^18.2.0"
+    use-sync-external-store: "npm:1.2.0"
+  peerDependencies:
+    "@deepseek-ai/cordis": ^4.0.1
+    "@deepseek-ai/dsh-invariants": ^0.1.0-rc.6
+  checksum: 10c0/d181108e545c9644f1f4be05a613a3044733d2a02f822de04f74233c9185b4c18b30c38d8e7713c5f690b0a73b35286633a5c660402d67276084fffa3818fe69
   languageName: node
   linkType: hard
 
@@ -784,14 +810,26 @@ __metadata:
   resolution: "@dsh-desktop/plugin-projects@workspace:packages/plugins/projects"
   dependencies:
     "@deepseek-ai/cordis": "npm:^4.0.1"
+    "@types/node": "npm:^24.0.0"
+    tsdown: "npm:^0.22"
+    typescript: "npm:^5"
+  languageName: unknown
+  linkType: soft
+
+"@dsh-desktop/plugin-reasoning@workspace:packages/plugins/reasoning":
+  version: 0.0.0-use.local
+  resolution: "@dsh-desktop/plugin-reasoning@workspace:packages/plugins/reasoning"
+  dependencies:
+    "@deepseek-ai/cordis": "npm:^4.0.1"
     "@deepseek-ai/dsh-api-remotes": "npm:^0.1.0-rc.6"
     "@deepseek-ai/dsh-client-connection": "npm:^0.1.0-rc.6"
     "@deepseek-ai/dsh-client-locale": "npm:^0.1.0-rc.6"
     "@deepseek-ai/dsh-client-runtime": "npm:^0.1.0-rc.6"
+    "@deepseek-ai/dsh-client-schema-form": "npm:^0.1.0-rc.6"
     "@deepseek-ai/dsh-client-ui-primitives": "npm:^0.1.0-rc.6"
     "@deepseek-ai/dsh-client-ui-settings": "npm:^0.1.0-rc.6"
-    "@tsdown/css": "npm:0.22.14"
-    "@types/node": "npm:^24.0.0"
+    "@deepseek-ai/dsh-client-ui-slots": "npm:^0.1.0-rc.6"
+    "@deepseek-ai/dsh-client-web-react": "npm:^0.1.0-rc.6"
     "@types/react": "npm:~18.3.1"
     react: "npm:^18.2.0"
     tsdown: "npm:^0.22"

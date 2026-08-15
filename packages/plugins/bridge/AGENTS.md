@@ -12,7 +12,7 @@
 | host | `src/index.ts` | 插件入口（`export const name` + `apply(ctx)`）；定义 `DshDesktopBridge` 类型；注册 `dsh-desktop/health` 健康端点，不实现 dsh 业务 |
 | client | `src/client.tsx` | 在 dsh WebUI 设置面板注册“桌面”设置节（状态 / 配置 / 工具 / 开机自启与启动模式）与“外观”设置节（主题偏好 / 主题库 / 背景图 / 玻璃透明度 / 自定义主题 / 排版）；`ui-theme` 命名空间只 bind 不注册，快照经 `createThemeStore` 防抖写回，变化时 `applyThemeSection` 实时应用 |
 | shared | `src/shared/theme.ts` | 主题家族、token 推导、背景/玻璃/排版边界与默认值 |
-| client UI | `src/client/*` | 桌面/外观设置节组件（`DesktopPanel.tsx`、`AppearanceSection.tsx` 等）、桌面壳形态（`desktop-shell.ts` / `desktop-shell.module.css`）、共享控件（`ui/controls.*`）、运行时类型切片（`runtime.ts`）与主题应用逻辑；桥接读取与样式注入统一走 `../../../client-kit/inject.ts` |
+| client UI | `src/client/*` | 桌面/外观设置节组件（`DesktopPanel.tsx`、`AppearanceSection.tsx` 等）、桌面壳形态（`desktop-shell.ts` + `desktop.module.css` 内全局规则）、共享控件（`ui/controls.*`）、运行时类型切片（`runtime.ts`）与主题应用逻辑；桥接读取与样式注入统一走 `../../../client-kit/inject.ts` |
 
 `package.json` 通过 `dsh.client`（platform web）声明 client 面并导出 `./client`；
 client 面依赖 `@deepseek-ai/dsh-client-ui-settings` 等 dsh client 生态（peer 声明）。
@@ -46,9 +46,12 @@ client 面依赖 `@deepseek-ai/dsh-client-ui-settings` 等 dsh client 生态（p
 | `projects.setPinned(id, pinned)` / `markRead(id)` / `setArchived(id, archived)` | `set_project_pinned` / `mark_project_read` / `archive_project_chats` | 置顶 / 全部标为已读 / 聊天归档 |
 | `projects.createWorktree(id)` / `showInFinder(id)` | `create_project_worktree` / `show_project_in_finder` | 创建永久工作树 / 文件管理器定位 |
 
+所有事件订阅走 `plugin:event|listen` / `plugin:event|unlisten`，远程能力
+`capabilities/bridge.json` 必须保留 `core:event:allow-listen` / `core:event:allow-unlisten`。
+
 “快捷键”设置 UI 由独立的 `@dsh-desktop/plugin-shortcuts` 插件提供；本插件只保留
-`shortcuts` 桥接面，不实现设置页。“项目”设置 UI 由独立的 `@dsh-desktop/plugin-projects`
-插件提供；本插件只保留 `projects` 桥接面，不实现设置页。
+`shortcuts` 桥接面，不实现设置页。项目设置页已移除；本插件仍保留 `projects`
+桥接面，不实现设置页。
 
 ## 开机自启与启动模式设置项归属
 

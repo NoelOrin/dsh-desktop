@@ -27,8 +27,9 @@
 - Auto-detects `dsh`: launches it directly if installed, or provides a one-click install and enters automatically
 - Picks a free loopback port and starts `dsh web --host 127.0.0.1 --port <port>`
 - Single-window architecture: the main window hosts the splash page and the dsh Web UI; desktop shell capabilities (status / config / tools / autostart) are provided via a dsh plugin on the "Desktop" page of the WebUI settings panel — no separate control window
-- Embedded dsh plugin auto-mount: `packages/plugins` (bridge / projects / shortcuts) are bundled into Tauri resources with the app, then copied into the dsh profile at startup with a generated `--patch` overlay
+- Embedded dsh plugin auto-mount: `packages/plugins` (bridge / projects / shortcuts / reasoning) are bundled into Tauri resources with the app, then copied into the dsh profile at startup with a generated `--patch` overlay
 - Enhanced native capabilities: system tray (close to tray), native notifications, single-instance lock, crash auto-restart, system theme following, graceful exit with process-tree cleanup, file drop, window-state memory, `dsh-desktop://` deep links, auto-update (background check + "Check for updates" on the Desktop page), autostart (dsh plugin settings panel, off by default), custom global shortcuts, tray "Quit" confirmation; dsh web bridges the shell via `window.__DSH_DESKTOP__` (notifications / clipboard / dialogs / open external links / autostart / global shortcuts / deep links)
+- Third-party reasoning effort: the Models settings page lets custom / third-party models enable Low / Medium / High / Very High / Extreme, and the composer model menu switches the level directly
 - LAN access: a built-in zero-dependency reverse proxy lets LAN devices reach the local `dsh web` (with optional Bearer token gate)
 
 ## Architecture
@@ -106,6 +107,7 @@ Installation logs stream live on the splash page; once finished, `dsh web` is la
 - `bridge` (`@dsh-desktop/plugin-bridge`) — a two-sided plugin bridging Tauri shell capabilities: renders the "Desktop" page and the "autostart" toggle in the dsh WebUI settings panel, calling shell capabilities via `window.__DSH_DESKTOP__` (notifications / clipboard / dialogs / open external links / autostart / global shortcuts / deep links)
 - `projects` (`@dsh-desktop/plugin-projects`) — a project settings plugin showing the shell-persisted local project list with pin, Finder reveal, permanent worktree, edit, mark-all-read, archive chats, and remove actions
 - `shortcuts` (`@dsh-desktop/plugin-shortcuts`) — a global shortcut settings plugin managing shell shortcuts from the dsh WebUI settings panel, plus double-Esc stop for the current conversation
+- `reasoning` (`@dsh-desktop/plugin-reasoning`) — a Models settings plugin that writes `reasoningEfforts` for custom / third-party models inside the Models page so the composer model menu can switch levels
 - `client-kit` (shared sources, not a plugin) — shared `window.__DSH_DESKTOP__` access, client CSS injection, and common tsdown build plugins; it is inlined into each plugin's client bundle and is not copied into `resources/plugins`
 
 At build time `scripts/build-plugins.mjs` compiles each plugin with tsdown and copies a self-contained dist manifest into `apps/shell/src-tauri/resources/plugins/` for distribution with the installer; after a plugin is removed from source, the next build prunes its stale resources and `--home` profile output. At startup `embedded.rs` copies them into the dsh profile's node_modules and generates a `--patch` overlay so `dsh web` mounts them automatically — best-effort, never blocking startup.
@@ -157,7 +159,7 @@ dsh-desktop/
 │           └── src/              # lib.rs / config.rs / embedded.rs / main.rs
 ├── packages/
 │   ├── contracts/                # shared IPC types & constants (@dsh-desktop/contracts)
-│   └── plugins/                  # dsh plugin container: bridge / projects / shortcuts
+│   └── plugins/                  # dsh plugin container: bridge / projects / shortcuts / reasoning
 ├── scripts/
 │   ├── lan-proxy.mjs             # LAN reverse proxy
 │   └── build-plugins.mjs         # compile plugins into Tauri resources

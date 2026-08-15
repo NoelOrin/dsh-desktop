@@ -287,14 +287,37 @@ function sendJson(res: ServerResponseLike, code: number, payload: unknown): void
   res.end(JSON.stringify(payload));
 }
 
+const MAX_ACTION_BODY_BYTES = 64 * 1024;
+
 function readBody(req: IncomingMessageLike): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
+    let size = 0;
+    let rejected = false;
+    const fail = (error: Error): void => {
+      if (rejected) return;
+      rejected = true;
+      reject(error);
+    };
     req.on("data", (chunk) => {
-      if (chunk !== undefined) chunks.push(chunk as Buffer);
+      if (rejected) return;
+      if (chunk !== undefined) {
+        const bytes =
+          typeof chunk === "string"
+            ? Buffer.byteLength(chunk)
+            : ((chunk as { length?: number }).length ?? 0);
+        size += bytes;
+        if (size > MAX_ACTION_BODY_BYTES) {
+          fail(new Error("request body too large"));
+          return;
+        }
+        chunks.push(chunk as Buffer);
+      }
     });
-    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-    req.on("error", reject);
+    req.on("end", () => {
+      if (!rejected) resolve(Buffer.concat(chunks).toString("utf8"));
+    });
+    req.on("error", (error) => fail(error instanceof Error ? error : new Error(String(error))));
   });
 }
 

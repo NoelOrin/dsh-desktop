@@ -1,4 +1,4 @@
-# 项目设置插件：向 profile 插入插件行
+# 项目 host 插件：向 profile 插入插件行
 - insert:
     - id: projects
       name: '@dsh-desktop/plugin-projects'

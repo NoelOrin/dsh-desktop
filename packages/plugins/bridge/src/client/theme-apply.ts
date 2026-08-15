@@ -214,6 +214,7 @@ let applied: { image: string; blurPx: number; factor: number } | null = null;
 let decodedFor = "";
 let decoded: HTMLImageElement | null = null;
 let resizeBound = false;
+const appliedThemeTokens = new Set<string>();
 
 function layerCssSize(): { width: number; height: number } {
   const width = typeof window === "undefined" ? 0 : window.innerWidth;
@@ -344,6 +345,8 @@ export function applyThemeSection(
 
   const family = activeFamily(section, mode, preview);
   let tokens: ThemeTokens = {};
+  for (const name of appliedThemeTokens) body.style.removeProperty(name);
+  appliedThemeTokens.clear();
   if (family.id !== DEFAULT_FAMILY_ID) {
     tokens = deriveThemeTokens(family[mode]);
   }
@@ -353,6 +356,7 @@ export function applyThemeSection(
   tokens["--dsw-alias-glass-opacity"] = `${clampWallpaperEffect(section.glassOpacity)}%`;
   for (const [name, value] of Object.entries(tokens)) {
     body.style.setProperty(name, value);
+    appliedThemeTokens.add(name);
   }
 
   // 排版

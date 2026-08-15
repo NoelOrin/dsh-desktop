@@ -1,0 +1,6 @@
+# 模型设置插件：停用官方模型页，改由本插件提供带思考强度配置的模型页
+- id: ui-settings-models
+  disabled: true
+- insert:
+    - id: reasoning
+      name: '@dsh-desktop/plugin-reasoning'

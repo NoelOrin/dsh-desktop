@@ -32,7 +32,7 @@ DSH Desktop 是 dsh 的桌面套壳：Rust 后端拉起 `dsh web` 子进程，�
 | 装配 | profile（`$DSH_HOME/profiles/<name>`）的 `dsh.profile.bundles` 有序列表 + 用户 patch 层 |
 | 安装/管理 | `dsh plugin --profile <name> <pnpm args>`（转发给 pnpm）；web 设置里的插件管理 |
 | 扩展什么 | agent 行为、工具、模型适配、会话处理、系统提示、Web UI 组件、设置页、命令行列 |
-| 本仓库载体 | `packages/plugins`（插件容器）：`bridge/` 桥接 Tauri 壳能力、`shortcuts/` 快捷键设置插件、`projects/` 项目设置插件，每个含 `dsh` 字段的子目录一个 dsh 插件；`client-kit/` 为共享注入/构建 helper |
+| 本仓库载体 | `packages/plugins`（插件容器）：`bridge/` 桥接 Tauri 壳能力、`shortcuts/` 快捷键设置插件、`projects/` 项目右键菜单 host 插件、`reasoning/` 第三方思考强度设置插件，每个含 `dsh` 字段的子目录一个 dsh 插件；`client-kit/` 为共享注入/构建 helper |
 
 **红线**：插件运行在 `http://127.0.0.1:<port>` 的远端页面/独立 Node 进程里，
 默认**不接触**桌面壳任何能力（见 §5）。唯一的例外是本仓库自己的桥接插件
@@ -151,7 +151,7 @@ snake_case）。
 | | `packages/plugins/`（容器） |
 | --- | --- |
 | 归属 | **dsh 插件域**（本仓库维护，交付给 dsh 装配） |
-| 结构 | `bridge/`（桥接 Tauri 壳能力）、`shortcuts/`（快捷键设置 UI）、`projects/`（项目列表与右键管理 UI）、`client-kit/`（共享注入/构建 helper，非插件）；新增插件在容器下建子目录即可 |
+| 结构 | `bridge/`（桥接 Tauri 壳能力）、`shortcuts/`（快捷键设置 UI）、`projects/`（项目右键菜单 host 端点）、`reasoning/`（模型设置 UI，含第三方思考强度）、`client-kit/`（共享注入/构建 helper，非插件）；新增插件在容器下建子目录即可 |
 | bridge 唯一职责 | 让 dsh 插件/页面能调用 Tauri 壳能力（桥接命令契约由 bridge 自持 + §5 端口白名单） |
 | 消费者 | dsh web 内的插件/页面 |
 | 依赖方向 | 依赖 `@deepseek-ai/cordis` 等 dsh 生态包；**不依赖 `@dsh-desktop/contracts`**（native 契约与桥接契约分离） |
@@ -195,7 +195,9 @@ snake_case）。
    `$DSH_HOME/profiles/node_modules/@dsh-desktop/<name>/`（dsh 的 profile 模块兜底目录）——
    以版本号为键幂等（缺失或版本不同才重装）、临时目录 + rename 原子替换、单包失败只记日志
    跳过；随后在应用数据目录生成 `embedded-plugins.patch.yml`（`- insert:`
-   行，插件名**必须单引号**——`@` 是 YAML 1.1 保留指示符）。开发模式下 Tauri 的
+   行，插件名**必须单引号**——`@` 是 YAML 1.1 保留指示符；声明 `dshDesktop.overlay: true`
+   的插件会把包内 `cordis.patch.yml` 原样写入 overlay，用于同时停用/替换官方插件行）。
+   开发模式下 Tauri 的
    `resource_dir()` 指向 `target/<profile>`，因此 Rust 侧经 `plugins_resource_dir()` 显式回退到
    源码 `apps/shell/src-tauri/resources`，发布模式仍读取应用资源目录；开发模式另经
    `assemble_dev` 忽略版本号、每次启动强制重装，避免插件代码更新但版本号未变时仍加载旧产物。
@@ -213,11 +215,13 @@ snake_case）。
 Vite 与 `scripts/watch-plugins.mjs`。watch 脚本检测插件源码变化后重新执行 `build:plugins --home`，
 把最新插件包原子复制进 dsh profile；watch 扫描 `packages/plugins` 下全部源码（含 `client-kit/`
 与 tsdown 配置，排除 `lib/` 产物），因此共享注入/构建 helper 变化也会触发热部署。dsh 自带的
-`dsh-client-hmr` 轮询 client bundle 变化并在
-Web UI 中热替换，无需重启 dsh。新增插件或修改 client 声明仍需要重启 dsh。
+`dsh-client-hmr` 轮询 client bundle 变化并在 Web UI 中热替换；开发模式壳侧另注入一个
+`/plugins/events` 监听，收到 rebuilt 帧后自动整页刷新，作为页面级兜底。新增插件或修改
+client 声明仍需要重启 dsh。
 
-**注意（行 id 去重）**：桌面 overlay 的 `- insert:` 行由 `write_overlay` **无条件追加**，
-不校验 profile 中是否已存在同名插件行。若把同一插件既内嵌挂载、又经
+**注意（行 id 去重）**：桌面 overlay 的 `- insert:` 行由 `write_overlay` **追加**，
+不校验 profile 中是否已存在同名插件行（声明 `dshDesktop.overlay: true` 的插件例外，
+其 `cordis.patch.yml` 是作者自持的完整 overlay）。若把同一插件既内嵌挂载、又经
 `dsh plugin --profile web add <包>` 装进 profile，叠加后会出现**重复行 id**（同一插件行被
 插入两次）。因此**桌面内嵌装配是唯一规范路径**：对同一插件不要同时走 profile 安装与内嵌挂载。
 

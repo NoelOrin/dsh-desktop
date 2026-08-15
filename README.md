@@ -27,9 +27,10 @@
 - 自动检测 `dsh`：已安装直接启动，未安装提供一键安装并自动进入
 - 自动选择空闲 loopback 端口，以 `dsh web --host 127.0.0.1 --port <port>` 启动
 - 单窗口架构：main 窗口承载启动页与 dsh Web UI；桌面壳能力（状态 / 配置 / 工具 / 开机自启）经 dsh 插件在 WebUI 设置面板的“桌面”页提供，不再有独立 control 窗口
-- 内嵌 dsh 插件自动装配：`packages/plugins`（bridge 桥接 / projects 项目 / shortcuts 快捷键）随应用打包进 Tauri resources，启动时自动复制到 dsh profile 并生成 `--patch` overlay 挂载
+- 内嵌 dsh 插件自动装配：`packages/plugins`（bridge 桥接 / projects 项目 / shortcuts 快捷键 / reasoning 模型与思考强度）随应用打包进 Tauri resources，启动时自动复制到 dsh profile 并生成 `--patch` overlay 挂载
 - 原生能力增强：系统托盘（关闭到托盘）、原生通知、单实例锁、崩溃自动重启、系统主题跟随、优雅退出与进程树清理、文件拖放、窗口状态记忆、`dsh-desktop://` 深链、自动更新（后台检查 + “桌面”页“检查更新”）、开机自启（dsh 插件设置面板，默认关闭）、自定义全局快捷键、托盘“退出”二次确认；dsh web 受控桥接 `window.__DSH_DESKTOP__`（通知 / 剪贴板 / 对话框 / 打开外部链接 / 开机自启 / 全局快捷键 / 深链）
 - 主题与背景图：设置 → 外观（内置 7 主题家族浅/深两半、自定义主题、背景图毛玻璃/像素化/玻璃透明度、排版），启动页与窗口背景跟随
+- 第三方思考强度：设置 → 模型 的自定义设置里可为自定义 / 第三方模型勾选 Low / Medium / High / Very High / Extreme，输入栏模型菜单可直接切换推理等级
 - 无边框窗口 + 自绘标题栏：可拖动、双击最大化，最小化/最大化/关闭按钮齐全，标题栏背景跟随主题
 - 局域网访问：内置零依赖反向代理脚本，让局域网设备访问本机 `dsh web`（支持 Bearer token 门禁）
 
@@ -106,8 +107,9 @@ npm install -g @deepseek-ai/dsh
 `packages/plugins` 是本仓库的 dsh 插件容器，当前包含：
 
 - `bridge`（`@dsh-desktop/plugin-bridge`）— 桥接 Tauri 壳能力的双面插件：在 dsh WebUI 设置面板渲染“桌面”页（状态 / 配置 / 工具 / 开机自启）与“外观”页（主题偏好 / 主题库 / 背景图 / 玻璃透明度 / 自定义主题 / 排版），通过 `window.__DSH_DESKTOP__` 调用壳能力（通知 / 剪贴板 / 对话框 / 打开外部链接 / 窗口控制 / 开机自启 / 全局快捷键 / 深链）
-- `projects`（`@dsh-desktop/plugin-projects`）— 项目设置插件：展示壳侧持久化的本地项目列表，提供置顶 / Finder 显示 / 创建永久工作树 / 编辑 / 全部标为已读 / 归档聊天 / 移除
+- `projects`（`@dsh-desktop/plugin-projects`）— 项目 host 插件：为侧边栏右键菜单提供 dsh 工作区/会话数据与动作端点
 - `shortcuts`（`@dsh-desktop/plugin-shortcuts`）— 全局快捷键设置插件：在 dsh WebUI 设置面板管理壳侧全局快捷键，并提供双击 Esc 停止当前对话
+- `reasoning`（`@dsh-desktop/plugin-reasoning`）— 模型设置插件：在“模型”页中为自定义 / 第三方模型配置推理等级，写入 `reasoningEfforts` 后输入栏模型菜单可直接切换
 - `client-kit`（共享源码，非插件）— 统一 `window.__DSH_DESKTOP__` 读取、client CSS 注入与 tsdown 公共构建插件；构建时内联进各插件的 client bundle，不进入 `resources/plugins`
 
 构建时 `scripts/build-plugins.mjs` 用 tsdown 编译各插件，并把自包含 dist 清单拷贝进 `apps/shell/src-tauri/resources/plugins/`，随安装包分发；插件从源码删除后，下次构建会自动清理 resources 与 `--home` profile 中的旧产物。应用启动时 `embedded.rs` 将其复制到 dsh profile 的 node_modules 并生成 `--patch` overlay，`dsh web` 启动即自动挂载，全程 best-effort 不阻塞启动。
@@ -159,7 +161,7 @@ dsh-desktop/
 │           └── src/              # lib.rs / config.rs / embedded.rs / main.rs
 ├── packages/
 │   ├── contracts/                # 共享 IPC 类型与常量（@dsh-desktop/contracts）
-│   └── plugins/                  # dsh 插件容器：bridge / projects / shortcuts
+│   └── plugins/                  # dsh 插件容器：bridge / projects / shortcuts / reasoning
 ├── scripts/
 │   ├── lan-proxy.mjs             # 局域网反向代理
 │   └── build-plugins.mjs         # 编译插件并打包进 Tauri resources

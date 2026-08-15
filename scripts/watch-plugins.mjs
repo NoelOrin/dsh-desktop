@@ -134,7 +134,7 @@ function main() {
     if (ok) {
       pending = false;
       last = snapshot();
-      console.log("[watch-plugins] 插件已重建并热部署，等待 dsh-client-hmr 热替换");
+      console.log("[watch-plugins] 插件已重建并热部署，等待 dsh-client-hmr 热替换后自动刷新页面");
     } else {
       retryAt = Date.now() + FAIL_RETRY_MS;
     }

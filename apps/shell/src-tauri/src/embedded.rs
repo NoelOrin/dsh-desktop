@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 pub struct MountedPlugin {
     pub id: String,
     pub name: String,
+    /// 声明 `dshDesktop.overlay: true` 的插件自带完整 overlay 内容。
+    pub overlay: Option<String>,
 }
 
 /// 遍历 `resource_dir/plugins/*` 子目录，把每个含 `dshDesktop.id` 的插件包
@@ -109,6 +111,13 @@ fn assemble_inner(
             .get("version")
             .and_then(|v| v.as_str())
             .unwrap_or("");
+        let overlay = manifest
+            .get("dshDesktop")
+            .and_then(|d| d.get("overlay"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+            .then(|| fs::read_to_string(dir.join("cordis.patch.yml")).ok())
+            .flatten();
 
         let target = home.join("profiles").join("node_modules").join(name);
 
@@ -119,6 +128,7 @@ fn assemble_inner(
             mounted.push(MountedPlugin {
                 id: id.to_string(),
                 name: name.to_string(),
+                overlay,
             });
             continue;
         }
@@ -157,6 +167,7 @@ fn assemble_inner(
         mounted.push(MountedPlugin {
             id: id.to_string(),
             name: name.to_string(),
+            overlay,
         });
     }
     mounted
@@ -229,10 +240,17 @@ pub fn write_overlay(dir: &Path, mounted: &[MountedPlugin]) -> Option<PathBuf> {
     }
     let mut content = String::new();
     for plugin in mounted {
-        content.push_str(&format!(
-            "- insert:\n    - id: {}\n      name: '{}'\n",
-            plugin.id, plugin.name
-        ));
+        if let Some(overlay) = &plugin.overlay {
+            content.push_str(overlay);
+            if !overlay.ends_with('\n') {
+                content.push('\n');
+            }
+        } else {
+            content.push_str(&format!(
+                "- insert:\n    - id: {}\n      name: '{}'\n",
+                plugin.id, plugin.name
+            ));
+        }
     }
     let path = dir.join("embedded-plugins.patch.yml");
     if let Err(error) = fs::write(&path, content) {
@@ -255,10 +273,20 @@ mod tests {
             MountedPlugin {
                 id: "bridge".into(),
                 name: "@dsh-desktop/plugin-bridge".into(),
+                overlay: None,
             },
             MountedPlugin {
                 id: "projects".into(),
                 name: "@dsh-desktop/plugin-projects".into(),
+                overlay: None,
+            },
+            MountedPlugin {
+                id: "reasoning".into(),
+                name: "@dsh-desktop/plugin-reasoning".into(),
+                overlay: Some(
+                    "- id: ui-settings-models\n  disabled: true\n- insert:\n    - id: reasoning\n      name: '@dsh-desktop/plugin-reasoning'\n"
+                        .into(),
+                ),
             },
         ];
         let path = write_overlay(&dir, &mounted).expect("overlay 应生成");
@@ -267,6 +295,9 @@ mod tests {
             .contains("- insert:\n    - id: bridge\n      name: '@dsh-desktop/plugin-bridge'\n"));
         assert!(content.contains(
             "- insert:\n    - id: projects\n      name: '@dsh-desktop/plugin-projects'\n"
+        ));
+        assert!(content.contains(
+            "- id: ui-settings-models\n  disabled: true\n- insert:\n    - id: reasoning\n      name: '@dsh-desktop/plugin-reasoning'\n"
         ));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -427,6 +458,40 @@ mod tests {
         .expect("overlay 应生成");
         let content = std::fs::read_to_string(&overlay).unwrap();
         assert!(content.contains("name: '@dsh-desktop/plugin-bridge'"));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn assemble_reads_self_contained_overlay() {
+        let root = temp_dir().join(format!("dsh-overlay-manifest-test-{}", std::process::id()));
+        let resources = root.join("resources");
+        let plugins = resources.join("plugins");
+        let home = root.join("home");
+        let reasoning = plugins.join("reasoning");
+        std::fs::create_dir_all(reasoning.join("lib")).unwrap();
+        std::fs::write(
+            reasoning.join("cordis.patch.yml"),
+            "- id: ui-settings-models\n  disabled: true\n- insert:\n    - id: reasoning\n      name: '@dsh-desktop/plugin-reasoning'\n",
+        )
+        .unwrap();
+        std::fs::write(
+            reasoning.join("package.json"),
+            r#"{"name":"@dsh-desktop/plugin-reasoning","version":"0.1.0","dshDesktop":{"id":"reasoning","overlay":true}}"#,
+        )
+        .unwrap();
+
+        let mounted = assemble(&resources, &home, &mut |_| {});
+        assert_eq!(mounted.len(), 1);
+        let overlay = mounted[0].overlay.as_deref().expect("overlay 应被读取");
+        assert!(overlay.contains("- id: ui-settings-models\n  disabled: true"));
+        assert!(overlay.contains("name: '@dsh-desktop/plugin-reasoning'"));
+
+        let overlay_dir = root.join("overlay");
+        std::fs::create_dir_all(&overlay_dir).unwrap();
+        let path = write_overlay(&overlay_dir, &mounted).expect("overlay 应生成");
+        let content = std::fs::read_to_string(path).unwrap();
+        assert!(content.contains("- id: ui-settings-models\n  disabled: true\n"));
 
         let _ = std::fs::remove_dir_all(&root);
     }

@@ -14,6 +14,7 @@ import { spawnSync } from "node:child_process";
  *   ④ 打印装配清单
  *   ⑤ 传入 --home <path> 时，再把插件包原子复制进 dsh profile，
  *      供开发环境的 dsh-client-hmr 热更新
+ *   ⑥ 装配成功后自动清理 resources 与 profile 中已不存在的插件旧产物
  * 任一步失败 → 非零退出。
  *
  * 运行：
@@ -67,6 +68,33 @@ export function deployToProfile(srcDir, pkgName, home) {
   }
 }
 
+/** 清理 resources/plugins 下已不在源码插件清单里的旧目录。 */
+export function pruneStaleResources(resourcesDir, expectedDirs) {
+  if (!fs.existsSync(resourcesDir)) return [];
+  const removed = [];
+  for (const entry of fs.readdirSync(resourcesDir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || expectedDirs.has(entry.name)) continue;
+    fs.rmSync(path.join(resourcesDir, entry.name), { recursive: true, force: true });
+    removed.push(entry.name);
+  }
+  return removed.sort();
+}
+
+/** 清理 dsh profile 里已不在源码插件清单中的 @dsh-desktop/plugin-* 包。 */
+export function pruneStaleProfilePackages(home, expectedNames) {
+  const namespaceDir = path.join(home, "profiles", "node_modules", "@dsh-desktop");
+  if (!fs.existsSync(namespaceDir)) return [];
+  const removed = [];
+  for (const entry of fs.readdirSync(namespaceDir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !entry.name.startsWith("plugin-")) continue;
+    const name = `@dsh-desktop/${entry.name}`;
+    if (expectedNames.has(name)) continue;
+    fs.rmSync(path.join(namespaceDir, entry.name), { recursive: true, force: true });
+    removed.push(name);
+  }
+  return removed.sort();
+}
+
 function parseArgs(args) {
   const homeIndex = args.indexOf("--home");
   if (homeIndex === -1) return { home: null };
@@ -91,6 +119,8 @@ function main() {
     .map((entry) => entry.name)
     .sort();
 
+  const expectedDirs = new Set();
+  const expectedNames = new Set();
   let failures = 0;
   for (const dirName of dirs) {
     const pluginDir = path.join(PLUGINS_DIR, dirName);
@@ -106,6 +136,8 @@ function main() {
       continue;
     }
     if (!srcPkg.dsh) continue; // 只装配含 dsh 字段的插件包
+    expectedDirs.add(dirName);
+    expectedNames.add(srcPkg.name);
 
     // ① tsdown 构建（Task 1 产物：lib/）
     // win32 下 Node 无法直接 spawn .cmd/.bat（corepack.cmd），需经 shell 解析后才能启动
@@ -179,6 +211,18 @@ function main() {
   if (failures > 0) {
     console.error(`[build-plugins] ${failures} 个插件装配失败`);
     process.exit(1);
+  }
+
+  const removedResources = pruneStaleResources(RESOURCES_DIR, expectedDirs);
+  if (removedResources.length > 0) {
+    console.log(`[build-plugins] 已清理旧 resources 产物: ${removedResources.join(", ")}`);
+  }
+
+  if (home) {
+    const removedProfile = pruneStaleProfilePackages(home, expectedNames);
+    if (removedProfile.length > 0) {
+      console.log(`[build-plugins] 已清理旧 profile 产物: ${removedProfile.join(", ")}`);
+    }
   }
 }
 

@@ -65,9 +65,8 @@ function walkFiles(dir, base = dir, result = []) {
 
 function snapshot() {
   const state = new Map();
-  for (const plugin of listPlugins()) {
-    state.set(plugin.name, walkFiles(plugin.dir));
-  }
+  // 监听整个插件容器：client-kit/ 与 tsdown 配置变化也应触发重建。
+  state.set("plugins", walkFiles(PLUGINS_DIR));
   return state;
 }
 

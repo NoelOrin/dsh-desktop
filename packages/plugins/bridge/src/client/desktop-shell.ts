@@ -15,7 +15,7 @@ export type DesktopPlatform = "darwin" | "win32" | "linux";
 
 interface DesktopBridgeLike {
   platform?: string;
-  windowAction(action: "minimize" | "maximize" | "close"): Promise<void>;
+  windowAction(action: "minimize" | "maximize" | "close" | "toggle-visible"): Promise<void>;
   onWindowState(cb: (state: { maximized: boolean }) => void): Promise<() => void>;
 }
 

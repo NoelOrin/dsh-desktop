@@ -1,6 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::fs::OpenOptions;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -47,8 +47,17 @@ const MAX_LOG_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_AUTO_RESTARTS: u32 = host_lifecycle::DEFAULT_AUTO_RESTART_LIMIT;
 /// 优雅退出：SIGTERM 后等待子进程退出的宽限期。
 const GRACE_PERIOD: Duration = Duration::from_secs(2);
+/// pending_deeplinks 最大保留条数，超限时淘汰最旧 payload。
+const MAX_PENDING_DEEPLINKS: usize = 128;
+/// 未消费深链 payload 的保留时间，超过后不再补发。
+const PENDING_DEEPLINK_TTL: Duration = Duration::from_secs(5 * 60);
+/// GitHub Release 元数据请求的总超时。
+const UPDATE_API_TIMEOUT: Duration = Duration::from_secs(30);
+/// 更新安装包下载请求的总超时。
+const UPDATE_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(600);
 
 static LOG_LOCK: Mutex<()> = Mutex::new(());
+static SHELL_PATH_TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 // 托盘菜单项 id
 const TRAY_STATUS: &str = "tray-status";
@@ -59,18 +68,26 @@ const TRAY_RESTART_DSH: &str = "tray-restart-dsh";
 const TRAY_SHOW_MAIN: &str = "tray-show-main";
 const TRAY_QUIT: &str = "tray-quit";
 
-/// 允许 main 窗口导航到的 origin：Tauri 本地页面、开发服务器与 dsh loopback。
+/// 允许 main 窗口导航到的本地 origin：Tauri 本地页面与固定开发服务器。
 fn is_shell_url(url: &tauri::Url) -> bool {
-    if url.scheme() == "tauri" {
+    if url.scheme() == "tauri" && url.host_str() == Some("localhost") {
         return true;
     }
     if url.scheme() != "http" {
         return false;
     }
-    matches!(
-        url.host_str(),
-        Some("127.0.0.1" | "localhost" | "::1" | "[::1]" | "0:0:0:0:0:0:0:1" | "[0:0:0:0:0:0:0:1]")
-    )
+    ["http://localhost:5173", "http://127.0.0.1:5173"]
+        .iter()
+        .any(|candidate| {
+            tauri::Url::parse(candidate)
+                .map(|candidate| candidate.origin() == url.origin())
+                .unwrap_or(false)
+        })
+}
+
+/// dsh 页面仅允许当前桌面壳托管的 origin，避免任意 loopback 服务复用桥接能力。
+fn is_managed_dsh_url(url: &tauri::Url, managed: Option<&tauri::Url>) -> bool {
+    managed.is_some_and(|managed| managed.origin() == url.origin())
 }
 
 fn is_external_url(url: &tauri::Url) -> bool {
@@ -78,7 +95,11 @@ fn is_external_url(url: &tauri::Url) -> bool {
 }
 
 /// 动态创建 main 窗口，使导航/新窗口策略在首次加载前就生效。
-fn create_main_window<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
+fn create_main_window<R: tauri::Runtime>(
+    app: &tauri::App<R>,
+    managed_dsh_url: &Arc<Mutex<Option<tauri::Url>>>,
+) -> tauri::Result<()> {
+    let navigation_managed_url = managed_dsh_url.clone();
     let mut builder =
         tauri::WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
             .title("DSH Desktop")
@@ -88,8 +109,11 @@ fn create_main_window<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<(
             .resizable(true)
             .visible(true)
             .background_color(tauri::window::Color(245, 246, 250, 255))
-            .on_navigation(|url| {
+            .on_navigation(move |url| {
                 if is_shell_url(url) {
+                    return true;
+                }
+                if is_managed_dsh_url(url, navigation_managed_url.lock().unwrap().as_ref()) {
                     return true;
                 }
                 if is_external_url(url) {
@@ -121,7 +145,7 @@ fn create_main_window<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<(
 }
 
 /// 注入到 dsh web（loopback 远程页面）的桥接脚本，定义 window.__DSH_DESKTOP__。
-/// 仅暴露最小能力切片（见 capabilities/bridge.json 的 remote 白名单）。
+/// 仅暴露最小能力切片（见 capabilities/bridge.json 与 shortcuts.json 的 remote 白名单）。
 const BRIDGE_SCRIPT: &str = r#"(function () {
   "use strict";
   if (window.__DSH_DESKTOP__) return;
@@ -145,49 +169,17 @@ const BRIDGE_SCRIPT: &str = r#"(function () {
     });
   }
   window.__DSH_DESKTOP__ = {
-    platform: (navigator.platform || "unknown"),
-    notify: function (title, body) { return invoke("plugin:notification|notify", { options: { title: title, body: body } }); },
-    clipboard: {
-      readText: function () { return invoke("plugin:clipboard-manager|read_text"); },
-      writeText: function (text) { return invoke("plugin:clipboard-manager|write_text", { text: text }); },
-    },
-    dialog: {
-      openFile: function (options) { return invoke("plugin:dialog|open", { options: options || {} }); },
-      saveFile: function (options) { return invoke("plugin:dialog|save", { options: options || {} }); },
-    },
     openExternal: function (target) { return invoke("open_external", { target: target }); },
     windowAction: function (action) { return invoke("window_action", { action: action }); },
     onWindowState: function (cb) { return listen("dsh-window-state", cb); },
     getStatus: function () { return invoke("get_status"); },
     restart: function () { return invoke("restart"); },
     installDsh: function () { return invoke("install_dsh"); },
-    updateDsh: function () { return invoke("update_dsh"); },
     openLogDirectory: function () { return invoke("open_log_directory"); },
-    openPaths: function (paths) { return invoke("open_paths", { paths: paths }); },
-    importPaths: function (paths) { return invoke("import_paths", { paths: paths }); },
     getConfig: function () { return invoke("get_config"); },
     setConfig: function (config) { return invoke("set_config", { config: config }); },
     onStatus: function (cb) { return listen("dsh-status", cb); },
     onLog: function (cb) { return listen("dsh-log", cb); },
-    onFileDrop: function (cb) { return listen("dsh-file-drop", cb); },
-    getPendingDeepLinks: function () { return invoke("get_pending_deeplinks"); },
-    ackDeepLink: function (id) { return invoke("ack_deeplink", { id: id }); },
-    onDeepLink: function (cb) {
-      return listen("dsh-deeplink", function (e) {
-        cb(e.payload);
-        invoke("ack_deeplink", { id: e.payload.id }).catch(function () {});
-      }).then(function (unlisten) {
-        return invoke("get_pending_deeplinks").then(function (pending) {
-          pending.forEach(function (p) {
-            cb(p);
-            invoke("ack_deeplink", { id: p.id }).catch(function () {});
-          });
-          return unlisten;
-        }).catch(function () { return unlisten; });
-      });
-    },
-    requestNotificationPermission: function () { return invoke("request_notification_permission"); },
-    onNotificationAction: function (cb) { return listen("dsh-notification-action", function (e) { cb(e.payload); }); },
     autostart: {
       get: function () { return invoke("get_autostart"); },
       set: function (enabled) { return invoke("set_autostart", { enabled: enabled }); },
@@ -208,17 +200,6 @@ const BRIDGE_SCRIPT: &str = r#"(function () {
       unregisterAll: function () { return invoke("unregister_all_shortcuts"); },
     },
     onShortcut: function (cb) { return listen("dsh-shortcut", cb); },
-    projects: {
-      list: function () { return invoke("get_projects"); },
-      add: function (path) { return invoke("add_project", { path: path }); },
-      update: function (project) { return invoke("update_project", { project: project }); },
-      remove: function (id) { return invoke("remove_project", { id: id }); },
-      setPinned: function (id, pinned) { return invoke("set_project_pinned", { id: id, pinned: pinned }); },
-      markRead: function (id) { return invoke("mark_project_read", { id: id }); },
-      setArchived: function (id, archived) { return invoke("archive_project_chats", { id: id, archived: archived }); },
-      createWorktree: function (id) { return invoke("create_project_worktree", { id: id }); },
-      showInFinder: function (id) { return invoke("show_project_in_finder", { id: id }); },
-    },
     update: {
       check: function () { return invoke("check_update"); },
       install: function () { return invoke("install_update"); },
@@ -854,7 +835,7 @@ const DEV_RELOAD_SCRIPT: &str = r##"(function () {
   });
 })();"##;
 
-#[derive(Clone, Default, Serialize)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum RuntimePhase {
     #[default]
@@ -923,6 +904,50 @@ impl Inner {
             logs: self.logs.iter().rev().take(200).cloned().collect(),
         }
     }
+
+    fn prune_expired_pending_deeplinks(&mut self) {
+        let now_ms = unix_millis();
+        self.pending_deeplinks.retain(|payload| {
+            payload
+                .received_at
+                .parse::<u64>()
+                .map(|received_at| {
+                    now_ms.saturating_sub(received_at) < PENDING_DEEPLINK_TTL.as_millis() as u64
+                })
+                .unwrap_or(true)
+        });
+    }
+}
+
+fn unix_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or_default()
+}
+
+fn same_launch_payload(left: &DeepLinkPayload, right: &DeepLinkPayload) -> bool {
+    left.source == right.source
+        && left.url == right.url
+        && left.raw == right.raw
+        && left.args == right.args
+        && left.cwd == right.cwd
+}
+
+fn enqueue_pending_deeplink(inner: &mut Inner, payload: &DeepLinkPayload) -> bool {
+    inner.prune_expired_pending_deeplinks();
+    if inner
+        .pending_deeplinks
+        .iter()
+        .any(|existing| same_launch_payload(existing, payload))
+    {
+        return false;
+    }
+    inner.pending_deeplinks.push_back(payload.clone());
+    while inner.pending_deeplinks.len() > MAX_PENDING_DEEPLINKS {
+        inner.pending_deeplinks.pop_front();
+    }
+    true
 }
 
 struct AppState {
@@ -950,7 +975,7 @@ fn enqueue_launch_payload(
     cwd: String,
 ) {
     let state = app.state::<AppState>();
-    let payload = {
+    let (payload, enqueued) = {
         let mut inner = state.inner.lock().unwrap();
         inner.next_deep_link_id += 1;
         let id = format!("dl-{}", inner.next_deep_link_id);
@@ -967,11 +992,11 @@ fn enqueue_launch_payload(
             args,
             cwd,
         };
-        inner.pending_deeplinks.push_back(payload.clone());
-        payload
+        let enqueued = enqueue_pending_deeplink(&mut inner, &payload);
+        (payload, enqueued)
     };
     let ready = matches!(state.inner.lock().unwrap().phase, RuntimePhase::Ready);
-    if ready {
+    if ready && enqueued {
         let _ = app.emit("dsh-deeplink", payload);
     }
 }
@@ -990,10 +1015,12 @@ enum ManagerMessage {
 struct DshManager {
     app: AppHandle,
     inner: Arc<Mutex<Inner>>,
+    managed_dsh_url: Arc<Mutex<Option<tauri::Url>>>,
     tx: Sender<ManagerMessage>,
     rx: Receiver<ManagerMessage>,
     child: Option<Child>,
     lifecycle: HostLifecycle,
+    failed_generation: Option<u64>,
     log_path: PathBuf,
     config_path: PathBuf,
     start_in_tray: Arc<AtomicBool>,
@@ -1006,6 +1033,7 @@ pub fn run() {
     let shortcut_plugin = ShortcutBuilder::new().build();
 
     let exiting = Arc::new(AtomicBool::new(false));
+    let managed_dsh_url = Arc::new(Mutex::new(None));
 
     tauri::Builder::default()
         // 单实例锁必须最先注册（插件按注册顺序执行）
@@ -1058,13 +1086,16 @@ pub fn run() {
             Some(vec!["--autostart"]),
         ))
         // 向 dsh web（loopback 远程页面）注入受控桥接 window.__DSH_DESKTOP__
-        .on_page_load(|webview, payload| {
-            if payload.event() == PageLoadEvent::Finished {
-                inject::inject_dsh_web(webview, payload.url());
+        .on_page_load({
+            let managed_dsh_url = managed_dsh_url.clone();
+            move |webview, payload| {
+                if payload.event() == PageLoadEvent::Finished {
+                    inject::inject_dsh_web(webview, payload.url(), &managed_dsh_url);
+                }
             }
         })
         .setup(move |app| {
-            create_main_window(app)?;
+            create_main_window(app, &managed_dsh_url)?;
 
             let app_handle = app.handle().clone();
             let app_data = app_handle.path().app_data_dir()?;
@@ -1082,17 +1113,11 @@ pub fn run() {
 
             let (tx, rx) = mpsc::channel();
 
-            let launch_config = config::load(&config_path).effective(|k| std::env::var(k).ok());
-            let settings_home = launch_config
-                .dsh_home
-                .clone()
-                .or_else(|| std::env::var("DSH_HOME").ok())
-                .or_else(|| std::env::var("HOME").ok().map(|h| format!("{h}/.dsh")));
+            let launch_settings_home = settings_home(&config_path);
             let startup_mode = desktop_settings::read_startup_mode(&desktop_settings_path)
                 .unwrap_or_else(|| {
-                    settings_home
+                    launch_settings_home
                         .as_deref()
-                        .map(Path::new)
                         .map(|home| home.join("settings.yaml"))
                         .map(|path| {
                             desktop_settings::startup_mode(&desktop_settings::read_desktop_section(
@@ -1122,9 +1147,11 @@ pub fn run() {
                 rx,
                 child: None,
                 lifecycle: HostLifecycle::new(MAX_AUTO_RESTARTS),
+                failed_generation: None,
                 log_path,
                 config_path: config_path.clone(),
                 start_in_tray: start_in_tray.clone(),
+                managed_dsh_url: managed_dsh_url.clone(),
             };
             thread::spawn(move || manager.run());
 
@@ -1179,17 +1206,10 @@ pub fn run() {
                 let mut last: Option<String> = None;
                 loop {
                     thread::sleep(Duration::from_secs(2));
-                    let config =
-                        config::load(&config_path_for_theme).effective(|k| std::env::var(k).ok());
-                    let home = config
-                        .dsh_home
-                        .clone()
-                        .or_else(|| std::env::var("DSH_HOME").ok())
-                        .or_else(|| std::env::var("HOME").ok().map(|h| format!("{h}/.dsh")));
-                    let Some(home) = home else {
+                    let Some(home) = settings_home(&config_path_for_theme) else {
                         continue;
                     };
-                    let settings_path = Path::new(&home).join("settings.yaml");
+                    let settings_path = home.join("settings.yaml");
                     let system_dark = theme_app
                         .get_webview_window("main")
                         .and_then(|w| w.theme().ok())
@@ -1498,12 +1518,15 @@ impl DshManager {
                 }
                 Ok(ManagerMessage::ReadyTimeout { generation }) => {
                     if self.lifecycle.is_current(generation) {
-                        self.fail("DSH 未输出 URL line，等待超时".to_string());
+                        self.fail_generation(
+                            generation,
+                            "DSH 未输出 URL line，等待超时".to_string(),
+                        );
                     }
                 }
                 Ok(ManagerMessage::ReadinessError { generation, error }) => {
                     if self.lifecycle.is_current(generation) {
-                        self.fail(format!("DSH 就绪输出无效: {error}"));
+                        self.fail_generation(generation, format!("DSH 就绪输出无效: {error}"));
                     }
                 }
                 Ok(ManagerMessage::InstallFinished { result }) => match result {
@@ -1517,7 +1540,7 @@ impl DshManager {
                 },
                 Ok(ManagerMessage::Unhealthy { generation }) => {
                     if self.lifecycle.is_current(generation) {
-                        self.fail("DSH 健康检查连续失败".to_string());
+                        self.fail_generation(generation, "DSH 健康检查连续失败".to_string());
                     }
                 }
                 Err(RecvTimeoutError::Timeout) => {
@@ -1533,7 +1556,10 @@ impl DshManager {
                                 self.handle_start();
                             }
                             RestartDecision::Fail => {
-                                self.fail(format!("DSH 进程已退出 ({exit})"));
+                                self.fail_generation(
+                                    generation,
+                                    format!("DSH 进程已退出 ({exit})"),
+                                );
                             }
                         }
                     }
@@ -1547,6 +1573,7 @@ impl DshManager {
     }
 
     fn handle_start(&mut self) {
+        self.failed_generation = None;
         self.cleanup_child();
         self.cleanup_stale_dsh_web();
 
@@ -1689,6 +1716,16 @@ impl DshManager {
         self.set_phase(RuntimePhase::Failed, message, None);
     }
 
+    /// 同一 generation 的启动失败只落地一次，避免 reader/health/exit 重复上报。
+    fn fail_generation(&mut self, generation: u64, message: String) {
+        if self.failed_generation == Some(generation) {
+            self.append_log(&format!("[desktop] 忽略重复的启动失败: {message}"));
+            return;
+        }
+        self.failed_generation = Some(generation);
+        self.fail(message);
+    }
+
     /// 优雅停止子进程：unix 下先 SIGTERM 等宽限期，再 SIGKILL；Windows 直接 TerminateProcess。
     fn cleanup_child(&mut self) {
         if let Some(mut child) = self.child.take() {
@@ -1815,6 +1852,11 @@ impl DshManager {
     }
 
     fn set_phase(&self, phase: RuntimePhase, message: String, url: Option<String>) {
+        *self.managed_dsh_url.lock().unwrap() = if phase == RuntimePhase::Ready {
+            url.as_deref().and_then(|url| tauri::Url::parse(url).ok())
+        } else {
+            None
+        };
         {
             let mut inner = self.inner.lock().unwrap();
             inner.phase = phase;
@@ -1841,14 +1883,9 @@ fn get_status(state: State<AppState>) -> RuntimeSnapshot {
 
 #[tauri::command]
 fn get_pending_deeplinks(state: State<AppState>) -> Vec<DeepLinkPayload> {
-    state
-        .inner
-        .lock()
-        .unwrap()
-        .pending_deeplinks
-        .iter()
-        .cloned()
-        .collect()
+    let mut inner = state.inner.lock().unwrap();
+    inner.prune_expired_pending_deeplinks();
+    inner.pending_deeplinks.iter().cloned().collect()
 }
 
 #[tauri::command]
@@ -2105,6 +2142,58 @@ fn open_log_directory(state: State<AppState>) -> Result<(), String> {
     open_with_system(&state.log_dir.to_string_lossy())
 }
 
+fn validate_config_path_setting(
+    label: &str,
+    value: &str,
+    require_file: bool,
+) -> Result<(), String> {
+    if value.trim().is_empty() || value.chars().any(char::is_control) {
+        return Err(format!("{label} 路径无效"));
+    }
+    let path = Path::new(value);
+    if !path.is_absolute() {
+        return Err(format!("{label} 必须是绝对路径"));
+    }
+    if require_file && !path.is_file() {
+        return Err(format!("{label} 文件不存在: {value}"));
+    }
+    if !require_file && path.exists() && !path.is_dir() {
+        return Err(format!("{label} 不是目录: {value}"));
+    }
+    Ok(())
+}
+
+fn validate_config_paths(config: &DshConfig) -> Result<(), String> {
+    if let Some(value) = &config.dsh_bin {
+        validate_config_path_setting("DSH_BIN", value, true)?;
+    }
+    if let Some(value) = &config.dsh_node {
+        validate_config_path_setting("DSH_NODE", value, true)?;
+    }
+    if let Some(value) = &config.dsh_home {
+        validate_config_path_setting("DSH_HOME", value, false)?;
+    }
+    Ok(())
+}
+
+/// 桥接面打开目标校验：仅允许 http(s) URL，或已存在的绝对文件/目录。
+fn validate_open_external_target(target: &str) -> Result<(), String> {
+    if target.trim().is_empty() || target.chars().any(char::is_control) {
+        return Err("打开目标无效".to_string());
+    }
+    if let Ok(url) = tauri::Url::parse(target) {
+        if matches!(url.scheme(), "http" | "https") {
+            return Ok(());
+        }
+        return Err(format!("不允许打开非 HTTP(S) URL: {target}"));
+    }
+    let path = Path::new(target);
+    if path.is_absolute() && path.exists() {
+        return Ok(());
+    }
+    Err(format!("只允许打开已存在的绝对文件或目录: {target}"))
+}
+
 #[tauri::command]
 fn get_config(state: State<AppState>) -> DshConfig {
     let stored = config::load(&state.config_path);
@@ -2112,13 +2201,18 @@ fn get_config(state: State<AppState>) -> DshConfig {
 }
 
 #[tauri::command]
-fn set_config(state: State<AppState>, config: DshConfig) -> Result<(), String> {
+fn set_config(state: State<AppState>, mut config: DshConfig) -> Result<(), String> {
+    validate_config_paths(&config)?;
+    // shortcuts 由壳侧快捷键注册表统一管理；set_config 只负责路径配置，
+    // 因此始终保留现有注册记录，避免一次配置保存清空持久化快捷键。
+    config.shortcuts = config::load(&state.config_path).shortcuts;
     config::save(&state.config_path, &config)
 }
 
 /// 用系统默认应用打开目标（URL / 文件 / 目录）。供本地窗口与桥接脚本共用。
 #[tauri::command]
 fn open_external(target: String) -> Result<(), String> {
+    validate_open_external_target(&target)?;
     open_with_system(&target)
 }
 
@@ -2223,6 +2317,9 @@ fn update_project(
 ) -> Result<projects::ProjectEntry, String> {
     if project.name.trim().is_empty() {
         return Err("项目名称不能为空".to_string());
+    }
+    if !Path::new(&project.path).is_dir() {
+        return Err(format!("目录不存在: {}", project.path));
     }
     let mut entries = projects::load(&state.projects_path);
     let Some(found) = entries.iter_mut().find(|p| p.id == project.id) else {
@@ -2458,8 +2555,15 @@ fn unregister_all_shortcuts(state: State<AppState>) -> Result<(), String> {
 }
 
 /// 查询 GitHub 最新 release 的 tag（如 v0.1.0）。失败返回 Err（网络/限流/解析）。
+fn update_http_client(timeout: Duration) -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .timeout(timeout)
+        .build()
+        .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))
+}
+
 async fn latest_release_tag() -> Result<String, String> {
-    let client = reqwest::Client::new();
+    let client = update_http_client(UPDATE_API_TIMEOUT)?;
     let resp = client
         .get("https://api.github.com/repos/NoelOrin/dsh-desktop/releases/latest")
         .header("User-Agent", "dsh-desktop")
@@ -2517,7 +2621,7 @@ async fn install_update(app: AppHandle) -> Result<String, String> {
     };
 
     // 取最新 release 的资产下载地址
-    let client = reqwest::Client::new();
+    let client = update_http_client(UPDATE_API_TIMEOUT)?;
     let resp = client
         .get("https://api.github.com/repos/NoelOrin/dsh-desktop/releases/latest")
         .header("User-Agent", "dsh-desktop")
@@ -2557,7 +2661,7 @@ async fn install_update(app: AppHandle) -> Result<String, String> {
         .ok_or_else(|| format!("资产名称无效: {name}"))?;
     let dest = updates_dir.join(safe_name);
 
-    let mut resp = client
+    let mut resp = update_http_client(UPDATE_DOWNLOAD_TIMEOUT)?
         .get(url)
         .send()
         .await
@@ -3102,44 +3206,59 @@ fn shell_path() -> Option<String> {
 
 #[cfg(not(windows))]
 fn read_shell_path(shell: &Path) -> Option<String> {
+    // 输出重定向到临时文件，避免 shell 派生出的后台进程持有 stdout 管道，
+    // 使父进程在子 shell 退出后仍无限阻塞读取。
+    let output_path = std::env::temp_dir().join(format!(
+        "dsh-shell-path-{}-{}.txt",
+        std::process::id(),
+        SHELL_PATH_TMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    let output_file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&output_path)
+        .ok()?;
     let mut command = Command::new(shell);
     command
-        .args(["-l", "-i", "-c", "printf '%s\\n' \"$PATH\""])
+        .args(["-l", "-c", "printf '%s\\n' \"$PATH\""])
         .stdin(Stdio::null())
-        .stdout(Stdio::piped())
+        .stdout(Stdio::from(output_file))
         .stderr(Stdio::null())
         .env("TERM", "dumb")
         .env("COLORTERM", "");
     let mut child = command.spawn().ok()?;
     let deadline = Instant::now() + Duration::from_millis(1500);
 
-    loop {
+    let exited = loop {
         match child.try_wait() {
-            Ok(Some(status)) => {
-                let mut output = Vec::new();
-                child.stdout.take()?.read_to_end(&mut output).ok()?;
-                let path = String::from_utf8_lossy(&output);
-                let path = path
-                    .lines()
-                    .rev()
-                    .find(|line| !line.trim().is_empty())
-                    .unwrap_or("")
-                    .trim();
-                if status.success() && !path.is_empty() {
-                    return Some(path.to_string());
-                }
-                return None;
-            }
+            Ok(Some(status)) => break Some(status.success()),
             Ok(None) => {
                 if Instant::now() >= deadline {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return None;
+                    break None;
                 }
                 thread::sleep(Duration::from_millis(20));
             }
-            Err(_) => return None,
+            Err(_) => break None,
         }
+    };
+
+    let path = std::fs::read_to_string(&output_path)
+        .ok()
+        .and_then(|output| {
+            output
+                .lines()
+                .rev()
+                .find(|line| !line.trim().is_empty())
+                .map(|line| line.trim().to_string())
+        });
+    let _ = std::fs::remove_file(&output_path);
+    if exited == Some(true) {
+        path.filter(|path| !path.is_empty())
+    } else {
+        None
     }
 }
 
@@ -3242,6 +3361,75 @@ fn open_with_system(target: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_deeplink_payload(id: &str, url: &str, received_at: &str) -> DeepLinkPayload {
+        DeepLinkPayload {
+            id: id.to_string(),
+            url: url.to_string(),
+            raw: url.to_string(),
+            received_at: received_at.to_string(),
+            source: "deep_link".to_string(),
+            args: Vec::new(),
+            cwd: String::new(),
+        }
+    }
+
+    #[test]
+    fn pending_deeplinks_prune_expired_entries() {
+        let mut inner = Inner::default();
+        let now = unix_millis();
+        inner
+            .pending_deeplinks
+            .push_back(test_deeplink_payload("dl-1", "dsh-desktop://old", "1"));
+        inner.pending_deeplinks.push_back(test_deeplink_payload(
+            "dl-2",
+            "dsh-desktop://new",
+            &now.saturating_sub(1).to_string(),
+        ));
+
+        inner.prune_expired_pending_deeplinks();
+
+        assert_eq!(inner.pending_deeplinks.len(), 1);
+        assert_eq!(inner.pending_deeplinks[0].id, "dl-2");
+    }
+
+    #[test]
+    fn pending_deeplinks_deduplicate_same_payload() {
+        let mut inner = Inner::default();
+        let now = unix_millis().to_string();
+        let payload = test_deeplink_payload("dl-1", "dsh-desktop://session/1", &now);
+
+        assert!(enqueue_pending_deeplink(&mut inner, &payload));
+        assert!(!enqueue_pending_deeplink(&mut inner, &payload));
+        assert_eq!(inner.pending_deeplinks.len(), 1);
+    }
+
+    #[test]
+    fn pending_deeplinks_drop_oldest_beyond_limit() {
+        let mut inner = Inner::default();
+        let now = unix_millis();
+        for index in 0..(MAX_PENDING_DEEPLINKS + 5) {
+            let payload = test_deeplink_payload(
+                &format!("dl-{index}"),
+                &format!("dsh-desktop://session/{index}"),
+                &now.to_string(),
+            );
+            assert!(enqueue_pending_deeplink(&mut inner, &payload));
+        }
+
+        assert_eq!(inner.pending_deeplinks.len(), MAX_PENDING_DEEPLINKS);
+        assert!(inner
+            .pending_deeplinks
+            .iter()
+            .all(|payload| !payload.id.ends_with("dl-0")));
+        assert_eq!(
+            inner
+                .pending_deeplinks
+                .back()
+                .map(|payload| payload.id.as_str()),
+            Some("dl-132")
+        );
+    }
 
     #[test]
     fn missing_dsh_serializes_as_missing() {
@@ -3350,12 +3538,11 @@ mod tests {
     }
 
     #[test]
-    fn navigation_policy_allows_shell_and_loopback_urls() {
+    fn navigation_policy_allows_shell_urls() {
         for url in [
             "tauri://localhost",
             "http://localhost:5173",
-            "http://127.0.0.1:49321",
-            "http://[::1]:49321",
+            "http://127.0.0.1:5173",
         ] {
             let parsed = tauri::Url::parse(url).unwrap();
             assert!(is_shell_url(&parsed), "应允许 {url}");
@@ -3363,15 +3550,17 @@ mod tests {
     }
 
     #[test]
-    fn navigation_policy_rejects_external_urls() {
+    fn navigation_policy_rejects_unmanaged_loopback_urls() {
         for url in [
             "https://example.com",
             "http://0.0.0.0:8080",
+            "http://127.0.0.1:49321",
+            "http://localhost:5174",
             "file:///tmp/index.html",
             "about:blank",
         ] {
             let parsed = tauri::Url::parse(url).unwrap();
-            assert!(!is_shell_url(&parsed), "应拒绝 {url}");
+            assert!(!is_shell_url(&parsed), "本地页面应拒绝 {url}");
         }
         assert!(is_external_url(
             &tauri::Url::parse("https://example.com").unwrap()
@@ -3379,5 +3568,73 @@ mod tests {
         assert!(!is_external_url(
             &tauri::Url::parse("file:///tmp/index.html").unwrap()
         ));
+    }
+
+    #[test]
+    fn managed_dsh_url_matches_exact_origin() {
+        let managed = tauri::Url::parse("http://127.0.0.1:49321").unwrap();
+        assert!(is_managed_dsh_url(
+            &tauri::Url::parse("http://127.0.0.1:49321/settings").unwrap(),
+            Some(&managed)
+        ));
+        assert!(!is_managed_dsh_url(
+            &tauri::Url::parse("http://127.0.0.1:49322").unwrap(),
+            Some(&managed)
+        ));
+        assert!(!is_managed_dsh_url(
+            &tauri::Url::parse("http://localhost:49321").unwrap(),
+            Some(&managed)
+        ));
+        assert!(!is_managed_dsh_url(
+            &tauri::Url::parse("http://127.0.0.1:49321").unwrap(),
+            None
+        ));
+    }
+
+    #[test]
+    fn open_external_validates_targets() {
+        assert!(validate_open_external_target("https://example.com").is_ok());
+        assert!(validate_open_external_target("http://127.0.0.1:8080").is_ok());
+        assert!(validate_open_external_target("file:///tmp/a").is_err());
+        assert!(validate_open_external_target("/tmp/does-not-exist").is_err());
+
+        let dir = std::env::temp_dir().join(format!("dsh-open-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("file.txt");
+        std::fs::write(&file, "ok").unwrap();
+        assert!(validate_open_external_target(&file.to_string_lossy()).is_ok());
+        assert!(validate_open_external_target(&dir.to_string_lossy()).is_ok());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn config_paths_require_absolute_and_existing_binaries() {
+        let dir = std::env::temp_dir().join(format!("dsh-config-path-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bin = dir.join("bin");
+        std::fs::write(&bin, "ok").unwrap();
+
+        assert!(validate_config_paths(&DshConfig {
+            dsh_bin: Some(bin.to_string_lossy().into_owned()),
+            dsh_node: None,
+            dsh_home: Some(dir.to_string_lossy().into_owned()),
+            shortcuts: vec![],
+        })
+        .is_ok());
+        assert!(validate_config_paths(&DshConfig {
+            dsh_bin: Some("dsh".into()),
+            dsh_node: None,
+            dsh_home: None,
+            shortcuts: vec![],
+        })
+        .is_err());
+        assert!(validate_config_paths(&DshConfig {
+            dsh_bin: None,
+            dsh_node: None,
+            dsh_home: Some(dir.join("missing").to_string_lossy().into_owned()),
+            shortcuts: vec![],
+        })
+        .is_ok());
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

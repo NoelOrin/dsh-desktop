@@ -2,6 +2,7 @@ import type {
   RuntimePhase,
   RuntimeSnapshot,
   UiThemeSnapshot,
+  WindowAction,
   WindowState,
 } from "@dsh-desktop/contracts";
 import { invoke } from "@tauri-apps/api/core";
@@ -78,7 +79,7 @@ async function initTheme(): Promise<void> {
   await listen<UiThemeSnapshot>("dsh-ui-theme", (event) => applyUiTheme(event.payload));
 }
 
-function windowAction(action: "minimize" | "maximize" | "close"): void {
+function windowAction(action: WindowAction): void {
   invoke("window_action", { action }).catch((error) => {
     console.error("window_action 失败:", error);
   });

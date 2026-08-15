@@ -248,6 +248,7 @@ function ConfigPanel({ t }: { t: Translate }): JSX.Element {
   const [dshBin, setDshBin] = useState("");
   const [dshNode, setDshNode] = useState("");
   const [dshHome, setDshHome] = useState("");
+  const dshShortcutsRef = useRef<string[]>([]);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -260,6 +261,7 @@ function ConfigPanel({ t }: { t: Translate }): JSX.Element {
         setDshBin(c.dsh_bin ?? "");
         setDshNode(c.dsh_node ?? "");
         setDshHome(c.dsh_home ?? "");
+        dshShortcutsRef.current = c.shortcuts ?? [];
       })
       .catch((e: unknown) => {
         if (disposed) return;
@@ -275,6 +277,7 @@ function ConfigPanel({ t }: { t: Translate }): JSX.Element {
       dsh_bin: dshBin || null,
       dsh_node: dshNode || null,
       dsh_home: dshHome || null,
+      shortcuts: dshShortcutsRef.current,
     };
     const bridge = getBridge();
     if (!bridge) {

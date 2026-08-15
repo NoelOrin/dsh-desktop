@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "bridge",
-  "description": "DSH web（loopback 远程页面）受控桥接能力：仅对 127.0.0.1 端口白名单开放最小命令切片",
+  "description": "DSH web（当前托管的 loopback 远程页面）桌面设置与桥接能力：仅保留 bridge/shortcuts/projects 实际消费的最小命令切片",
   "windows": ["main"],
   "remote": {
     "urls": ["http://127.0.0.1:*"]
@@ -11,11 +11,6 @@
     "core:event:allow-unlisten",
     "core:window:allow-start-dragging",
     "core:window:allow-internal-toggle-maximize",
-    "notification:allow-notify",
-    "clipboard-manager:allow-read-text",
-    "clipboard-manager:allow-write-text",
-    "dialog:allow-open",
-    "dialog:allow-save",
     "allow-get-status",
     "allow-restart",
     "allow-install-dsh",
@@ -27,27 +22,8 @@
     "allow-set-autostart",
     "allow-get-desktop-settings",
     "allow-set-desktop-settings",
-    "allow-get-projects",
-    "allow-add-project",
-    "allow-update-project",
-    "allow-remove-project",
-    "allow-set-project-pinned",
-    "allow-mark-project-read",
-    "allow-archive-project-chats",
-    "allow-create-project-worktree",
-    "allow-show-project-in-finder",
-    "allow-register-shortcut",
-    "allow-unregister-shortcut",
     "allow-check-update",
     "allow-install-update",
-    "allow-window-action",
-    "allow-get-shortcuts",
-    "allow-unregister-all-shortcuts",
-    "allow-get-pending-deeplinks",
-    "allow-ack-deeplink",
-    "allow-request-notification-permission",
-    "allow-update-dsh",
-    "allow-open-paths",
-    "allow-import-paths"
+    "allow-window-action"
   ]
 }

@@ -42,6 +42,7 @@ export interface DshConfig {
   dsh_bin: string | null;
   dsh_node: string | null;
   dsh_home: string | null;
+  shortcuts: string[];
 }
 
 export type StartupMode = "normal" | "tray" | "minimized";

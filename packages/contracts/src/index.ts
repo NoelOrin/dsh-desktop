@@ -101,7 +101,7 @@ export interface UiThemeSnapshot {
   mode: "light" | "dark";
 }
 
-export type WindowAction = "minimize" | "maximize" | "close";
+export type WindowAction = "minimize" | "maximize" | "close" | "toggle-visible";
 
 export interface WindowState {
   maximized: boolean;

@@ -1712,9 +1712,9 @@ impl DshManager {
     fn cleanup_child(&mut self) {
         if let Some(mut child) = self.child.take() {
             self.lifecycle.invalidate();
-            let pid = child.id() as i32;
             #[cfg(unix)]
             {
+                let pid = child.id() as i32;
                 // 子进程以进程组启动（start 中 process_group(0)），对负 pid 发 SIGTERM 可整组清理
                 unsafe { libc::kill(-pid, libc::SIGTERM) };
                 let deadline = Instant::now() + GRACE_PERIOD;
@@ -3091,6 +3091,7 @@ fn windows_registry_path_entries() -> Vec<PathBuf> {
 fn windows_registry_path_value(key: &str) -> Vec<PathBuf> {
     let reg = std::env::var("SystemRoot")
         .map(|root| Path::new(&root).join("System32").join("reg.exe"))
+        .ok()
         .filter(|path| path.is_file())
         .unwrap_or_else(|| PathBuf::from(r"C:\Windows\System32\reg.exe"));
     let Ok(output) = Command::new(reg)

@@ -9,13 +9,14 @@
 - `DshConfig` - `get_config` / `set_config` 的配置结构（dsh_bin/dsh_node/dsh_home/shortcuts，null 表示未设置）
 - `StartupMode` - 启动模式（`normal` / `tray` / `minimized`）
 - `DesktopSettings` - `get_desktop_settings` / `set_desktop_settings` 的自启设置（autostart/startup_mode）
+- `ProjectEntry` / `ProjectWorktreeResult` - `get_projects` / `add_project` / `update_project` / `remove_project` / `set_project_pinned` / `mark_project_read` / `archive_project_chats` / `create_project_worktree` / `show_project_in_finder` 的项目列表契约
 - `DeepLinkPayload` - `dsh-deeplink` / `get_pending_deeplinks` / `ack_deeplink` 的深链载荷（id/url/raw/received_at/source/args/cwd）
 - `FileDropPayload` - `dsh-file-drop` / `open_paths` / `import_paths` 的拖放载荷（paths/kind/position/action）
 - `ShortcutSnapshot` - `get_shortcuts` 返回的快捷键快照（shortcut/registered）
 - `NotificationActionPayload` - `dsh-notification-action` 的通知动作载荷（kind/session_id/url/path）
 - `UiThemeSnapshot` / `UiThemeTokens` - `get_ui_theme` / `dsh-ui-theme` 的主题快照
 - `WindowState` / `WindowAction` - `window_action` / `dsh-window-state` 的窗口控制契约
-- `COMMANDS` - 当前常量：`get_status` / `install_dsh` / `restart` / `open_log_directory` / `get_config` / `set_config` / `open_external` / `get_ui_theme` / `window_action` / `get_desktop_settings` / `set_desktop_settings` / `get_shortcuts` / `unregister_all_shortcuts` / `get_pending_deeplinks` / `ack_deeplink` / `request_notification_permission` / `update_dsh` / `open_paths` / `import_paths`
+- `COMMANDS` - 当前常量：`get_status` / `install_dsh` / `restart` / `open_log_directory` / `get_config` / `set_config` / `open_external` / `get_ui_theme` / `window_action` / `get_desktop_settings` / `set_desktop_settings` / `get_projects` / `add_project` / `update_project` / `remove_project` / `set_project_pinned` / `mark_project_read` / `archive_project_chats` / `create_project_worktree` / `show_project_in_finder` / `get_shortcuts` / `unregister_all_shortcuts` / `get_pending_deeplinks` / `ack_deeplink` / `request_notification_permission` / `update_dsh` / `open_paths` / `import_paths`
 - `EVENTS` - 事件名字符串常量：`dsh-status` / `dsh-log` / `dsh-file-drop` / `dsh-theme` / `dsh-deeplink` / `dsh-shortcut` / `dsh-update-available` / `dsh-ui-theme` / `dsh-window-state` / `dsh-notification-action`
 
 ## 边界

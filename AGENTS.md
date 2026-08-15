@@ -10,9 +10,9 @@
 | `yarn build` | `tauri build` 打包，产物在 `apps/shell/src-tauri/target/release/bundle/` |
 | `yarn dev:web` | 仅启动前端 dev server（shell :5173） |
 | `yarn dev:shell` | Tauri `beforeDevCommand` 使用的完整开发前置命令：初始构建插件 + 插件 watch + Vite |
-| `yarn dev:plugins` | 独立插件 watch：源码变化后重建并热部署到 dsh profile（`$DSH_HOME` 或 `~/.dsh`） |
+| `yarn dev:plugins` | 独立插件 watch：监听 `packages/plugins` 全部源码（含 `client-kit/` 与 tsdown 配置），变化后重建并热部署到 dsh profile（`$DSH_HOME` 或 `~/.dsh`） |
 | `yarn build:web` | 构建前端到 `dist/`（Tauri 的 `beforeBuildCommand` 会调用） |
-| `yarn build:plugins` | 编译 `packages/plugins` 各插件并把自包含 dist 包装配进 `apps/shell/src-tauri/resources/plugins/`；可传 `--home <path>` 同步热部署 |
+| `yarn build:plugins` | 编译 `packages/plugins` 各插件并把自包含 dist 包装配进 `apps/shell/src-tauri/resources/plugins/`，自动清理已删除插件的旧产物；可传 `--home <path>` 同步热部署 |
 | `yarn tauri` | 透传 Tauri CLI 到 shell workspace |
 | `yarn lan-proxy` | 启动零依赖局域网反向代理（支持 Bearer token 门禁，详见 README） |
 | `yarn typecheck` | 对所有 workspace 执行 TypeScript 类型检查（shell / contracts / plugins） |
@@ -24,7 +24,7 @@
 - `apps/shell/` - main 窗口：启动页前端（Vite + TypeScript）与 `src-tauri/`（Tauri 2 + Rust 后端）
 - `apps/shell/src-tauri/` - Rust 后端：进程管理、IPC、窗口/托盘、主题、插件装配与桥接注入
 - `packages/contracts/` - 前后端共享的 native IPC 契约类型与常量（`@dsh-desktop/contracts`）
-- `packages/plugins/` - dsh 插件容器：`bridge/`（桥接 Tauri 壳能力）+ `hello/`（自定义示例），每个子目录一个 cordis 插件
+- `packages/plugins/` - dsh 插件容器：`bridge/`（桥接 Tauri 壳能力）+ `projects/`（项目列表与右键管理设置页）+ `shortcuts/`（全局快捷键设置页），每个含 `dsh` 字段的子目录一个 cordis 插件；`client-kit/` 为共享注入/构建 helper，不进入插件 resources
 - `scripts/` - 根级开发脚本：`dev.mjs` / `watch-plugins.mjs` / `build-plugins.mjs` / `lan-proxy.mjs`
 - `.github/` - 三平台 CI 构建、自动发布与版本号脚本
 - `docs/` - 插件边界文档、设计/实施记录与截图等资源
@@ -54,8 +54,8 @@
 - dsh 官方插件开发、UI 规范与组件使用约定已固定于 `packages/plugins/AGENTS.md`
   （含官方文档链接，新增插件/修改 client 面前先读该文件；client UI 设计范式另见 `packages/plugins/design.md`）
 - 前后端通过固定契约通信：
-  - native 命令：`get_status` / `install_dsh` / `update_dsh` / `restart` / `open_log_directory` / `get_config` / `set_config` / `open_external` / `get_ui_theme` / `window_action` / `get_pending_deeplinks` / `ack_deeplink` / `request_notification_permission` / `open_paths` / `import_paths`
-  - 桥接/壳能力命令：`get_autostart` / `set_autostart` / `get_desktop_settings` / `set_desktop_settings` / `register_shortcut` / `unregister_shortcut` / `get_shortcuts` / `unregister_all_shortcuts` / `check_update` / `install_update`
+  - native 命令：`get_status` / `install_dsh` / `update_dsh` / `restart` / `open_log_directory` / `get_config` / `set_config` / `open_external` / `get_ui_theme` / `window_action` / `get_pending_deeplinks` / `ack_deeplink` / `request_notification_permission` / `open_paths` / `import_paths` / `get_projects` / `add_project` / `update_project` / `remove_project` / `set_project_pinned` / `mark_project_read` / `archive_project_chats` / `create_project_worktree` / `show_project_in_finder`
+  - 桥接/壳能力命令：`get_autostart` / `set_autostart` / `get_desktop_settings` / `set_desktop_settings` / `get_projects` / `add_project` / `update_project` / `remove_project` / `set_project_pinned` / `mark_project_read` / `archive_project_chats` / `create_project_worktree` / `show_project_in_finder` / `register_shortcut` / `unregister_shortcut` / `get_shortcuts` / `unregister_all_shortcuts` / `check_update` / `install_update`
   - 事件：`dsh-status` / `dsh-log` / `dsh-file-drop` / `dsh-theme` / `dsh-deeplink` / `dsh-shortcut` / `dsh-update-available` / `dsh-ui-theme` / `dsh-window-state` / `dsh-notification-action`
   - 类型与常量见 `packages/contracts`；桥接对象 `window.__DSH_DESKTOP__` 的契约由 `packages/plugins/bridge/AGENTS.md` 自持
 - 系统托盘常驻后台（关闭到托盘），关键节点弹原生通知；dsh web 通过受控桥接 `window.__DSH_DESKTOP__` 调用最小能力（白名单见 `apps/shell/src-tauri/capabilities/bridge.json`，边界见 `docs/plugin-tauri-boundary.md`）

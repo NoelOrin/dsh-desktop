@@ -32,7 +32,7 @@ DSH Desktop 是 dsh 的桌面套壳：Rust 后端拉起 `dsh web` 子进程，�
 | 装配 | profile（`$DSH_HOME/profiles/<name>`）的 `dsh.profile.bundles` 有序列表 + 用户 patch 层 |
 | 安装/管理 | `dsh plugin --profile <name> <pnpm args>`（转发给 pnpm）；web 设置里的插件管理 |
 | 扩展什么 | agent 行为、工具、模型适配、会话处理、系统提示、Web UI 组件、设置页、命令行列 |
-| 本仓库载体 | `packages/plugins`（插件容器）：`bridge/` 桥接 Tauri 壳能力、`hello/` 自定义示例，每个子目录一个 dsh 插件 |
+| 本仓库载体 | `packages/plugins`（插件容器）：`bridge/` 桥接 Tauri 壳能力、`shortcuts/` 快捷键设置插件、`projects/` 项目设置插件，每个含 `dsh` 字段的子目录一个 dsh 插件；`client-kit/` 为共享注入/构建 helper |
 
 **红线**：插件运行在 `http://127.0.0.1:<port>` 的远端页面/独立 Node 进程里，
 默认**不接触**桌面壳任何能力（见 §5）。唯一的例外是本仓库自己的桥接插件
@@ -145,12 +145,13 @@ snake_case）。
 ## 6. `packages/plugins` 的定位
 
 `packages/plugins` 是 **dsh 插件容器**——不是 IPC 契约（契约在 `packages/contracts`）。
-下面可放多个插件独立开发，每个子目录一个 cordis 插件（bundle）。
+下面可放多个插件独立开发，每个含 `dsh` 字段的子目录一个 cordis 插件（bundle）；
+`client-kit/` 是共享源码目录，不作为插件装配。
 
 | | `packages/plugins/`（容器） |
 | --- | --- |
 | 归属 | **dsh 插件域**（本仓库维护，交付给 dsh 装配） |
-| 结构 | `bridge/`（桥接 Tauri 壳能力）、`hello/`（自定义示例）；新增插件在容器下建子目录即可 |
+| 结构 | `bridge/`（桥接 Tauri 壳能力）、`shortcuts/`（快捷键设置 UI）、`projects/`（项目列表与右键管理 UI）、`client-kit/`（共享注入/构建 helper，非插件）；新增插件在容器下建子目录即可 |
 | bridge 唯一职责 | 让 dsh 插件/页面能调用 Tauri 壳能力（桥接命令契约由 bridge 自持 + §5 端口白名单） |
 | 消费者 | dsh web 内的插件/页面 |
 | 依赖方向 | 依赖 `@deepseek-ai/cordis` 等 dsh 生态包；**不依赖 `@dsh-desktop/contracts`**（native 契约与桥接契约分离） |
@@ -186,12 +187,14 @@ snake_case）。
    `apps/shell/src-tauri/resources/plugins/<name>/`；`tauri.conf.json` 的
    `bundle.resources: ["resources/plugins/**/*"]` 将其打进安装包，`beforeBuildCommand`
    链入 `yarn build:plugins`；`beforeDevCommand` 现经 `yarn dev:shell`（`scripts/dev.mjs`）先构建插件，
-   再同时启动 Vite 与插件 watch，保证 `yarn dev` 开发模式同样装配内嵌插件。
+   再同时启动 Vite 与插件 watch，保证 `yarn dev` 开发模式同样装配内嵌插件。构建成功后还会
+   自动清理 `resources/plugins` 中已从源码删除的旧插件目录；传入 `--home` 时同步清理 profile
+   中已不存在的 `@dsh-desktop/plugin-*` 包。
 2. **装配（Rust `apps/shell/src-tauri/src/embedded.rs`）**：应用启动时
-   `embedded::assemble` 遍历 resources 里每个含 `dshDesktop.id` 的插件包，复制进
+   `embedded::prepare_overlay` 统一调用 `assemble` / `assemble_dev` 并生成 overlay，遍历 resources 里每个含 `dshDesktop.id` 的插件包，复制进
    `$DSH_HOME/profiles/node_modules/@dsh-desktop/<name>/`（dsh 的 profile 模块兜底目录）——
    以版本号为键幂等（缺失或版本不同才重装）、临时目录 + rename 原子替换、单包失败只记日志
-   跳过；随后 `write_overlay` 在应用数据目录生成 `embedded-plugins.patch.yml`（`- insert:`
+   跳过；随后在应用数据目录生成 `embedded-plugins.patch.yml`（`- insert:`
    行，插件名**必须单引号**——`@` 是 YAML 1.1 保留指示符）。开发模式下 Tauri 的
    `resource_dir()` 指向 `target/<profile>`，因此 Rust 侧经 `plugins_resource_dir()` 显式回退到
    源码 `apps/shell/src-tauri/resources`，发布模式仍读取应用资源目录；开发模式另经
@@ -203,12 +206,14 @@ snake_case）。
 
 **Option B 语义**：内嵌插件只随桌面壳的 `--patch` 挂载；**单独运行 `dsh web`（不带 `--patch`）
 不挂载它们**，与 `dsh plugin --profile web add` 的 profile 安装相互独立。停用某个内嵌插件只需
-从 resources 移除对应目录（或不再 `--patch`），不修改 profile manifest，dsh 配置里无引用残留
-（已复制的兜底目录为惰性数据，不再被挂载）。
+从 `packages/plugins` 删除对应插件，下次 `yarn build:plugins` 会自动清理 resources 中的旧目录
+（`--home` 同时清理 profile 旧包）；不修改 profile manifest，dsh 配置里无引用残留。
 
 **开发热更新**：`yarn dev` 的 `beforeDevCommand` 现经 `scripts/dev.mjs` 先构建插件，再同时启动
 Vite 与 `scripts/watch-plugins.mjs`。watch 脚本检测插件源码变化后重新执行 `build:plugins --home`，
-把最新插件包原子复制进 dsh profile；dsh 自带的 `dsh-client-hmr` 轮询 client bundle 变化并在
+把最新插件包原子复制进 dsh profile；watch 扫描 `packages/plugins` 下全部源码（含 `client-kit/`
+与 tsdown 配置，排除 `lib/` 产物），因此共享注入/构建 helper 变化也会触发热部署。dsh 自带的
+`dsh-client-hmr` 轮询 client bundle 变化并在
 Web UI 中热替换，无需重启 dsh。新增插件或修改 client 声明仍需要重启 dsh。
 
 **注意（行 id 去重）**：桌面 overlay 的 `- insert:` 行由 `write_overlay` **无条件追加**，

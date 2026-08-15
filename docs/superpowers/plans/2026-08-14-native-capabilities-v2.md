@@ -1,10 +1,14 @@
 # 桌面壳原生能力二期实施计划（托盘 / 自启 / 深链 / 快捷键 / 通知 / 进程日志 / 拖放）
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
+
+> **Status:** 已完成（2026-08-15）。本计划对应实现已落在当前 `feature/native` 分支（核心提交 `c707826` 及后续桌面设置/桥接契约提交），下方步骤已按最终实现勾选；`yarn typecheck`、`cargo fmt --check`、`cargo test` 当前通过。
 
 **Goal:** 为 dsh-desktop 落地 7 组桌面壳能力：动态托盘、开机自启启动模式、结构化深链队列、快捷键管理、通知点击与权限、进程/日志/健康检查/版本管理、结构化文件拖放。
 
-**Architecture:** 能力按既有边界分三层落地。① **Tauri 壳域**：`apps/shell/src-tauri/src/lib.rs` 负责状态、IPC、托盘、快捷键、深链、进程与拖放事件；新增 `notifications.rs`（通知点击回调）、`process.rs`（URL/拖放分类纯函数）和 `desktop_settings.rs`（自启/启动模式解析）保持 `lib.rs` 可读。② **dsh 插件域**：`packages/plugins/bridge` 注册 `desktop` settings 命名空间、健康端点和桥接类型，UI 负责 settings/OS 事务同步。③ **共享契约**：native IPC 类型与常量进 `packages/contracts`，桥接能力由 bridge 自持。
+**Architecture:** 能力按既有边界分三层落地。① **Tauri 壳域**：`apps/shell/src-tauri/src/lib.rs` 负责状态、IPC、托盘、快捷键、深链、进程与拖放事件；新增 `notifications.rs`（通知点击回调）、`process.rs`（URL/拖放分类纯函数）和 `desktop_settings.rs`（自启/启动模式解析）保持 `lib.rs` 可读。② **dsh 插件域**：`packages/plugins/bridge` 注册健康端点与桥接类型；桌面设置由壳侧 `get_desktop_settings` / `set_desktop_settings` 命令持有并同步 OS/持久化，UI 负责事务反馈。③ **共享契约**：native IPC 类型与常量进 `packages/contracts`，桥接能力由 bridge 自持。
+
+**落地差异：** 原 Task 3 设想把自启设置放进 dsh settings 命名空间；最终实现改为 `desktop-settings.json` + 壳侧 `get_desktop_settings` / `set_desktop_settings`，bridge 只暴露 `desktop.get()` / `desktop.set()`，client 在 `DesktopPanel.tsx` 完成设置。其余任务与计划一致。
 
 **Tech Stack:** Tauri 2.11 / Rust 2021、`notify-rust 4.18`、TypeScript strict、dsh cordis 插件生态（`settingsScope` / `slots` / `locale` / `dsh-settings` / `schemastery`）、React 18、node:test、cargo test。
 
@@ -31,7 +35,7 @@
 - Modify: `apps/shell/src-tauri/capabilities/bridge.json`
 - Modify: `apps/shell/src-tauri/Cargo.toml`
 
-- [ ] **Step 1: 扩展共享契约类型与常量**
+- [x] **Step 1: 扩展共享契约类型与常量**
 
 在 `packages/contracts/src/index.ts` 中新增以下类型，并更新 `RuntimeSnapshot`、`DshConfig`、`COMMANDS`、`EVENTS`：
 
@@ -120,7 +124,7 @@ export const EVENTS = {
 } as const;
 ```
 
-- [ ] **Step 2: 注册新命令并声明权限**
+- [x] **Step 2: 注册新命令并声明权限**
 
 `apps/shell/src-tauri/build.rs` 的 `commands(&[...])` 追加：
 
@@ -150,7 +154,7 @@ export const EVENTS = {
 
 `capabilities/bridge.json` 的 `permissions` 追加相同命令（`request_notification_permission` 也开放给桥接）。
 
-- [ ] **Step 3: 添加 notify-rust 直接依赖**
+- [x] **Step 3: 添加 notify-rust 直接依赖**
 
 `apps/shell/src-tauri/Cargo.toml` 的 `[dependencies]` 追加：
 
@@ -160,12 +164,12 @@ notify-rust = { version = "4.18", default-features = false, features = ["z", "pr
 
 原因：`tauri-plugin-notification` 的 desktop builder 是 fire-and-forget，无法拿到点击回调；`notify-rust` 的 `NotificationHandle` 支持 Windows toast、Linux D-Bus、macOS UNUserNotificationCenter 的响应等待。
 
-- [ ] **Step 4: 验证**
+- [x] **Step 4: 验证**
 
 Run: `yarn typecheck`
 Expected: 契约类型通过；Rust 侧尚未使用新字段，本阶段不产生 Rust 编译错误。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/contracts/src/index.ts apps/shell/src-tauri/build.rs apps/shell/src-tauri/capabilities/default.json apps/shell/src-tauri/capabilities/bridge.json apps/shell/src-tauri/Cargo.toml
@@ -180,7 +184,7 @@ git commit -m "feat: expand native capability contracts"
 - Modify: `apps/shell/src-tauri/src/lib.rs`
 - Modify: `packages/plugins/bridge/AGENTS.md`
 
-- [ ] **Step 1: 定义新托盘菜单项与状态容器**
+- [x] **Step 1: 定义新托盘菜单项与状态容器**
 
 在 `lib.rs` 顶部把托盘菜单 id 扩展为：
 
@@ -207,7 +211,7 @@ struct TrayState {
 }
 ```
 
-- [ ] **Step 2: 重写 setup_tray**
+- [x] **Step 2: 重写 setup_tray**
 
 `setup_tray` 返回 `tauri::Result<TrayState>`，菜单顺序为：状态、分隔线、复制 Web UI 地址、浏览器打开、停止 dsh、重启 dsh、分隔线、显示主窗口、退出：
 
@@ -306,7 +310,7 @@ fn setup_tray(app: &tauri::AppHandle, exiting: Arc<AtomicBool>) -> tauri::Result
 
 同时新增 `use tauri_plugin_clipboard_manager::ClipboardExt;`。
 
-- [ ] **Step 3: setup 中管理 TrayState**
+- [x] **Step 3: setup 中管理 TrayState**
 
 在 `setup` 中把原来的 `setup_tray(app.handle(), exiting.clone())?;` 改为：
 
@@ -315,7 +319,7 @@ let tray_state = setup_tray(app.handle(), exiting.clone())?;
 app.manage(tray_state);
 ```
 
-- [ ] **Step 4: emit_status 时更新托盘**
+- [x] **Step 4: emit_status 时更新托盘**
 
 ```rust
 fn emit_status(app: &AppHandle, inner: &Arc<Mutex<Inner>>) {
@@ -360,7 +364,7 @@ fn update_tray(app: &AppHandle, snapshot: &RuntimeSnapshot) {
 }
 ```
 
-- [ ] **Step 5: 写测试**
+- [x] **Step 5: 写测试**
 
 在 `lib.rs` 的 `mod tests` 中追加：
 
@@ -373,12 +377,12 @@ fn tray_labels_cover_all_phases() {
 }
 ```
 
-- [ ] **Step 6: 验证**
+- [x] **Step 6: 验证**
 
 Run: `cargo fmt --check && cargo test tray_labels_cover_all_phases`
 Expected: PASS
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/shell/src-tauri/src/lib.rs packages/plugins/bridge/AGENTS.md
@@ -396,7 +400,7 @@ git commit -m "feat: dynamic tray status and dsh controls"
 - Modify: `packages/plugins/bridge/src/client.tsx`
 - Modify: `packages/plugins/bridge/package.json`
 
-- [ ] **Step 1: 新增 desktop settings 解析模块**
+- [x] **Step 1: 新增 desktop settings 解析模块**
 
 `apps/shell/src-tauri/src/desktop_settings.rs`：
 
@@ -457,7 +461,7 @@ mod tests {
 
 在 `lib.rs` 增加 `mod desktop_settings;`。
 
-- [ ] **Step 2: 消费 --autostart 并支持启动到托盘/最小化**
+- [x] **Step 2: 消费 --autostart 并支持启动到托盘/最小化**
 
 `run()` 顶部读取启动参数：
 
@@ -535,7 +539,7 @@ TRAY_SHOW_MAIN => {
 }
 ```
 
-- [ ] **Step 3: bridge host 注册 desktop 命名空间**
+- [x] **Step 3: bridge host 注册 desktop 命名空间**
 
 `packages/plugins/bridge/src/index.ts` 改为：
 
@@ -574,7 +578,7 @@ export function apply(ctx: Context): void {
 
 （`installSettingsSection` 已由 `@deepseek-ai/dsh-settings` 导出，仓库内该依赖已存在。）
 
-- [ ] **Step 4: client 面启动模式 UI 与事务同步**
+- [x] **Step 4: client 面启动模式 UI 与事务同步**
 
 `packages/plugins/bridge/src/client.tsx` 的 `DesktopConfig` 增加 `startupMode?: "normal" | "tray" | "minimized"`。把 `AutostartSwitch` 扩展为 `StartupSettings`：
 
@@ -665,12 +669,12 @@ function StartupSettings(props: {
 "autostart.mode.minimized": "启动时最小化",
 ```
 
-- [ ] **Step 5: 验证**
+- [x] **Step 5: 验证**
 
 Run: `cargo test parses_desktop_section && yarn typecheck`
 Expected: PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/shell/src-tauri/src/desktop_settings.rs apps/shell/src-tauri/src/lib.rs packages/plugins/bridge/src/index.ts packages/plugins/bridge/src/client.tsx packages/plugins/bridge/package.json
@@ -686,7 +690,7 @@ git commit -m "feat: consume autostart mode and sync desktop settings"
 - Modify: `packages/plugins/bridge/src/index.ts`
 - Modify: `packages/contracts/src/index.ts`
 
-- [ ] **Step 1: 定义 DeepLinkPayload 并替换原始 URL 队列**
+- [x] **Step 1: 定义 DeepLinkPayload 并替换原始 URL 队列**
 
 `Inner` 中的 `pending_deeplinks` 改为 `VecDeque<DeepLinkPayload>`，并增加 `next_deep_link_id: u64`：
 
@@ -751,7 +755,7 @@ fn enqueue_launch_payload(
 }
 ```
 
-- [ ] **Step 2: 深链与二次启动入口统一入队**
+- [x] **Step 2: 深链与二次启动入口统一入队**
 
 把 deep-link 回调替换为：
 
@@ -784,7 +788,7 @@ single-instance 回调替换为：
 
 `Ready` 分支中删除“while let Some(link) = inner.pending_deeplinks.pop_front() { emit }”这段补发逻辑。
 
-- [ ] **Step 3: 新增查询与确认命令**
+- [x] **Step 3: 新增查询与确认命令**
 
 ```rust
 #[tauri::command]
@@ -801,7 +805,7 @@ fn ack_deeplink(state: State<AppState>, id: String) -> Result<(), String> {
 
 注册到 `invoke_handler`，命令名与 Task 1 权限一致。
 
-- [ ] **Step 4: BRIDGE_SCRIPT 消费并确认**
+- [x] **Step 4: BRIDGE_SCRIPT 消费并确认**
 
 `BRIDGE_SCRIPT` 中 `onDeepLink` 替换为：
 
@@ -845,12 +849,12 @@ export interface DeepLinkPayload {
 }
 ```
 
-- [ ] **Step 5: 验证**
+- [x] **Step 5: 验证**
 
 Run: `yarn typecheck && cargo build`
 Expected: PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/shell/src-tauri/src/lib.rs packages/plugins/bridge/src/index.ts packages/contracts/src/index.ts
@@ -867,7 +871,7 @@ git commit -m "feat: reliable structured deep links with ack queue"
 - Modify: `packages/plugins/bridge/src/index.ts`
 - Modify: `packages/contracts/src/index.ts`
 
-- [ ] **Step 1: DshConfig 增加快捷键持久化**
+- [x] **Step 1: DshConfig 增加快捷键持久化**
 
 `config.rs`：
 
@@ -885,7 +889,7 @@ pub struct DshConfig {
 
 同步更新 `effective()`、测试构造与 `packages/contracts` 的 `DshConfig`（Task 1 已加）。
 
-- [ ] **Step 2: 新增快捷键快照与内部注册函数**
+- [x] **Step 2: 新增快捷键快照与内部注册函数**
 
 ```rust
 #[derive(Clone, Serialize)]
@@ -941,7 +945,7 @@ fn register_shortcut(state: State<AppState>, shortcut: String) -> Result<Shortcu
 }
 ```
 
-- [ ] **Step 3: 查询与全量清理**
+- [x] **Step 3: 查询与全量清理**
 
 ```rust
 #[tauri::command]
@@ -970,7 +974,7 @@ fn unregister_all_shortcuts(state: State<AppState>) -> Result<(), String> {
 
 `unregister_shortcut` 注销后同步调用 `persist_shortcuts`。
 
-- [ ] **Step 4: 重启恢复**
+- [x] **Step 4: 重启恢复**
 
 在 `setup` 中 `app.manage(AppState { ... })` 后调用：
 
@@ -983,7 +987,7 @@ if let Some(state) = app.try_state::<AppState>() {
 }
 ```
 
-- [ ] **Step 5: bridge 类型**
+- [x] **Step 5: bridge 类型**
 
 `packages/plugins/bridge/src/index.ts` 的 `shortcuts` 增加：
 
@@ -999,12 +1003,12 @@ list: function () { return invoke("get_shortcuts"); },
 unregisterAll: function () { return invoke("unregister_all_shortcuts"); },
 ```
 
-- [ ] **Step 6: 验证**
+- [x] **Step 6: 验证**
 
 Run: `cargo test && yarn typecheck`
 Expected: PASS
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/shell/src-tauri/src/config.rs apps/shell/src-tauri/src/lib.rs packages/plugins/bridge/src/index.ts packages/contracts/src/index.ts
@@ -1021,7 +1025,7 @@ git commit -m "feat: query, clear, conflict-check and persist shortcuts"
 - Modify: `packages/plugins/bridge/src/index.ts`
 - Modify: `packages/contracts/src/index.ts`
 
-- [ ] **Step 1: 新增通知模块**
+- [x] **Step 1: 新增通知模块**
 
 `apps/shell/src-tauri/src/notifications.rs`：
 
@@ -1078,7 +1082,7 @@ pub fn show(app: &AppHandle, title: &str, body: &str, action: Option<Notificatio
 
 在 `lib.rs` 增加 `mod notifications;`。
 
-- [ ] **Step 2: DshManager::notify 改用带回调的通知**
+- [x] **Step 2: DshManager::notify 改用带回调的通知**
 
 ```rust
 fn notify(&self, title: &str, body: &str) {
@@ -1102,7 +1106,7 @@ notifications::show(
 );
 ```
 
-- [ ] **Step 3: 更新下载完成通知**
+- [x] **Step 3: 更新下载完成通知**
 
 `install_update` 在 `file.sync_all()` 后、返回前追加：
 
@@ -1122,7 +1126,7 @@ notifications::show(
 Ok(dest_string)
 ```
 
-- [ ] **Step 4: 权限命令**
+- [x] **Step 4: 权限命令**
 
 ```rust
 #[tauri::command]
@@ -1137,7 +1141,7 @@ fn request_notification_permission(app: AppHandle) -> Result<String, String> {
 }
 ```
 
-- [ ] **Step 5: bridge 类型与脚本**
+- [x] **Step 5: bridge 类型与脚本**
 
 `packages/plugins/bridge/src/index.ts` 增加：
 
@@ -1153,12 +1157,12 @@ requestNotificationPermission: function () { return invoke("request_notification
 onNotificationAction: function (cb) { return listen("dsh-notification-action", function (e) { cb(e.payload); }); },
 ```
 
-- [ ] **Step 6: 验证**
+- [x] **Step 6: 验证**
 
 Run: `cargo test && yarn typecheck`
 Expected: PASS
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/shell/src-tauri/src/notifications.rs apps/shell/src-tauri/src/lib.rs packages/plugins/bridge/src/index.ts packages/contracts/src/index.ts
@@ -1174,7 +1178,7 @@ git commit -m "feat: actionable notifications and permission command"
 - Modify: `apps/shell/src-tauri/src/lib.rs`
 - Modify: `packages/plugins/bridge/src/index.ts`
 
-- [ ] **Step 1: 新增 process.rs 纯函数**
+- [x] **Step 1: 新增 process.rs 纯函数**
 
 ```rust
 pub fn parse_dsh_web_url(line: &str) -> Option<String> {
@@ -1205,7 +1209,7 @@ mod tests {
 
 `lib.rs` 增加 `mod process;`。
 
-- [ ] **Step 2: 使用 --port 0 并从 stdout 获取真实 URL**
+- [x] **Step 2: 使用 --port 0 并从 stdout 获取真实 URL**
 
 `DshManager::start` 中删除 `let port = reserve_port()?;`，参数改为：
 
@@ -1266,7 +1270,7 @@ enum ManagerMessage {
 }
 ```
 
-- [ ] **Step 3: 固定健康端点**
+- [x] **Step 3: 固定健康端点**
 
 `packages/plugins/bridge/src/index.ts` 的 `apply(ctx)` 增加：
 
@@ -1333,7 +1337,7 @@ Ok(ManagerMessage::Unhealthy { generation }) => {
 }
 ```
 
-- [ ] **Step 4: 日志按大小轮转**
+- [x] **Step 4: 日志按大小轮转**
 
 `append_line` 调用前先轮转：
 
@@ -1365,7 +1369,7 @@ fn append_line(app: &AppHandle, inner: &Arc<Mutex<Inner>>, log_path: &Path, line
 }
 ```
 
-- [ ] **Step 5: dsh 版本与更新命令**
+- [x] **Step 5: dsh 版本与更新命令**
 
 `Inner` 与 `RuntimeSnapshot` 增加 `dsh_version: Option<String>`。`handle_start` 中：
 
@@ -1442,12 +1446,12 @@ fn update_dsh(state: State<AppState>) -> Result<(), String> {
 
 bridge 增加 `updateDsh(): Promise<void>` 与 `getStatus()` 返回 `dsh_version`。
 
-- [ ] **Step 6: 验证**
+- [x] **Step 6: 验证**
 
 Run: `cargo test && yarn typecheck`
 Expected: PASS
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/shell/src-tauri/src/process.rs apps/shell/src-tauri/src/lib.rs packages/plugins/bridge/src/index.ts
@@ -1464,7 +1468,7 @@ git commit -m "feat: dynamic port, log rotation, health and dsh updates"
 - Modify: `packages/plugins/bridge/src/index.ts`
 - Modify: `packages/contracts/src/index.ts`
 
-- [ ] **Step 1: 拖放分类纯函数**
+- [x] **Step 1: 拖放分类纯函数**
 
 `process.rs` 增加：
 
@@ -1501,7 +1505,7 @@ fn classifies_drop_kind() {
 
 文件顶部补充 `use std::path::PathBuf;`。
 
-- [ ] **Step 2: Rust 事件与命令**
+- [x] **Step 2: Rust 事件与命令**
 
 在 `lib.rs` 定义：
 
@@ -1578,7 +1582,7 @@ if let WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, position, .. })
 
 注册 `open_paths` / `import_paths` 到 `invoke_handler`。
 
-- [ ] **Step 3: bridge 类型与脚本**
+- [x] **Step 3: bridge 类型与脚本**
 
 `packages/plugins/bridge/src/index.ts` 增加：
 
@@ -1596,12 +1600,12 @@ importPaths: function (paths) { return invoke("import_paths", { paths: paths });
 
 `onFileDrop` 回调类型改为 `FileDropPayload`。
 
-- [ ] **Step 4: 验证**
+- [x] **Step 4: 验证**
 
 Run: `cargo test classifies_drop_kind && yarn typecheck`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/shell/src-tauri/src/lib.rs apps/shell/src-tauri/src/process.rs packages/plugins/bridge/src/index.ts packages/contracts/src/index.ts
@@ -1618,7 +1622,7 @@ git commit -m "feat: structured file drop with explicit actions"
 - Modify: `packages/plugins/bridge/AGENTS.md`
 - Modify: `packages/contracts/AGENTS.md`
 
-- [ ] **Step 1: 同步桥接能力表**
+- [x] **Step 1: 同步桥接能力表**
 
 在 `packages/plugins/bridge/AGENTS.md` 的桥接对象表补一行：
 
@@ -1631,11 +1635,11 @@ git commit -m "feat: structured file drop with explicit actions"
 
 `docs/plugin-tauri-boundary.md` 增加一段“二期新增能力边界”：Tauri 壳负责托盘/自启/深链/快捷键/通知/日志/拖放；bridge host 只注册 desktop settings 与健康端点，不实现 dsh 业务。
 
-- [ ] **Step 2: 更新 contracts 文档**
+- [x] **Step 2: 更新 contracts 文档**
 
 `packages/contracts/AGENTS.md` 的内容清单补 `DeepLinkPayload` / `FileDropPayload` / `ShortcutSnapshot` / `NotificationActionPayload` / `StartupMode` 与新增命令/事件名。
 
-- [ ] **Step 3: 全量验证**
+- [x] **Step 3: 全量验证**
 
 Run:
 
@@ -1649,7 +1653,7 @@ cargo test
 
 Expected: 全部通过。
 
-- [ ] **Step 4: 手工冒烟**
+- [x] **Step 4: 手工冒烟**
 
 Run: `yarn dev`
 
@@ -1663,7 +1667,7 @@ Expected:
 6. 通知点击聚焦主窗口，更新完成通知携带安装包路径。
 7. 拖入文件/目录时 payload 含 `kind`、坐标与 action。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add docs/plugin-tauri-boundary.md packages/plugins/AGENTS.md packages/plugins/bridge/AGENTS.md packages/contracts/AGENTS.md

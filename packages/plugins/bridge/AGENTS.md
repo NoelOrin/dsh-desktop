@@ -12,7 +12,7 @@
 | host | `src/index.ts` | 插件入口（`export const name` + `apply(ctx)`）；定义 `DshDesktopBridge` 类型；注册 `dsh-desktop/health` 健康端点，不实现 dsh 业务 |
 | client | `src/client.tsx` | 在 dsh WebUI 设置面板注册“桌面”设置节（状态 / 配置 / 工具 / 开机自启与启动模式）与“外观”设置节（主题偏好 / 主题库 / 背景图 / 玻璃透明度 / 自定义主题 / 排版）；`ui-theme` 命名空间只 bind 不注册，快照经 `createThemeStore` 防抖写回，变化时 `applyThemeSection` 实时应用 |
 | shared | `src/shared/theme.ts` | 主题家族、token 推导、背景/玻璃/排版边界与默认值 |
-| client UI | `src/client/*` | 桌面/外观设置节组件（`DesktopPanel.tsx`、`AppearanceSection.tsx` 等）、共享控件（`ui/controls.*`）、运行时类型切片（`runtime.ts`）、样式加载（`style-inject.ts`）与主题应用逻辑 |
+| client UI | `src/client/*` | 桌面/外观设置节组件（`DesktopPanel.tsx`、`AppearanceSection.tsx` 等）、共享控件（`ui/controls.*`）、运行时类型切片（`runtime.ts`）与主题应用逻辑；桥接读取与样式注入统一走 `../../client-kit/inject.ts` |
 
 `package.json` 通过 `dsh.client`（platform web）声明 client 面并导出 `./client`；
 client 面依赖 `@deepseek-ai/dsh-client-ui-settings` 等 dsh client 生态（peer 声明）。
@@ -42,6 +42,13 @@ client 面依赖 `@deepseek-ai/dsh-client-ui-settings` 等 dsh client 生态（p
 | `shortcuts.register(s, cb)` / `unregister(s)` / `list()` / `unregisterAll()` | `register_shortcut` / `unregister_shortcut` / `get_shortcuts` / `unregister_all_shortcuts` | 全局快捷键管理 |
 | `onShortcut(cb)` | 事件 `dsh-shortcut` | 订阅快捷键按下 |
 | `update.check()` / `update.install()` | `check_update` / `install_update` | 检查更新 / 静默下载安装包 |
+| `projects.list()` / `add(path)` / `update(project)` / `remove(id)` | `get_projects` / `add_project` / `update_project` / `remove_project` | 项目列表读写（壳侧 `projects.json` 持久化） |
+| `projects.setPinned(id, pinned)` / `markRead(id)` / `setArchived(id, archived)` | `set_project_pinned` / `mark_project_read` / `archive_project_chats` | 置顶 / 全部标为已读 / 聊天归档 |
+| `projects.createWorktree(id)` / `showInFinder(id)` | `create_project_worktree` / `show_project_in_finder` | 创建永久工作树 / 文件管理器定位 |
+
+“快捷键”设置 UI 由独立的 `@dsh-desktop/plugin-shortcuts` 插件提供；本插件只保留
+`shortcuts` 桥接面，不实现设置页。“项目”设置 UI 由独立的 `@dsh-desktop/plugin-projects`
+插件提供；本插件只保留 `projects` 桥接面，不实现设置页。
 
 ## 开机自启与启动模式设置项归属
 
@@ -75,6 +82,6 @@ client 面依赖 `@deepseek-ai/dsh-client-ui-settings` 等 dsh client 生态（p
 
 - dsh web 只静态托管 client bundle，不托管插件独立 `style.css`；bridge 按 dsh
   client module 的样式约定，把构建后的 `style.css` 文本嵌入 `client.js`，
-  `style-inject.ts` 在 factory 物化时以 `<style data-plugin-css>` 注入。
+  `client-kit/inject.ts` 在 factory 物化时以 `<style data-plugin-css>` 注入。
 - 新增/修改 `*.module.css` 时不需要手动引入 CSS；`tsdown` 会自动生成 scoped
   类名并保留 `style.css` 构建产物。不要在 client 组件里直接写全局 DOM/外壳样式。

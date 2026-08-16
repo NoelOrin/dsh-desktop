@@ -2137,10 +2137,17 @@ fn get_ui_theme(state: State<AppState>) -> UiThemeSnapshot {
     resolve_ui_theme(&section, system_dark)
 }
 
+/// 解析 profile 目录：settings_home 优先，否则回退到 ~/.dsh。
+fn app_profile_home(state: &AppState) -> Result<PathBuf, String> {
+    settings_home(&state.config_path)
+        .or_else(|| dirs::home_dir().map(|dir| dir.join(".dsh")))
+        .ok_or_else(|| "无法解析 DSH profile 目录".to_string())
+}
+
 #[tauri::command]
-fn get_profiles(state: State<AppState>) -> Vec<profiles::DshProfileSummary> {
-    let home = settings_home(&state.config_path).unwrap_or_default();
-    profiles::list_profiles(&home)
+fn get_profiles(state: State<AppState>) -> Result<Vec<profiles::DshProfileSummary>, String> {
+    let home = app_profile_home(&state)?;
+    Ok(profiles::list_profiles(&home))
 }
 
 #[tauri::command]
@@ -2157,7 +2164,7 @@ struct ProfileSelectionResult {
 
 #[tauri::command]
 fn select_profile(state: State<AppState>, name: String) -> Result<ProfileSelectionResult, String> {
-    let home = settings_home(&state.config_path).unwrap_or_default();
+    let home = app_profile_home(&state)?;
     let result = profiles::select_profile(&state.profile_state_path, &home, &name)?;
     Ok(ProfileSelectionResult {
         profile: result.pending.unwrap_or(name),

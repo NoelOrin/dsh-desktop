@@ -522,7 +522,9 @@ function ProfilePanel(): JSX.Element {
     }
   };
 
-  const selectedProblem = options.find((p) => p.name === selected)?.problem ?? null;
+  const selectedProfile = options.find((p) => p.name === selected) ?? null;
+  const canApply = !loading && !switching && selectedProfile?.web_capable === true;
+  const selectedProblem = selectedProfile?.problem ?? null;
 
   return (
     <div className={css.profileBlock}>
@@ -536,20 +538,29 @@ function ProfilePanel(): JSX.Element {
             : "读取中…"}
         </span>
       </div>
-      <select
-        id="desktop-profile"
-        className={css.profileSelect}
-        value={selected}
-        disabled={loading || switching}
-        onChange={(event) => void switchProfile(event.currentTarget.value)}
-      >
-        {loading ? <option value="">加载中…</option> : null}
-        {options.map((profile) => (
-          <option key={profile.name} value={profile.name} disabled={!profile.web_capable}>
-            {profile.name}
-          </option>
-        ))}
-      </select>
+      <div className={css.actions}>
+        <select
+          id="desktop-profile"
+          className={css.profileSelect}
+          value={selected}
+          disabled={loading || switching}
+          onChange={(event) => {
+            setSelected(event.currentTarget.value);
+            setNotice(null);
+            setError(null);
+          }}
+        >
+          {loading ? <option value="">加载中…</option> : null}
+          {options.map((profile) => (
+            <option key={profile.name} value={profile.name} disabled={!profile.web_capable}>
+              {profile.name}
+            </option>
+          ))}
+        </select>
+        <Button type="button" disabled={!canApply} onClick={() => void switchProfile(selected)}>
+          应用并重启
+        </Button>
+      </div>
       {selectedProblem ? <p className={css.messageError}>{selectedProblem}</p> : null}
       {notice ? <p className={css.messageInfo}>{notice}</p> : null}
       {error ? <p className={css.messageError}>{error}</p> : null}

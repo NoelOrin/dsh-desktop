@@ -41,6 +41,7 @@ struct RunningOp {
 #[derive(Clone)]
 pub struct PluginOps {
     active: Arc<Mutex<Option<RunningOp>>>,
+    logger: Arc<dyn Fn(&str) + Send + Sync>,
 }
 
 impl Default for PluginOps {
@@ -53,6 +54,14 @@ impl PluginOps {
     pub fn new() -> Self {
         Self {
             active: Arc::new(Mutex::new(None)),
+            logger: Arc::new(|_| {}),
+        }
+    }
+
+    pub fn with_logger(self, logger: impl Fn(&str) + Send + Sync + 'static) -> Self {
+        Self {
+            active: self.active,
+            logger: Arc::new(logger),
         }
     }
 
@@ -130,8 +139,7 @@ impl PluginOps {
         running.cancelled.store(true, Ordering::SeqCst);
         let child = running.child.lock().unwrap().take();
         if let Some(mut child) = child {
-            let _ = child.kill();
-            let _ = child.wait();
+            terminate_child(&mut child);
         }
         Ok(())
     }
@@ -155,6 +163,11 @@ impl PluginOps {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
 
         let (child_state, cancelled) = {
             let mut active = self.active.lock().unwrap();
@@ -184,9 +197,8 @@ impl PluginOps {
         {
             let mut state = child_state.lock().unwrap();
             if cancelled.load(Ordering::SeqCst) {
-                let _ = child.kill();
-                let _ = child.wait();
                 drop(state);
+                terminate_child(&mut child);
                 self.active.lock().unwrap().take();
                 return Err(CANCELLED_MESSAGE.to_string());
             }
@@ -194,35 +206,50 @@ impl PluginOps {
         }
 
         let output = Arc::new(Mutex::new(Vec::new()));
+        let logger = self.logger.clone();
         let stdout_handle = thread::spawn({
             let output = output.clone();
-            move || collect_stream(stdout, output)
+            let logger = logger.clone();
+            move || collect_stream(stdout, output, logger)
         });
         let stderr_handle = thread::spawn({
             let output = output.clone();
-            move || collect_stream(stderr, output)
+            let logger = logger.clone();
+            move || collect_stream(stderr, output, logger)
         });
 
+        let mut wait_error = None;
         let status = loop {
             let mut state = child_state.lock().unwrap();
-            match state
-                .as_mut()
-                .and_then(|child| child.try_wait().ok().flatten())
-            {
-                Some(status) => {
+            let Some(child) = state.as_mut() else {
+                break None;
+            };
+            match child.try_wait() {
+                Ok(Some(status)) => {
                     state.take();
                     break Some(status);
                 }
-                None if state.is_none() => break None,
-                None => {}
+                Ok(None) => {}
+                Err(error) => {
+                    let mut child = state.take().expect("child 仍存在");
+                    drop(state);
+                    terminate_child(&mut child);
+                    wait_error = Some(format!("等待插件操作失败: {error}"));
+                    break None;
+                }
             }
             drop(state);
             thread::sleep(POLL_INTERVAL);
         };
-        self.active.lock().unwrap().take();
 
         let _ = stdout_handle.join();
         let _ = stderr_handle.join();
+        self.active.lock().unwrap().take();
+
+        if let Some(error) = wait_error {
+            return Err(error);
+        }
+
         let output = output.lock().unwrap().clone();
 
         match status {
@@ -232,12 +259,39 @@ impl PluginOps {
     }
 }
 
-fn collect_stream(stream: impl std::io::Read + Send + 'static, output: Arc<Mutex<Vec<String>>>) {
+fn terminate_child(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        let pid = child.id() as i32;
+        unsafe {
+            libc::kill(-pid, libc::SIGKILL);
+        }
+    }
+    #[cfg(windows)]
+    {
+        let pid = child.id().to_string();
+        let _ = Command::new("taskkill")
+            .args(["/PID", pid.as_str(), "/T", "/F"])
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+fn collect_stream(
+    stream: impl std::io::Read + Send + 'static,
+    output: Arc<Mutex<Vec<String>>>,
+    logger: Arc<dyn Fn(&str) + Send + Sync>,
+) {
     let reader = BufReader::new(stream);
     for line in reader.lines().map_while(Result::ok) {
         let line = line.trim_end().to_string();
         if !line.is_empty() {
-            output.lock().unwrap().push(line);
+            {
+                let mut lines = output.lock().unwrap();
+                lines.push(line.clone());
+            }
+            logger(&line);
         }
     }
 }
@@ -257,7 +311,12 @@ fn validate_value(label: &str, value: &str) -> Result<(), String> {
 
 fn validate_profile(profile: &str) -> Result<(), String> {
     validate_value("profile", profile)?;
-    if profile == "." || profile == ".." || profile.contains('/') || profile.contains('\\') {
+    if profile == "."
+        || profile == ".."
+        || profile == "node_modules"
+        || profile.contains('/')
+        || profile.contains('\\')
+    {
         return Err("profile 名称无效".to_string());
     }
     Ok(())
@@ -273,6 +332,7 @@ mod tests {
     use super::*;
     use std::fs;
     use std::path::{Path, PathBuf};
+    use std::sync::{Arc, Mutex};
     use std::thread;
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -484,6 +544,45 @@ process.stderr.write("stderr from fake dsh\n");
             .is_err());
         assert!(ops
             .remove_profile_plugin(&node, dsh, home, "web", "..")
+            .is_err());
+    }
+
+    #[test]
+    fn with_logger_receives_plugin_output_lines() {
+        let root = temp_root("logger");
+        let home = setup_profile(&root, "web");
+        let fake_dsh = write_script(
+            &root,
+            "fake-dsh.js",
+            &fake_dsh_install_script(&root.join("result.json")),
+        );
+        let logged = Arc::new(Mutex::new(Vec::new()));
+        let ops_logger = logged.clone();
+        let ops = PluginOps::new().with_logger(move |line| {
+            ops_logger.lock().unwrap().push(line.to_string());
+        });
+
+        let result = ops
+            .update_profile_plugins(&node_path(), &fake_dsh, &home, "web")
+            .unwrap();
+
+        assert!(result.ok);
+        let logged = logged.lock().unwrap();
+        assert!(logged.iter().any(|line| line == "stdout from fake dsh"));
+        assert!(logged.iter().any(|line| line == "stderr from fake dsh"));
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn profile_named_node_modules_is_rejected() {
+        let ops = PluginOps::new();
+        let node = node_path();
+        let dsh = Path::new("fake-dsh.js");
+        let home = Path::new("/tmp");
+
+        assert!(ops
+            .install_profile_plugin(&node, dsh, home, "node_modules", "pkg")
             .is_err());
     }
 }

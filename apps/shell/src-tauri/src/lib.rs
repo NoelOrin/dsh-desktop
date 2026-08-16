@@ -1165,6 +1165,10 @@ pub fn run() {
                 }
             }
 
+            let logger_app = app_handle.clone();
+            let logger_inner = inner.clone();
+            let logger_path = log_path.clone();
+
             let manager = DshManager {
                 app: app_handle.clone(),
                 inner: inner.clone(),
@@ -1178,7 +1182,16 @@ pub fn run() {
                 profile_state_path: app_data.join("profile-state.json"),
                 startup_context: None,
                 start_in_tray: start_in_tray.clone(),
-                plugin_ops: plugin_ops::PluginOps::new(),
+                plugin_ops: {
+                    plugin_ops::PluginOps::new().with_logger(move |line| {
+                        append_line(
+                            &logger_app,
+                            &logger_inner,
+                            &logger_path,
+                            &format!("[plugin] {line}"),
+                        );
+                    })
+                },
                 managed_dsh_url: managed_dsh_url.clone(),
                 host_token: host_token.clone(),
             };

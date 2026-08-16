@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Bug Fixes
+
+- [PR #6](https://github.com/NoelOrin/dsh-desktop/pull/6)：修复 release workflow 自动 dispatch 无法推断仓库的问题
+
 ## [0.4.0] - 2026-08-16
 
 ### Features

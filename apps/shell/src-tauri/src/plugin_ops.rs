@@ -3,7 +3,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -37,11 +37,18 @@ struct RunningOp {
     cancelled: Arc<AtomicBool>,
 }
 
+struct PluginOpsState {
+    active: Mutex<Option<Arc<RunningOp>>>,
+    changed: Condvar,
+    #[cfg(test)]
+    cancel_wait_started: AtomicBool,
+}
+
 /// 当前唯一的 dsh plugin 操作运行器。
 #[derive(Clone)]
 pub struct PluginOps {
-    active: Arc<Mutex<Option<RunningOp>>>,
     logger: Arc<dyn Fn(&str) + Send + Sync>,
+    state: Arc<PluginOpsState>,
 }
 
 impl Default for PluginOps {
@@ -53,15 +60,20 @@ impl Default for PluginOps {
 impl PluginOps {
     pub fn new() -> Self {
         Self {
-            active: Arc::new(Mutex::new(None)),
             logger: Arc::new(|_| {}),
+            state: Arc::new(PluginOpsState {
+                active: Mutex::new(None),
+                changed: Condvar::new(),
+                #[cfg(test)]
+                cancel_wait_started: AtomicBool::new(false),
+            }),
         }
     }
 
     pub fn with_logger(self, logger: impl Fn(&str) + Send + Sync + 'static) -> Self {
         Self {
-            active: self.active,
             logger: Arc::new(logger),
+            state: self.state,
         }
     }
 
@@ -128,24 +140,46 @@ impl PluginOps {
 
     /// 当前是否有运行中的插件操作。
     pub fn is_busy(&self) -> bool {
-        self.active.lock().unwrap().is_some()
+        self.state.active.lock().unwrap().is_some()
     }
 
     /// 取消当前操作；active 槽位保留到 run_operation 完成输出收集后再清理。
     pub fn cancel_current(&self) -> Result<(), String> {
-        let (child, cancelled) = {
-            let active = self.active.lock().unwrap();
-            let Some(running) = active.as_ref() else {
-                return Ok(());
-            };
-            (running.child.clone(), running.cancelled.clone())
+        let running = {
+            let active = self.state.active.lock().unwrap();
+            active.as_ref().cloned()
         };
-        cancelled.store(true, Ordering::SeqCst);
-        let child = child.lock().unwrap().take();
+        let Some(running) = running else {
+            return Ok(());
+        };
+        running.cancelled.store(true, Ordering::SeqCst);
+        let child = running.child.lock().unwrap().take();
         if let Some(mut child) = child {
             terminate_child(&mut child);
         }
+        self.wait_for_cleanup(&running);
         Ok(())
+    }
+
+    fn clear_active(&self) {
+        let mut active = self.state.active.lock().unwrap();
+        let had_active = active.take().is_some();
+        drop(active);
+        if had_active {
+            self.state.changed.notify_all();
+        }
+    }
+
+    fn wait_for_cleanup(&self, running: &Arc<RunningOp>) {
+        let mut active = self.state.active.lock().unwrap();
+        while active
+            .as_ref()
+            .map_or(false, |current| Arc::ptr_eq(current, running))
+        {
+            #[cfg(test)]
+            self.state.cancel_wait_started.store(true, Ordering::SeqCst);
+            active = self.state.changed.wait(active).unwrap();
+        }
     }
 
     fn run_operation(
@@ -174,14 +208,14 @@ impl PluginOps {
         }
 
         let (child_state, cancelled) = {
-            let mut active = self.active.lock().unwrap();
+            let mut active = self.state.active.lock().unwrap();
             if active.is_some() {
                 return Err(BUSY_MESSAGE.to_string());
             }
-            let running = RunningOp {
+            let running = Arc::new(RunningOp {
                 child: Arc::new(Mutex::new(None)),
                 cancelled: Arc::new(AtomicBool::new(false)),
-            };
+            });
             let child_state = running.child.clone();
             let cancelled = running.cancelled.clone();
             active.replace(running);
@@ -191,7 +225,7 @@ impl PluginOps {
         let mut child = match command.spawn() {
             Ok(child) => child,
             Err(error) => {
-                self.active.lock().unwrap().take();
+                self.clear_active();
                 return Err(format!("无法启动插件操作: {error}"));
             }
         };
@@ -203,7 +237,7 @@ impl PluginOps {
             if cancelled.load(Ordering::SeqCst) {
                 drop(state);
                 terminate_child(&mut child);
-                self.active.lock().unwrap().take();
+                self.clear_active();
                 return Err(CANCELLED_MESSAGE.to_string());
             }
             *state = Some(child);
@@ -248,7 +282,7 @@ impl PluginOps {
 
         let _ = stdout_handle.join();
         let _ = stderr_handle.join();
-        self.active.lock().unwrap().take();
+        self.clear_active();
 
         if let Some(error) = wait_error {
             return Err(error);
@@ -521,7 +555,7 @@ process.stderr.write("stderr from fake dsh\n");
     }
 
     #[test]
-    fn cancel_current_keeps_active_until_cleanup_finishes() {
+    fn cancel_current_waits_for_cleanup_and_new_operation_starts() {
         let root = temp_root("cancel-active");
         let home = setup_profile(&root, "web");
         let fake_dsh = write_script(&root, "slow.js", LONG_RUNNING_SCRIPT);
@@ -550,13 +584,37 @@ process.stderr.write("stderr from fake dsh\n");
             thread::sleep(Duration::from_millis(2));
         }
 
-        ops.cancel_current().unwrap();
+        let cancel_ops = ops.clone();
+        let cancel_handle = thread::spawn(move || cancel_ops.cancel_current());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !ops
+            .state
+            .cancel_wait_started
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            assert!(
+                Instant::now() < deadline,
+                "cancel_current 未进入等待清理状态"
+            );
+            thread::sleep(Duration::from_millis(2));
+        }
         assert!(ops.is_busy(), "取消后旧操作清理完成前应保持忙碌");
 
         release_tx.send(()).unwrap();
+        assert!(cancel_handle.join().unwrap().is_ok());
         let error = handle.join().unwrap().unwrap_err();
         assert!(error.contains("已取消"));
-        assert!(!ops.is_busy());
+        assert!(!ops.is_busy(), "cancel_current 返回后 active 槽位应已清空");
+
+        let fast_fake_dsh = write_script(
+            &root,
+            "after-cancel.js",
+            &fake_dsh_install_script(&root.join("after-cancel.json")),
+        );
+        let result = ops
+            .install_profile_plugin(&node_path(), &fast_fake_dsh, &home, "web", "pkg")
+            .unwrap();
+        assert!(result.ok, "取消清理完成后应立即允许新操作");
 
         fs::remove_dir_all(&root).ok();
     }

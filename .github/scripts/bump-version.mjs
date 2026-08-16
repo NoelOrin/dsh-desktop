@@ -27,10 +27,13 @@ function previousTag() {
 
 function commitsSince(tag) {
   const range = tag ? `${tag}..HEAD` : "HEAD";
-  return run(`git log ${range} --pretty=%s`)
+  return run(`git log ${range} --pretty=format:%H%x00%s`)
     .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
+    .map((line) => {
+      const [sha, message] = line.split("\0");
+      return { sha: sha.trim(), message: (message ?? "").trim() };
+    })
+    .filter((entry) => entry.message);
 }
 
 function pushReleaseWithTag(version) {
@@ -38,9 +41,14 @@ function pushReleaseWithTag(version) {
   execSync(`git push --atomic origin HEAD:release v${version}`, { stdio: "inherit" });
 }
 
+function messageOf(entry) {
+  return typeof entry === "string" ? entry : entry.message;
+}
+
 function resolveLevel(messages) {
   let level = "patch";
-  for (const message of messages) {
+  for (const entry of messages) {
+    const message = messageOf(entry);
     if (/BREAKING CHANGE|^[a-z]+(\([^)]*\))?!:/.test(message)) return "major";
     if (/^feat(\([^)]*\))?:/.test(message)) level = "minor";
   }
@@ -55,23 +63,65 @@ function increment(version, level) {
   return `${base[0]}.${base[1]}.${base[2] + 1}`;
 }
 
+function prSuffix(entry) {
+  if (!entry.sha) return "";
+  if (/\(#\d+\)/.test(entry.message)) return "";
+  if (!process.env.GH_TOKEN || !process.env.GITHUB_REPOSITORY) return "";
+
+  try {
+    const number = run(
+      `gh api "repos/${process.env.GITHUB_REPOSITORY}/commits/${entry.sha}/pulls" --jq '.[0].number'`,
+    );
+    return /^\d+$/.test(number) ? ` (#${number})` : "";
+  } catch {
+    return "";
+  }
+}
+
+function extractUnreleased(existing) {
+  const lines = existing.split("\n");
+  const start = lines.findIndex((line) => line.trim() === "## [Unreleased]");
+  if (start === -1) return { notes: [], remaining: existing };
+
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i += 1) {
+    if (lines[i].startsWith("## [")) {
+      end = i;
+      break;
+    }
+  }
+
+  const notes = lines
+    .slice(start + 1, end)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("- ") || line.startsWith("* "));
+  const remaining = [...lines.slice(0, start), ...lines.slice(end)]
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return { notes, remaining: remaining ? `${remaining}\n` : "# Changelog\n" };
+}
+
 function updateChangelog(version, messages) {
   const date = new Date().toISOString().slice(0, 10);
-  const breaking = messages.filter((message) =>
-    /BREAKING CHANGE|^[a-z]+(\([^)]*\))?!:/.test(message),
+  const entries = messages.map((entry) =>
+    typeof entry === "string" ? { message: entry, sha: "" } : entry,
   );
-  const features = messages.filter(
-    (message) => /^feat(\([^)]*\))?:/.test(message) && !breaking.includes(message),
+  const breaking = entries.filter((entry) =>
+    /BREAKING CHANGE|^[a-z]+(\([^)]*\))?!:/.test(entry.message),
   );
-  const fixes = messages.filter(
-    (message) => /^fix(\([^)]*\))?:/.test(message) && !breaking.includes(message),
+  const features = entries.filter(
+    (entry) => /^feat(\([^)]*\))?:/.test(entry.message) && !breaking.includes(entry),
   );
-  const other = messages.filter(
-    (message) =>
-      /^[a-z]+(\([^)]*\))?:/.test(message) &&
-      !breaking.includes(message) &&
-      !features.includes(message) &&
-      !fixes.includes(message),
+  const fixes = entries.filter(
+    (entry) => /^fix(\([^)]*\))?:/.test(entry.message) && !breaking.includes(entry),
+  );
+  const other = entries.filter(
+    (entry) =>
+      /^[a-z]+(\([^)]*\))?:/.test(entry.message) &&
+      !breaking.includes(entry) &&
+      !features.includes(entry) &&
+      !fixes.includes(entry),
   );
 
   const sections = [];
@@ -79,16 +129,31 @@ function updateChangelog(version, messages) {
   if (features.length > 0) sections.push(["Features", features]);
   if (fixes.length > 0) sections.push(["Bug Fixes", fixes]);
   if (other.length > 0) sections.push(["Other", other]);
-  if (sections.length === 0) return;
+
+  const existingRaw = existsSync(changelogPath)
+    ? readFileSync(changelogPath, "utf8")
+    : "# Changelog\n";
+  const { notes: unreleasedNotes, remaining: existing } = extractUnreleased(existingRaw);
+  if (sections.length === 0 && unreleasedNotes.length === 0) return;
 
   const lines = [`## [${version}] - ${date}`, ""];
   for (const [title, items] of sections) {
-    lines.push(`### ${title}`, "", ...items.map((message) => `- ${message}`), "");
+    lines.push(
+      `### ${title}`,
+      "",
+      ...items.map((entry) => `- ${entry.message}${prSuffix(entry)}`),
+      "",
+    );
   }
+  if (unreleasedNotes.length > 0) {
+    lines.push("### Pending Updates", "", ...unreleasedNotes, "");
+  }
+
   const block = lines.join("\n");
-  const existing = existsSync(changelogPath)
-    ? readFileSync(changelogPath, "utf8")
-    : "# Changelog\n";
+  if (existing.includes(`## [${version}]`)) {
+    console.log(`changelog already contains ${version}, skip update`);
+    return;
+  }
   const next = existing.startsWith("# Changelog")
     ? existing.replace("# Changelog\n", `# Changelog\n\n${block}`)
     : `# Changelog\n\n${block}${existing}`;

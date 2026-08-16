@@ -15,6 +15,7 @@ import { spawnSync } from "node:child_process";
  *   ⑤ 传入 --home <path> 时，再把插件包原子复制进 dsh profile，
  *      供开发环境的 dsh-client-hmr 热更新
  *   ⑥ 装配成功后自动清理 resources 与 profile 中已不存在的插件旧产物
+ *   ⑦ 把 packages/external-plugins/*.json 复制到 resources/external-plugins/，随 Tauri 包分发
  * 任一步失败 → 非零退出。
  *
  * 运行：
@@ -29,6 +30,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 const PLUGINS_DIR = path.join(ROOT, "packages", "plugins");
 const RESOURCES_DIR = path.join(ROOT, "apps", "shell", "src-tauri", "resources", "plugins");
+const EXTERNAL_PLUGINS_DIR = path.join(ROOT, "packages", "external-plugins");
+const EXTERNAL_RESOURCES_DIR = path.join(
+  ROOT,
+  "apps",
+  "shell",
+  "src-tauri",
+  "resources",
+  "external-plugins",
+);
 
 /** dist 清单白名单字段：其余（依赖/scripts/private/packageManager/types...）一律剔除。 */
 const KEEP_FIELDS = new Set([
@@ -123,6 +133,23 @@ export function pruneStaleProfilePackages(home, expectedNames) {
     removed.push(name);
   }
   return removed.sort();
+}
+
+/** 把外部远程插件预设 JSON 装配进 Tauri resources，随安装包分发。 */
+export function assembleExternalPresets(
+  sourceDir = EXTERNAL_PLUGINS_DIR,
+  targetDir = EXTERNAL_RESOURCES_DIR,
+) {
+  fs.rmSync(targetDir, { recursive: true, force: true });
+  if (!fs.existsSync(sourceDir)) return [];
+  fs.mkdirSync(targetDir, { recursive: true });
+  const copied = [];
+  for (const entry of fs.readdirSync(sourceDir)) {
+    if (path.extname(entry).toLowerCase() !== ".json") continue;
+    fs.copyFileSync(path.join(sourceDir, entry), path.join(targetDir, entry));
+    copied.push(entry);
+  }
+  return copied.sort();
 }
 
 function parseArgs(args) {
@@ -246,6 +273,13 @@ function main() {
   const removedResources = pruneStaleResources(RESOURCES_DIR, expectedDirs);
   if (removedResources.length > 0) {
     console.log(`[build-plugins] 已清理旧 resources 产物: ${removedResources.join(", ")}`);
+  }
+
+  const externalPresets = assembleExternalPresets();
+  if (externalPresets.length === 0) {
+    console.warn("[build-plugins] 未发现外部远程插件预设，resources/external-plugins 已清空");
+  } else {
+    console.log(`[build-plugins] 已装配外部预设: ${externalPresets.join(", ")}`);
   }
 
   if (home) {

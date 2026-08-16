@@ -42,14 +42,16 @@ DSH Desktop 是 dsh 的桌面套壳：Rust 后端拉起 `dsh web` 子进程，�
 
 | 项 | 说明 |
 | --- | --- |
-| 运行位置 | Rust 后端（`apps/shell/src-tauri`）+ 两个本地 WebView 窗口 |
+| 运行位置 | Rust 后端（`apps/shell/src-tauri`）+ 一个 main WebView 窗口（启动页与 dsh Web UI 共用） |
 | 职责 | 检测/安装/拉起/监控/停止 dsh 子进程；窗口/菜单/全局快捷键；应用数据目录；`config.json`；原生交互（打开日志目录）；打包分发 |
 | 已声明能力 | capabilities `core:default` + `global-shortcut:default`（覆盖 main 窗口） |
-| 实现契约 | `get_status` / `install_dsh` / `restart` / `open_log_directory` / `get_config` / `set_config` / `get_ui_theme` / `window_action`（类型与常量见 `packages/contracts`） |
-| 配置 | `config.json`（应用数据目录）与 `desktop-settings.json`（自启/启动模式）→ 环境变量（`DSH_BIN`/ `DSH_NODE`/ `DSH_HOME`）→ PATH 检测（合并进程、macOS/Linux/Windows 系统 PATH 与非 Windows shell PATH） |
+| 实现契约 | native IPC 类型与常量见 `packages/contracts`，完整命令清单见 `apps/shell/src-tauri/AGENTS.md`；bridge client 实际消费的 profile / 远程插件 / 受管插件命令为 `get_profiles` / `get_active_profile` / `select_profile` / `get_remote_plugins` / `set_remote_plugins` / `sync_remote_plugins` / `get_installed_plugins` / `install_profile_plugin` / `remove_profile_plugin` / `update_profile_plugins` |
+| 局域网访问 | `get_lan_proxy` / `set_lan_proxy` / `start_lan_proxy` / `stop_lan_proxy`，配置存 `lan-proxy.json`，由 Rust 受管子进程启动内嵌 `lan-proxy.mjs` |
+| 配置 | `config.json`（应用数据目录，含 `remote_plugins_path` 外部预设文件或目录与 `remote_plugins` 本地分组预设）与 `desktop-settings.json`（自启/启动模式）→ 环境变量（`DSH_BIN`/ `DSH_NODE`/ `DSH_HOME`/ `DSH_DESKTOP_REMOTE_PLUGINS_PATH`）→ PATH 检测（合并进程、macOS/Linux/Windows 系统 PATH 与非 Windows shell PATH） |
+| 局域网配置 | `lan-proxy.json`（bind/port/target），与 `config.json` 独立，无 token 门禁，仅限可信网络 |
 
 **红线**：Tauri 壳不实现任何 dsh 产品功能——不做 agent、不做工具、不接 LLM、
-不解析 dsh 的配置树、**不重复实现 dsh 的插件管理**。这些永远是 dsh 自己的事。
+不解析 dsh 的完整配置树、**不实现 dsh 的插件清单/配置树解析**。profile 发现只做最小 manifest 校验（bundle 顺序 / direct dependencies），具体安装、更新与配置变更仍交给 `dsh plugin` 与 dsh 自己。
 
 ### 2.3 二期新增能力边界
 
@@ -79,8 +81,8 @@ dsh 产品逻辑仍由 dsh 官方或自定义 cordis 插件提供。
 | ❌ 不要做 | 原因 |
 | --- | --- |
 | 在 Tauri 侧重复实现 agent 循环 / 工具注册 / LLM 调用 | 那是 dsh 插件的职责，壳只负责拉起进程 |
-| 在 Tauri 侧解析 dsh 的 profile / patch 配置树 | 配置树归 dsh 管，壳应通过 `dsh` 命令/契约获取结果 |
-| 在 Tauri 侧重复实现 dsh 的插件管理（清单/安装/设置 UI） | dsh 的插件管理**本身就是 cordis 插件**（`dsh-host-plugin-inventory`、`dsh-client-ui-settings-plugin-inventory` 等，由 `dsh-web-app` 装配），壳侧直接消费 dsh web 现成界面 |
+| 在 Tauri 侧解析 dsh 的 profile / patch 配置树 | 完整配置树归 dsh 管，壳只允许最小 manifest 校验（bundle 顺序 / 已安装依赖摘要），安装/更新走 `dsh plugin` |
+| 在 Tauri 侧重复实现 dsh 的插件清单/安装 UI | dsh 内部插件清单与安装 UI 由 dsh 现成 cordis 插件提供；壳侧只补充远程插件预设、受管 add/remove/update 与已安装依赖摘要，不接管 dsh 内部清单 |
 | 在 dsh 插件里直接读 `config.json`、开原生窗口/对话框 | 那是壳的能力，插件默认拿不到；只能通过本仓库桥接插件 + 已声明命令 + 端口白名单（见 §5/§6） |
 | 前端直接 import 另一个模块的内部实现 | native 跨界数据走 `packages/contracts` 命令/事件；桥接命令由 `packages/plugins/bridge` 自持 |
 | 新增 IPC 却不改 capabilities 声明 | 权限收口，新增能力必须同步声明 |
@@ -107,7 +109,7 @@ IPC 命令与事件**。本包只负责 **native 内容**：dsh 运行态的检�
 1. `packages/contracts/src/index.ts` — TS 类型与常量（唯一源头）
 2. `apps/shell/src-tauri/src/lib.rs`（及 `config.rs`）— Rust serde 类型
 3. `apps/shell/src/main.ts` — main 窗口前端
-4. `packages/plugins/bridge/src/client.tsx` — bridge 插件 client 面（桌面壳设置 UI）
+4. 若该能力需要从 dsh web 调用，再同步 `packages/plugins/bridge` 的桥接类型、`capabilities/bridge.json` 与其 AGENTS；不是所有 native 命令都进入 bridge 白名单
 
 字段命名统一 snake_case（Rust serde `rename_all = "snake_case"`，TS 侧直接写
 snake_case）。
@@ -133,7 +135,7 @@ snake_case）。
 
 本仓库自己的桥接插件要调用 Tauri 壳能力，按以下顺序收紧，而不是一刀切开放：
 
-1. 在桥接插件（`packages/plugins/bridge`）内定义**最小化桥接命令**（例如 `pick_directory`），
+1. 在桥接插件（`packages/plugins/bridge`）内定义**最小化桥接命令**（例如 `get_status` / `get_remote_plugins`），
    **契约由桥接插件自持**，Rust 侧在 `capabilities/bridge.json` 声明实现与权限——
    不写进 `packages/contracts`（contracts 只负责 native 内容，不负责桥接）。
 2. 在 capabilities 的 `remote.urls` 里只允许 loopback，并在 Rust 导航/注入侧校验
@@ -157,22 +159,25 @@ snake_case）。
 | bridge 唯一职责 | 让 dsh 插件/页面能调用 Tauri 壳能力（桥接命令契约由 bridge 自持 + §5 端口白名单） |
 | 消费者 | dsh web 内的插件/页面 |
 | 依赖方向 | 依赖 `@deepseek-ai/cordis` 等 dsh 生态包；**不依赖 `@dsh-desktop/contracts`**（native 契约与桥接契约分离） |
-| 安装 | **内嵌装配（主交付路径）**：`yarn build:plugins` 编译打包进 Tauri resources，桌面应用启动时复制到 `$DSH_HOME/profiles/node_modules/` 兜底目录并以 `--patch` overlay 挂载——不写 profile manifest、卸载后 dsh 配置无引用残留；开发期用 `dsh plugin --profile web add <包>` 单独安装 |
+| 安装 | **内嵌装配（主交付路径）**：`yarn build:plugins` 编译打包进 Tauri resources，桌面应用启动时复制到 `$DSH_HOME/profiles/node_modules/` 兜底目录并以 `--patch` overlay 挂载——不写 profile manifest、卸载后 dsh 配置无引用残留；开发期用 `dsh plugin --profile <active> add <包>` 单独安装 |
 
 **约定**：
 
 - 本包**不做业务**：它只负责“能调用 Tauri 能力”这件事本身；具体能力（读配置、开目录
   等）由壳侧已声明的命令实现，桥接层只做转发与类型化。
-- **插件管理不是本包的职责**：dsh 的插件管理（清单、安装/卸载 UI、设置页）已经是
-  dsh 现成的 cordis 插件（`dsh-host-plugin-inventory` /
+- **插件管理边界**：dsh 内部插件清单与安装 UI 仍是 dsh 现成的 cordis 插件（`dsh-host-plugin-inventory` /
   `dsh-client-ui-settings-plugin-inventory` / `dsh-client-ui-settings-plugins`），
-  由 `dsh-web-app` 装配，壳侧与本包都不重复实现。
+  由 `dsh-web-app` 装配；bridge 只补充壳侧远程插件预设、受管 add/remove/update 与已安装依赖摘要，不接管 dsh 内部清单。
+- **界面模式归属**：bridge host 注册 `dsh-desktop.mode`（`compatibility` / `advanced`），client 根据 URL 的 `dsh-desktop-mode` 分发兼容/高级桌面形态；Rust 只读取该值并注入 URL/环境，不复制高级 UI。
 - **开机自启设置项归属（示例）**：自启开关与 `startupMode` 由壳侧持久化（应用数据目录的
   `desktop-settings.json`），bridge client 经 `desktop.get()` / `desktop.set()` 调
   `get_desktop_settings` / `set_desktop_settings` 读写；OS 级启停由 autostart 插件执行——
   均属 **Tauri 壳域**。不使用 dsh settings 的 `desktop` 命名空间，因为 dsh Web 配置接口
   对其返回 `settings-not-exposed`。
-- **外观设置项归属（本计划新增）**：bridge client 面复用上游已注册的 `ui-theme` 命名空间，
+- **局域网访问设置项归属**：代理配置存 `lan-proxy.json`，启停由 Rust 受管子进程管理；bridge client 经
+  `lanProxy.get()` / `set()` / `start()` / `stop()` 调 `get_lan_proxy` / `set_lan_proxy` /
+  `start_lan_proxy` / `stop_lan_proxy` 控制，均属 **Tauri 壳域**。
+- **外观设置项归属**：bridge client 面复用上游已注册的 `ui-theme` 命名空间，
   只 bind 不注册，渲染“外观”设置节（主题偏好 / 主题库 / 背景图 / 玻璃透明度 / 自定义主题 /
   排版），快照本地生效并防抖写回 Host——属 **dsh 插件域**；壳侧 `get_ui_theme` /
   `dsh-ui-theme` 只负责启动页与窗口背景的只读跟随——属 **Tauri 壳域**。
@@ -195,7 +200,7 @@ snake_case）。
 2. **装配（Rust `apps/shell/src-tauri/src/embedded.rs`）**：应用启动时
    `embedded::prepare_overlay` 统一调用 `assemble` / `assemble_dev` 并生成 overlay，遍历 resources 里每个含 `dshDesktop.id` 的插件包，复制进
    `$DSH_HOME/profiles/node_modules/@dsh-desktop/<name>/`（dsh 的 profile 模块兜底目录）——
-   以版本号为键幂等（缺失或版本不同才重装）、临时目录 + rename 原子替换、单包失败只记日志
+   以文件内容一致性幂等（缺失或内容不同才重装）、临时目录 + rename 原子替换、单包失败只记日志
    跳过；随后在应用数据目录生成 `embedded-plugins.patch.yml`（`- insert:`
    行，插件名**必须单引号**——`@` 是 YAML 1.1 保留指示符；声明 `dshDesktop.overlay: true`
    的插件会把包内 `cordis.patch.yml` 原样写入 overlay，用于同时停用/替换官方插件行）。
@@ -203,13 +208,19 @@ snake_case）。
    `resource_dir()` 指向 `target/<profile>`，因此 Rust 侧经 `plugins_resource_dir()` 显式回退到
    源码 `apps/shell/src-tauri/resources`，发布模式仍读取应用资源目录；开发模式另经
    `assemble_dev` 忽略版本号、每次启动强制重装，避免插件代码更新但版本号未变时仍加载旧产物。
-3. **挂载**：桌面壳以 `dsh web --patch <overlay> --host 127.0.0.1 --port <port>` 拉起子进程，
+3. **挂载**：桌面壳以 `dsh --profile <active> --patch <overlay> --host 127.0.0.1 --port 0` 拉起子进程，
    overlay 的 `- insert:` 行向 profile 插入插件行——host 侧经 dsh 的 loader 装载，client 侧由
    dsh-client-modules 扫描插件 `exports["./client"]` 自动注入。**不写 profile manifest、
-   不下载依赖**（内嵌包已自包含）。
+   不下载依赖**（内嵌包已自包含；远程插件预设走 `dsh plugin add`，不属于这条内嵌路径）。
 
-**Option B 语义**：内嵌插件只随桌面壳的 `--patch` 挂载；**单独运行 `dsh web`（不带 `--patch`）
-不挂载它们**，与 `dsh plugin --profile web add` 的 profile 安装相互独立。停用某个内嵌插件只需
+**远程插件预设**：壳侧 `config.json.remote_plugins` 保存本地分组预设；`remote_plugins_path` 可指向外部 JSON 文件或目录。默认检测 `$DSH_HOME/remote-plugins(.json)`、应用数据目录与仓库 `packages/external-plugins`。外部目录中每个顶层 `*.json` 文件代表一个 group，文件内为 URL/git 预设；外部预设固定只读。启动时对 active profile 依次执行 `dsh plugin --profile <active> add <url>`，失败只记日志并继续启动。bridge 的“插件”设置节提供分组预设、整组同步、已安装依赖列表、移除与更新操作。远程预设会写 profile manifest，与内嵌 Option B 相互独立。
+
+外部预设可选 `allow_build` 数组；声明后会以 `dsh plugin --profile <active> add --allow-build <package> ... <url>` 安装，用于放行 GitHub/git 插件的构建脚本。若预设未声明 `allow_build`，则按 pnpm 默认策略拒绝运行构建脚本。
+
+构建时 `yarn build:plugins` 会把 `packages/external-plugins/*.json` 装配到 `resources/external-plugins/` 并随 Tauri 包分发；发布模式检测顺序为 `$DSH_HOME/remote-plugins(.json)`、应用数据目录、随包 `resources/external-plugins`，开发模式再回退到仓库目录。
+
+**Option B 语义**：内嵌插件只随桌面壳的 `--patch` 挂载；**单独运行 `dsh`（不带 `--patch`）
+不挂载它们**，与 `dsh plugin --profile <active> add` 的 profile 安装相互独立。停用某个内嵌插件只需
 从 `packages/plugins` 删除对应插件，下次 `yarn build:plugins` 会自动清理 resources 中的旧目录
 （`--home` 同时清理 profile 旧包）；不修改 profile manifest，dsh 配置里无引用残留。
 
@@ -224,7 +235,7 @@ client 声明仍需要重启 dsh。
 **注意（行 id 去重）**：桌面 overlay 的 `- insert:` 行由 `write_overlay` **追加**，
 不校验 profile 中是否已存在同名插件行（声明 `dshDesktop.overlay: true` 的插件例外，
 其 `cordis.patch.yml` 是作者自持的完整 overlay）。若把同一插件既内嵌挂载、又经
-`dsh plugin --profile web add <包>` 装进 profile，叠加后会出现**重复行 id**（同一插件行被
+`dsh plugin --profile <active> add <包>` 装进 profile，叠加后会出现**重复行 id**（同一插件行被
 插入两次）。因此**桌面内嵌装配是唯一规范路径**：对同一插件不要同时走 profile 安装与内嵌挂载。
 
 ## 7. 新增能力走哪条路（变更流程）
@@ -233,7 +244,7 @@ client 声明仍需要重启 dsh。
 
 **A. 扩展 dsh 产品行为（含插件管理）**
 → 开发 cordis 插件包（`dsh.bundle` + `cordis.patch.yml`），用
-`dsh plugin --profile web add <包>` 安装到用户 profile；壳侧无改动。
+`dsh plugin --profile <active> add <包>` 安装到用户 profile；壳侧无改动。
 
 **B. 扩展桌面壳能力**
 → Rust 后端新增逻辑 + `packages/contracts` 声明契约 + capabilities 声明权限 +

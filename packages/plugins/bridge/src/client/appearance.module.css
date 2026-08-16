@@ -6,25 +6,6 @@
 
 /* ── 主题库 ─────────────────────────────────────────────── */
 
-.library {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.libraryToolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.librarySummary {
-  color: var(--dsw-alias-label-secondary);
-  font-size: 12px;
-}
-
 .themeGrid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
@@ -37,6 +18,15 @@
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: 8px;
   background: var(--dsw-alias-bg-layer-1);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--dsw-alias-label-primary) 4%, transparent);
+  transition:
+    border-color var(--ds-transition-duration-fast, 0.1s) ease,
+    box-shadow var(--ds-transition-duration-fast, 0.1s) ease;
+}
+
+.themeCard:hover {
+  border-color: var(--dsw-alias-border-l2);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--dsw-alias-label-primary) 9%, transparent);
 }
 
 .themePreview {
@@ -59,6 +49,15 @@
   font: inherit;
   text-align: left;
   cursor: pointer;
+  transition: box-shadow var(--ds-transition-duration-fast, 0.1s) ease;
+}
+
+.themeHalf:first-child {
+  border-right: 1px solid var(--dsw-alias-border-l1);
+}
+
+.themeHalf:hover {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 18%, transparent);
 }
 
 .themeHalf:focus-visible {
@@ -119,13 +118,18 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   border-radius: 999px;
   background: var(--dsw-alias-brand-primary);
   color: var(--dsw-alias-label-primary-foreground);
-  font-size: 11px;
-  line-height: 1;
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--dsw-alias-brand-primary) 24%, transparent);
+}
+
+.themeBadge svg {
+  width: 14px;
+  height: 14px;
+  display: block;
 }
 
 .themeCardFoot {
@@ -170,6 +174,7 @@
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 8px;
   background-color: var(--dsw-alias-bg-layer-1);
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--dsw-alias-label-primary) 6%, transparent);
   object-fit: cover;
   object-position: center;
 }
@@ -179,7 +184,7 @@
   align-items: center;
   justify-content: center;
   width: 100%;
-  height: 96px;
+  height: 104px;
   border: 1px dashed var(--dsw-alias-border-l2);
   border-radius: 8px;
   background: var(--dsw-alias-bg-layer-1);
@@ -198,7 +203,7 @@
 .glassStage {
   position: relative;
   overflow: hidden;
-  height: 108px;
+  height: 112px;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 8px;
   background:
@@ -212,7 +217,7 @@
 
 .glassBackdrop {
   position: absolute;
-  inset: 16px;
+  inset: 14px;
   border-radius: 8px;
   background:
     linear-gradient(
@@ -226,8 +231,8 @@
 
 .glassSurface {
   position: absolute;
-  top: 22px;
-  left: 22px;
+  top: 24px;
+  left: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -239,6 +244,7 @@
   color: var(--dsw-alias-label-secondary);
   font-size: 11px;
   box-shadow: 0 4px 16px color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent);
+  backdrop-filter: blur(10px);
 }
 
 /* ── 自定义主题 ─────────────────────────────────────────── */
@@ -254,7 +260,7 @@
   align-items: center;
   gap: 10px;
   min-width: 0;
-  padding: 10px 0;
+  padding: 11px 0;
   border-top: 1px solid var(--dsw-alias-border-l1);
 }
 
@@ -263,6 +269,7 @@
   overflow: hidden;
   color: var(--dsw-alias-label-primary);
   font-size: 13px;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -280,7 +287,8 @@
   padding: 16px;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 8px;
-  background: var(--dsw-alias-bg-layer-1);
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--dsw-alias-label-primary) 3%, transparent);
 }
 
 .editorGrid {
@@ -298,6 +306,7 @@
   padding: 14px;
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
 }
 
 .colorGrid {
@@ -322,6 +331,16 @@
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 6px;
   background: transparent;
+  cursor: pointer;
+}
+
+.colorSwatch::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.colorSwatch::-webkit-color-swatch {
+  border: none;
+  border-radius: 4px;
 }
 
 .colorMeta {
@@ -361,19 +380,6 @@
   font-size: 12px;
 }
 
-.rowHead {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.value {
-  color: var(--dsw-alias-label-secondary);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-
 .input {
   box-sizing: border-box;
   width: 100%;
@@ -411,5 +417,12 @@
 
   .themeRowActions {
     justify-content: flex-start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .themeCard,
+  .themeHalf {
+    transition: none;
   }
 }

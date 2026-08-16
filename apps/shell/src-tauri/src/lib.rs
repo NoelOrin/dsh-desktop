@@ -1,5 +1,5 @@
-use std::collections::{HashMap, VecDeque};
-use std::fs::OpenOptions;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
@@ -16,8 +16,12 @@ mod desktop_settings;
 mod embedded;
 mod host_lifecycle;
 mod inject;
+mod lan_proxy;
+mod mode;
 mod notifications;
+pub mod plugin_ops;
 mod process;
+mod profiles;
 mod projects;
 mod theme;
 
@@ -58,6 +62,7 @@ const UPDATE_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(600);
 
 static LOG_LOCK: Mutex<()> = Mutex::new(());
 static SHELL_PATH_TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+static REMOTE_PLUGIN_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 // 托盘菜单项 id
 const TRAY_STATUS: &str = "tray-status";
@@ -67,6 +72,9 @@ const TRAY_STOP_DSH: &str = "tray-stop-dsh";
 const TRAY_RESTART_DSH: &str = "tray-restart-dsh";
 const TRAY_SHOW_MAIN: &str = "tray-show-main";
 const TRAY_QUIT: &str = "tray-quit";
+
+/// dsh web 注入校验使用的随机 token 查询参数名。
+const HOST_TOKEN_QUERY_KEY: &str = "dsh_desktop_token";
 
 /// 允许 main 窗口导航到的本地 origin：Tauri 本地页面与固定开发服务器。
 fn is_shell_url(url: &tauri::Url) -> bool {
@@ -88,6 +96,296 @@ fn is_shell_url(url: &tauri::Url) -> bool {
 /// dsh 页面仅允许当前桌面壳托管的 origin，避免任意 loopback 服务复用桥接能力。
 fn is_managed_dsh_url(url: &tauri::Url, managed: Option<&tauri::Url>) -> bool {
     managed.is_some_and(|managed| managed.origin() == url.origin())
+}
+
+/// 生成一次运行使用的 dsh web 注入 token（24 bytes hex）。
+fn generate_host_token() -> String {
+    let mut bytes = [0u8; 24];
+    getrandom::getrandom(&mut bytes).expect("生成 dsh web 注入 token 失败");
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// 生成远程插件预设 id；只在用户新增且未带 id 时使用。
+fn generate_remote_plugin_id() -> String {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    format!(
+        "remote-{nonce:x}-{}",
+        REMOTE_PLUGIN_ID_COUNTER.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
+fn is_valid_remote_plugin_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+}
+
+/// 远程插件预设接受 dsh/pnpm 可安装的 URL 或 git 地址。
+fn validate_remote_plugin_spec(spec: &str) -> Result<(), String> {
+    if spec.trim().is_empty() || spec.chars().any(char::is_control) || spec.len() > 2048 {
+        return Err("远程插件 URL 无效".to_string());
+    }
+    let lower = spec.to_ascii_lowercase();
+    let accepted = [
+        "http://", "https://", "git+", "git@", "ssh://", "github:", "gitlab:",
+    ]
+    .iter()
+    .any(|prefix| lower.starts_with(prefix));
+    if !accepted {
+        return Err("只允许 http(s)、git URL 或 git 主机地址".to_string());
+    }
+    Ok(())
+}
+
+fn normalize_remote_plugins(
+    plugins: Vec<config::RemotePluginPreset>,
+) -> Result<Vec<config::RemotePluginPreset>, String> {
+    let mut seen_ids = HashSet::new();
+    let mut seen_urls = HashSet::new();
+    let mut normalized = Vec::with_capacity(plugins.len());
+    for mut plugin in plugins {
+        plugin.url = plugin.url.trim().to_string();
+        validate_remote_plugin_spec(&plugin.url)?;
+        plugin.group = plugin.group.trim().to_string();
+        if plugin.group.is_empty() {
+            plugin.group = "default".to_string();
+        }
+        if plugin.group.chars().any(char::is_control) || plugin.group.chars().count() > 64 {
+            return Err("远程插件分组无效".to_string());
+        }
+        if plugin.id.trim().is_empty() {
+            plugin.id = generate_remote_plugin_id();
+        } else {
+            plugin.id = plugin.id.trim().to_string();
+        }
+        if !is_valid_remote_plugin_id(&plugin.id) {
+            return Err("远程插件 id 无效".to_string());
+        }
+        if !seen_ids.insert(plugin.id.clone()) {
+            return Err("远程插件 id 重复".to_string());
+        }
+        if !seen_urls.insert(plugin.url.clone()) {
+            return Err("远程插件 URL 重复".to_string());
+        }
+        plugin.source = config::RemotePluginSource::Local;
+        plugin.allow_build = plugin
+            .allow_build
+            .iter()
+            .map(|value| value.trim().to_string())
+            .collect();
+        for package in &plugin.allow_build {
+            if package.is_empty()
+                || package.starts_with('-')
+                || package.chars().any(char::is_control)
+                || package.chars().count() > 512
+            {
+                return Err("远程插件 allow_build 无效".to_string());
+            }
+        }
+        normalized.push(plugin);
+    }
+    Ok(normalized)
+}
+
+/// 外部插件路径优先级：config/env 显式路径 > `$DSH_HOME/remote-plugins` >
+/// 应用数据目录 > 随包 resources/external-plugins（发布模式）> 仓库 `packages/external-plugins`。
+/// 默认路径只有存在时才被检测到。
+fn resolve_external_remote_plugins_path(
+    config: &config::DshConfig,
+    profile_home: &Path,
+    app_data_dir: Option<&Path>,
+    resource_dir: Option<&Path>,
+) -> Option<PathBuf> {
+    if let Some(path) = config
+        .remote_plugins_path
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        return Some(PathBuf::from(path));
+    }
+    let mut candidates = vec![
+        profile_home.join("remote-plugins"),
+        profile_home.join("remote-plugins.json"),
+    ];
+    if let Some(dir) = app_data_dir {
+        candidates.push(dir.join("remote-plugins"));
+        candidates.push(dir.join("remote-plugins.json"));
+    }
+    if !cfg!(debug_assertions) {
+        if let Some(dir) = resource_dir {
+            candidates.push(dir.join("resources").join("external-plugins"));
+        }
+    }
+    candidates
+        .push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../packages/external-plugins"));
+    candidates
+        .into_iter()
+        .find(|candidate| candidate.is_dir() || candidate.is_file())
+}
+
+/// 单个外部 JSON 文件；支持数组、`{ "presets": [...] }` 或单个 `{ "url": ... }`。
+fn load_external_remote_plugins_file(
+    path: &Path,
+    default_group: &str,
+) -> Result<Vec<config::RemotePluginPreset>, String> {
+    let raw = fs::read_to_string(path)
+        .map_err(|error| format!("读取外部远程插件文件失败（{}）：{error}", path.display()))?;
+    let value: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|error| format!("解析外部远程插件文件失败（{}）：{error}", path.display()))?;
+    let entries = if let Some(array) = value.as_array() {
+        array.clone()
+    } else if let Some(array) = value.get("presets").and_then(|value| value.as_array()) {
+        array.clone()
+    } else if value.get("url").is_some() {
+        vec![value]
+    } else {
+        return Err(format!(
+            "外部远程插件文件必须包含数组、presets 数组或单个预设（{}）",
+            path.display()
+        ));
+    };
+    let mut presets = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let has_group = entry
+            .get("group")
+            .and_then(|value| value.as_str())
+            .is_some_and(|group| !group.trim().is_empty());
+        let mut preset: config::RemotePluginPreset = serde_json::from_value(entry)
+            .map_err(|error| format!("外部远程插件条目无效（{}）：{error}", path.display()))?;
+        if !has_group {
+            preset.group = default_group.to_string();
+        }
+        presets.push(preset);
+    }
+    let normalized = normalize_remote_plugins(presets)?;
+    Ok(normalized
+        .into_iter()
+        .map(|mut preset| {
+            preset.source = config::RemotePluginSource::External;
+            preset
+        })
+        .collect())
+}
+
+fn external_group_from_filename(path: &Path) -> String {
+    let group = path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "default".to_string());
+    if group == "remote-plugins" {
+        "default".to_string()
+    } else {
+        group
+    }
+}
+
+/// 读取外部插件路径；文件按文件名作为 group，目录扫描顶层 `*.json` 作为 group。
+fn load_external_remote_plugins_path(
+    path: &Path,
+) -> Result<Vec<config::RemotePluginPreset>, String> {
+    if path.is_file() {
+        let group = external_group_from_filename(path);
+        return load_external_remote_plugins_file(path, &group);
+    }
+    if path.is_dir() {
+        let entries = fs::read_dir(path)
+            .map_err(|error| format!("读取外部远程插件目录失败（{}）：{error}", path.display()))?;
+        let mut files = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|error| {
+                format!("读取外部远程插件目录失败（{}）：{error}", path.display())
+            })?;
+            let file_path = entry.path();
+            if file_path.is_file()
+                && file_path
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
+            {
+                files.push(file_path);
+            }
+        }
+        files.sort();
+        let mut presets = Vec::new();
+        for file in files {
+            let group = external_group_from_filename(&file);
+            presets.extend(load_external_remote_plugins_file(&file, &group)?);
+        }
+        let normalized = normalize_remote_plugins(presets)?;
+        return Ok(normalized
+            .into_iter()
+            .map(|mut preset| {
+                preset.source = config::RemotePluginSource::External;
+                preset
+            })
+            .collect());
+    }
+    Err(format!("外部远程插件路径不存在: {}", path.display()))
+}
+
+/// 外部文件固定预设优先，本地 config 预设去重后追加。
+fn merge_remote_plugins(
+    mut external: Vec<config::RemotePluginPreset>,
+    local: Vec<config::RemotePluginPreset>,
+) -> Vec<config::RemotePluginPreset> {
+    let mut seen = HashSet::new();
+    for preset in &external {
+        seen.insert(preset.url.clone());
+    }
+    for preset in local {
+        if seen.insert(preset.url.clone()) {
+            external.push(preset);
+        }
+    }
+    external
+}
+
+/// 合并外部文件与 config 的有效远程插件预设；显式路径缺失时返回错误。
+fn load_effective_remote_plugins(
+    config: &config::DshConfig,
+    profile_home: &Path,
+    app_data_dir: Option<&Path>,
+    resource_dir: Option<&Path>,
+) -> Result<Vec<config::RemotePluginPreset>, String> {
+    let local = config.remote_plugins.clone();
+    let Some(path) =
+        resolve_external_remote_plugins_path(config, profile_home, app_data_dir, resource_dir)
+    else {
+        return Ok(local);
+    };
+    let external = load_external_remote_plugins_path(&path)?;
+    Ok(merge_remote_plugins(external, local))
+}
+
+/// 构造 dsh 启动参数：以 --profile <active> 开头，不使用 "web" 别名。
+/// overlay 非 None 时追加 --patch <path>。
+fn desktop_platform() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "darwin"
+    } else if cfg!(target_os = "windows") {
+        "win32"
+    } else {
+        "linux"
+    }
+}
+fn dsh_web_args(active: &str, overlay: Option<&Path>) -> Vec<String> {
+    let mut args = vec!["--profile".to_string(), active.to_string()];
+    if let Some(overlay_path) = overlay {
+        args.push("--patch".to_string());
+        args.push(overlay_path.to_string_lossy().into_owned());
+    }
+    args.extend([
+        "--host".to_string(),
+        "127.0.0.1".to_string(),
+        "--port".to_string(),
+        "0".to_string(),
+    ]);
+    args
 }
 
 fn is_external_url(url: &tauri::Url) -> bool {
@@ -188,6 +486,22 @@ const BRIDGE_SCRIPT: &str = r#"(function () {
       get: function () { return invoke("get_desktop_settings"); },
       set: function (settings) { return invoke("set_desktop_settings", { settings: settings }); },
     },
+    profiles: {
+      list: function () { return invoke("get_profiles"); },
+      active: function () { return invoke("get_active_profile"); },
+      select: function (name) { return invoke("select_profile", { name: name }); },
+    },
+    remotePlugins: {
+      list: function () { return invoke("get_remote_plugins"); },
+      save: function (plugins) { return invoke("set_remote_plugins", { plugins: plugins }); },
+    },
+    plugins: {
+      installed: function () { return invoke("get_installed_plugins"); },
+      install: function (spec) { return invoke("install_profile_plugin", { spec: spec }); },
+      remove: function (name) { return invoke("remove_profile_plugin", { name: name }); },
+      update: function () { return invoke("update_profile_plugins"); },
+      sync: function (group) { return invoke("sync_remote_plugins", group ? { group: group } : {}); },
+    },
     shortcuts: {
       register: function (s, cb) {
         return invoke("register_shortcut", { shortcut: s }).then(function () {
@@ -200,6 +514,12 @@ const BRIDGE_SCRIPT: &str = r#"(function () {
       unregisterAll: function () { return invoke("unregister_all_shortcuts"); },
     },
     onShortcut: function (cb) { return listen("dsh-shortcut", cb); },
+    lanProxy: {
+      get: function () { return invoke("get_lan_proxy"); },
+      set: function (settings) { return invoke("set_lan_proxy", { settings: settings }); },
+      start: function () { return invoke("start_lan_proxy"); },
+      stop: function () { return invoke("stop_lan_proxy"); },
+    },
     update: {
       check: function () { return invoke("check_update"); },
       install: function () { return invoke("install_update"); },
@@ -210,6 +530,13 @@ const BRIDGE_SCRIPT: &str = r#"(function () {
 /// 注入 dsh web 的侧边栏右键菜单脚本；标题栏形态已由 bridge client 提供。
 const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
   "use strict";
+
+  var DSH_HOST_TOKEN = new URLSearchParams(window.location.search).get("dsh_desktop_token") || "";
+  function shellHeaders(extra) {
+    var headers = extra ? Object.assign({}, extra) : {};
+    if (DSH_HOST_TOKEN) headers["x-dsh-desktop-token"] = DSH_HOST_TOKEN;
+    return headers;
+  }
 
   function findSidebarRoot() {
     // 侧栏根节点用稳定的 data-slot 定位，避免依赖 CSS module 哈希 class。
@@ -360,7 +687,7 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
     if (sidebarWorkspacesCache && now - sidebarWorkspacesCacheAt < 5000) {
       return Promise.resolve(sidebarWorkspacesCache);
     }
-    return fetch("/dsh-desktop/workspaces", { headers: { accept: "application/json" } })
+    return fetch("/dsh-desktop/workspaces", { headers: shellHeaders({ accept: "application/json" }) })
       .then(function (response) {
         if (!response.ok) throw new Error("HTTP " + response.status);
         return response.json();
@@ -378,7 +705,7 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
     if (sidebarSessionsCache && now - sidebarSessionsCacheAt < 5000) {
       return Promise.resolve(sidebarSessionsCache);
     }
-    return fetch("/dsh-desktop/sessions", { headers: { accept: "application/json" } })
+    return fetch("/dsh-desktop/sessions", { headers: shellHeaders({ accept: "application/json" }) })
       .then(function (response) {
         if (!response.ok) throw new Error("HTTP " + response.status);
         return response.json();
@@ -405,7 +732,7 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
     }
     return fetch("/dsh-desktop/workspaces/action", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: shellHeaders({ "content-type": "application/json" }),
       body: JSON.stringify(payload)
     }).then(function (response) {
       return response.json();
@@ -419,7 +746,7 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
     }
     return fetch("/dsh-desktop/workspaces/action", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: shellHeaders({ "content-type": "application/json" }),
       body: JSON.stringify(payload)
     }).then(function (response) {
       return response.json();
@@ -940,12 +1267,17 @@ struct AppState {
     config_path: PathBuf,
     desktop_settings_path: PathBuf,
     projects_path: PathBuf,
+    profile_state_path: PathBuf,
+    lan_proxy_path: PathBuf,
+    lan_proxy_config_path: PathBuf,
+    lan_proxy: lan_proxy::LanProxyManager,
     /// 应用是否正在退出（托盘"退出"置 true，用于关闭到托盘时区分真正退出）。
     exiting: Arc<AtomicBool>,
     /// --autostart + settings startupMode=tray 时隐藏主窗口，直到用户从托盘唤起。
     start_in_tray: Arc<AtomicBool>,
     /// 已注册的自定义全局快捷键注册表（快捷键字符串 → Shortcut），供注销时查表。
     shortcuts: Arc<Mutex<HashMap<String, Shortcut>>>,
+    plugin_ops: plugin_ops::PluginOps,
 }
 
 fn enqueue_launch_payload(
@@ -992,12 +1324,14 @@ enum ManagerMessage {
     ReadinessError { generation: u64, error: String },
     InstallFinished { result: Result<(), String> },
     Unhealthy { generation: u64 },
+    Healthy { generation: u64 },
 }
 
 struct DshManager {
     app: AppHandle,
     inner: Arc<Mutex<Inner>>,
     managed_dsh_url: Arc<Mutex<Option<tauri::Url>>>,
+    host_token: Arc<Mutex<Option<String>>>,
     tx: Sender<ManagerMessage>,
     rx: Receiver<ManagerMessage>,
     child: Option<Child>,
@@ -1005,7 +1339,11 @@ struct DshManager {
     failed_generation: Option<u64>,
     log_path: PathBuf,
     config_path: PathBuf,
+    profile_state_path: PathBuf,
+    startup_context: Option<profiles::StartupContext>,
     start_in_tray: Arc<AtomicBool>,
+    desktop_mode: mode::DesktopMode,
+    plugin_ops: plugin_ops::PluginOps,
 }
 
 pub fn run() {
@@ -1016,6 +1354,7 @@ pub fn run() {
 
     let exiting = Arc::new(AtomicBool::new(false));
     let managed_dsh_url = Arc::new(Mutex::new(None));
+    let host_token = Arc::new(Mutex::new(Some(generate_host_token())));
 
     tauri::Builder::default()
         // 单实例锁必须最先注册（插件按注册顺序执行）
@@ -1070,9 +1409,10 @@ pub fn run() {
         // 向 dsh web（loopback 远程页面）注入受控桥接 window.__DSH_DESKTOP__
         .on_page_load({
             let managed_dsh_url = managed_dsh_url.clone();
+            let host_token = host_token.clone();
             move |webview, payload| {
                 if payload.event() == PageLoadEvent::Finished {
-                    inject::inject_dsh_web(webview, payload.url(), &managed_dsh_url);
+                    inject::inject_dsh_web(webview, payload.url(), &managed_dsh_url, &host_token);
                 }
             }
         })
@@ -1087,6 +1427,10 @@ pub fn run() {
             let config_path = app_data.join("config.json");
             let desktop_settings_path = app_data.join("desktop-settings.json");
             let projects_path = app_data.join("projects.json");
+            let profile_state_path = app_data.join("profile-state.json");
+            let lan_proxy_path = app_data.join("lan-proxy.mjs");
+            let lan_proxy_config_path = app_data.join("lan-proxy.json");
+            fs::write(&lan_proxy_path, lan_proxy::SCRIPT_SOURCE)?;
 
             let inner = Arc::new(Mutex::new(Inner {
                 log_dir: Some(log_dir.clone()),
@@ -1122,6 +1466,19 @@ pub fn run() {
                 }
             }
 
+            let logger_app = app_handle.clone();
+            let logger_inner = inner.clone();
+            let logger_path = log_path.clone();
+
+            let plugin_ops = plugin_ops::PluginOps::new().with_logger(move |line| {
+                append_line(
+                    &logger_app,
+                    &logger_inner,
+                    &logger_path,
+                    &format!("[plugin] {line}"),
+                );
+            });
+
             let manager = DshManager {
                 app: app_handle.clone(),
                 inner: inner.clone(),
@@ -1132,8 +1489,13 @@ pub fn run() {
                 failed_generation: None,
                 log_path,
                 config_path: config_path.clone(),
+                profile_state_path: app_data.join("profile-state.json"),
+                startup_context: None,
                 start_in_tray: start_in_tray.clone(),
+                desktop_mode: mode::DesktopMode::Compatibility,
+                plugin_ops: plugin_ops.clone(),
                 managed_dsh_url: managed_dsh_url.clone(),
+                host_token: host_token.clone(),
             };
             thread::spawn(move || manager.run());
 
@@ -1147,9 +1509,14 @@ pub fn run() {
                 config_path,
                 desktop_settings_path,
                 projects_path,
+                profile_state_path,
+                lan_proxy_path,
+                lan_proxy_config_path,
+                lan_proxy: lan_proxy::LanProxyManager::new(),
                 exiting: exiting.clone(),
                 start_in_tray: start_in_tray.clone(),
                 shortcuts: Arc::new(Mutex::new(HashMap::new())),
+                plugin_ops,
             });
 
             // 重启后恢复上次持久化的全局快捷键（注册冲突仅跳过，不阻塞启动）
@@ -1256,6 +1623,10 @@ pub fn run() {
             set_autostart,
             get_desktop_settings,
             set_desktop_settings,
+            get_lan_proxy,
+            set_lan_proxy,
+            start_lan_proxy,
+            stop_lan_proxy,
             get_projects,
             add_project,
             update_project,
@@ -1265,6 +1636,16 @@ pub fn run() {
             archive_project_chats,
             create_project_worktree,
             show_project_in_finder,
+            get_profiles,
+            get_active_profile,
+            select_profile,
+            get_remote_plugins,
+            set_remote_plugins,
+            sync_remote_plugins,
+            get_installed_plugins,
+            install_profile_plugin,
+            remove_profile_plugin,
+            update_profile_plugins,
             register_shortcut,
             unregister_shortcut,
             get_shortcuts,
@@ -1341,6 +1722,8 @@ pub fn run() {
             }
 
             if let RunEvent::Exit = event {
+                let state = app.state::<AppState>();
+                state.lan_proxy.stop();
                 let _ = app.state::<AppState>().tx.send(ManagerMessage::Shutdown);
             }
         });
@@ -1525,6 +1908,11 @@ impl DshManager {
                         self.fail_generation(generation, "DSH 健康检查连续失败".to_string());
                     }
                 }
+                Ok(ManagerMessage::Healthy { generation }) => {
+                    if self.lifecycle.is_current(generation) {
+                        self.commit_profile_healthy();
+                    }
+                }
                 Err(RecvTimeoutError::Timeout) => {
                     if let Some(exit) = self.take_exit() {
                         // 看门狗：运行中（starting/ready）意外退出时自动重启，超过上限才转 failed
@@ -1535,6 +1923,7 @@ impl DshManager {
                                 self.append_log(&format!(
                                     "[desktop] DSH 进程意外退出 ({exit})，{attempt}/{limit} 自动重启"
                                 ));
+                                self.rollback_profile("进程意外退出自动重启");
                                 self.handle_start();
                             }
                             RestartDecision::Fail => {
@@ -1610,31 +1999,73 @@ impl DshManager {
 
         let generation = self.lifecycle.begin_start();
 
+        // 解析 profile home：配置优先，否则 ~/.dsh；启动前读取 active profile 并保存本次启动上下文
+        let profile_home = match &home {
+            Some(home) => PathBuf::from(home),
+            None => dirs::home_dir()
+                .map(|dir| dir.join(".dsh"))
+                .ok_or_else(|| "无法解析 DSH profile 目录".to_string())?,
+        };
+        self.desktop_mode = mode::read_desktop_mode(&profile_home);
+        // 丢弃上一次启动残留的上下文，避免陈旧 context 影响日志/回滚。
+        self.startup_context = None;
+        let startup_context = profiles::begin_startup(&self.profile_state_path, &profile_home)?;
+        let active = startup_context.active.clone();
+        self.startup_context = Some(startup_context);
+
+        // 自动下载启用的远程插件预设（best-effort）：复用 dsh plugin add，失败只记日志，
+        // 不阻塞 dsh 启动。
+        let startup_config = config::load(&self.config_path).effective(|k| std::env::var(k).ok());
+        let app_data_dir = self.app.path().app_data_dir().ok();
+        let remote_plugins = match load_effective_remote_plugins(
+            &startup_config,
+            &profile_home,
+            app_data_dir.as_deref(),
+            self.app.path().resource_dir().ok().as_deref(),
+        ) {
+            Ok(presets) => presets,
+            Err(error) => {
+                self.append_log(&format!("[desktop] 外部远程插件加载失败: {error}"));
+                startup_config.remote_plugins.clone()
+            }
+        };
+        for preset in remote_plugins.iter().filter(|preset| preset.enabled) {
+            self.append_log(&format!("[desktop] 自动下载远程插件: {}", preset.url));
+            match self.plugin_ops.install_profile_plugin_with_allow_build(
+                &node,
+                &entry,
+                &profile_home,
+                &active,
+                &preset.url,
+                &preset.allow_build,
+            ) {
+                Ok(result) => {
+                    for line in &result.output {
+                        self.append_log(line);
+                    }
+                    if result.ok {
+                        self.append_log("[desktop] 远程插件安装成功，重启 dsh 后生效");
+                    } else {
+                        self.append_log("[desktop] 远程插件安装失败（dsh plugin 非零退出）");
+                    }
+                }
+                Err(error) => self.append_log(&format!("[desktop] 远程插件安装失败: {error}")),
+            }
+        }
+
         // 装配内嵌插件（best-effort）并生成 --patch overlay：任何失败只记日志，不影响 dsh 启动
         let mut log = |line: &str| self.append_log(line);
-        let default_home = dirs::home_dir().map(|h| h.join(".dsh"));
-        let plugins_home = home.as_deref().map(Path::new).or(default_home.as_deref());
         let overlay = embedded::prepare_overlay(
             embedded::plugins_resource_dir(self.app.path().resource_dir().ok().as_deref())
                 .as_deref(),
-            plugins_home,
+            Some(&profile_home),
             self.app.path().app_data_dir().ok().as_deref(),
             cfg!(debug_assertions),
             &mut log,
         );
 
+        let args = dsh_web_args(&active, overlay.as_deref());
         let mut cmd = Command::new(&node);
-        let mut args = vec!["web".to_string()];
-        if let Some(overlay_path) = &overlay {
-            args.push("--patch".into());
-            args.push(overlay_path.to_string_lossy().into_owned());
-        }
-        args.extend([
-            "--host".into(),
-            "127.0.0.1".into(),
-            "--port".into(),
-            "0".into(),
-        ]);
         cmd.arg(&entry)
             .args(&args)
             .env("PATH", effective_path())
@@ -1653,18 +2084,25 @@ impl DshManager {
             cmd.env("DSH_HOME", home);
         }
         cmd.env("DSH_DESKTOP_MANAGED", "1");
+        cmd.env("DSH_DESKTOP_MODE", self.desktop_mode.as_str());
+        cmd.env("DSH_DESKTOP_PROFILE", &active);
+        let profile_dir = profile_home.join("profiles").join(&active);
+        cmd.env("DSH_DESKTOP_PROFILE_DIR", &profile_dir);
+        if let Ok(state_dir) = self.app.path().app_data_dir() {
+            cmd.env("DSH_DESKTOP_STATE_DIR", &state_dir);
+        }
+        if let Some(host_token) = self.host_token.lock().ok().and_then(|guard| guard.clone()) {
+            cmd.env("DSH_DESKTOP_HOST_TOKEN", host_token);
+        }
 
         let mut child = cmd
             .spawn()
             .map_err(|error| format!("无法启动 dsh: {error}"))?;
-        let overlay_log = overlay
-            .as_ref()
-            .map(|path| format!(" --patch {}", path.to_string_lossy()))
-            .unwrap_or_default();
         self.append_log(&format!(
-            "[desktop] 启动 dsh: {} {} web{overlay_log} --host 127.0.0.1 --port 0",
+            "[desktop] 启动 dsh: {} {} {}",
             node.display(),
-            entry.display()
+            entry.display(),
+            args.join(" ")
         ));
 
         let stdout = child.stdout.take().expect("stdout 已开启管道");
@@ -1678,9 +2116,60 @@ impl DshManager {
         Ok(())
     }
 
+    /// 健康检查通过后，把当前 active profile 提交为 last_known_good；失败仅记日志。
+    fn commit_profile_healthy(&mut self) {
+        let Some(context) = self.startup_context.as_ref() else {
+            return;
+        };
+        match profiles::mark_healthy(&self.profile_state_path, &context.active) {
+            Ok(_) => {
+                self.append_log(&format!(
+                    "[desktop] profile \"{}\" 健康检查通过，已提交",
+                    context.active
+                ));
+                self.startup_context = None;
+            }
+            Err(error) => {
+                self.append_log(&format!(
+                    "[desktop] 提交 profile \"{}\" 健康状态失败: {error}",
+                    context.active
+                ));
+            }
+        }
+    }
+
+    /// 本次启动失败/自动重启前调用：回滚到 last_known_good 并清空启动上下文。
+    fn rollback_profile(&mut self, reason: &str) {
+        let Some(context) = self.startup_context.take() else {
+            return;
+        };
+        match profiles::rollback_startup(&self.profile_state_path) {
+            Ok(state) => {
+                self.append_log(&format!(
+                    "[desktop] {reason}，回滚 profile \"{}\" -> \"{}\"",
+                    context.active, state.active
+                ));
+            }
+            Err(error) => {
+                self.append_log(&format!(
+                    "[desktop] 回滚 profile \"{}\" 失败: {error}",
+                    context.active
+                ));
+            }
+        }
+    }
+
     fn open_window(&self, url: String) {
         if let Some(window) = self.app.get_webview_window("main") {
-            if let Ok(url) = tauri::Url::parse(&url) {
+            if let Ok(mut url) = tauri::Url::parse(&url) {
+                if let Some(token) = self.host_token.lock().ok().and_then(|guard| guard.clone()) {
+                    url.query_pairs_mut()
+                        .append_pair(HOST_TOKEN_QUERY_KEY, &token);
+                }
+                url.query_pairs_mut()
+                    .append_pair("dsh-desktop-mode", self.desktop_mode.as_str());
+                url.query_pairs_mut()
+                    .append_pair("dsh-desktop-platform", desktop_platform());
                 let _ = window.navigate(url);
             }
             if !self.start_in_tray.load(Ordering::Relaxed) {
@@ -1692,6 +2181,7 @@ impl DshManager {
     }
 
     fn fail(&mut self, message: String) {
+        self.rollback_profile("启动失败");
         self.cleanup_child();
         self.append_log(&format!("[desktop] 失败: {message}"));
         self.notify("DSH 启动失败", &message);
@@ -1710,6 +2200,7 @@ impl DshManager {
 
     /// 优雅停止子进程：unix 下先 SIGTERM 等宽限期，再 SIGKILL；Windows 直接 TerminateProcess。
     fn cleanup_child(&mut self) {
+        let _ = self.plugin_ops.cancel_current();
         if let Some(mut child) = self.child.take() {
             self.lifecycle.invalidate();
             #[cfg(unix)]
@@ -1812,9 +2303,14 @@ impl DshManager {
             };
 
             let mut failures = 0u32;
+            let mut healthy_sent = false;
             loop {
                 if is_health_ready(&url) {
                     failures = 0;
+                    if !healthy_sent {
+                        healthy_sent = true;
+                        let _ = tx.send(ManagerMessage::Healthy { generation });
+                    }
                 } else {
                     failures += 1;
                     if failures >= 3 {
@@ -2023,6 +2519,158 @@ fn get_ui_theme(state: State<AppState>) -> UiThemeSnapshot {
     resolve_ui_theme(&section, system_dark)
 }
 
+/// 解析 profile 目录：settings_home 优先，否则回退到 ~/.dsh。
+fn app_profile_home(state: &AppState) -> Result<PathBuf, String> {
+    settings_home(&state.config_path)
+        .or_else(|| dirs::home_dir().map(|dir| dir.join(".dsh")))
+        .ok_or_else(|| "无法解析 DSH profile 目录".to_string())
+}
+
+#[tauri::command]
+fn get_profiles(state: State<AppState>) -> Result<Vec<profiles::DshProfileSummary>, String> {
+    let home = app_profile_home(&state)?;
+    Ok(profiles::list_profiles(&home))
+}
+
+#[tauri::command]
+fn get_active_profile(state: State<AppState>) -> profiles::ProfileState {
+    profiles::load_state(&state.profile_state_path)
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct ProfileSelectionResult {
+    profile: String,
+    restart_required: bool,
+}
+
+#[tauri::command]
+fn select_profile(state: State<AppState>, name: String) -> Result<ProfileSelectionResult, String> {
+    let home = app_profile_home(&state)?;
+    let result = profiles::select_profile(&state.profile_state_path, &home, &name)?;
+    Ok(ProfileSelectionResult {
+        profile: result.pending.unwrap_or(name),
+        restart_required: true,
+    })
+}
+
+/// 读取外部插件路径与本地 config 合并后的远程插件预设。
+fn effective_remote_plugins_for_state(
+    state: &AppState,
+) -> Result<Vec<config::RemotePluginPreset>, String> {
+    let config = config::load(&state.config_path).effective(|k| std::env::var(k).ok());
+    let home = app_profile_home(state)?;
+    load_effective_remote_plugins(
+        &config,
+        &home,
+        state.app.path().app_data_dir().ok().as_deref(),
+        state.app.path().resource_dir().ok().as_deref(),
+    )
+}
+
+/// 读取合并后的远程插件预设；外部固定预设 source 为 external。
+#[tauri::command]
+fn get_remote_plugins(state: State<AppState>) -> Result<Vec<config::RemotePluginPreset>, String> {
+    effective_remote_plugins_for_state(&state)
+}
+
+/// 保存本地远程插件预设；空 id 由壳侧生成，URL 会做白名单校验，外部固定预设不写入 config。
+#[tauri::command]
+fn set_remote_plugins(
+    state: State<AppState>,
+    plugins: Vec<config::RemotePluginPreset>,
+) -> Result<Vec<config::RemotePluginPreset>, String> {
+    let local = plugins
+        .into_iter()
+        .filter(|preset| preset.source != config::RemotePluginSource::External)
+        .collect();
+    let normalized = normalize_remote_plugins(local)?;
+    let mut stored = config::load(&state.config_path);
+    stored.remote_plugins = normalized;
+    config::save(&state.config_path, &stored)?;
+    effective_remote_plugins_for_state(&state)
+}
+
+/// 立即对 active profile 同步启用中的远程插件预设；group 为空时同步全部。
+#[tauri::command]
+fn sync_remote_plugins(
+    state: State<AppState>,
+    group: Option<String>,
+) -> Result<Vec<plugin_ops::PluginOperationResult>, String> {
+    let (node, entry, home, profile) = plugin_operation_context(&state)?;
+    let presets = effective_remote_plugins_for_state(&state)?;
+    let mut results = Vec::new();
+    for preset in presets
+        .iter()
+        .filter(|preset| preset.enabled)
+        .filter(|preset| group.as_deref().is_none_or(|group| preset.group == group))
+    {
+        results.push(state.plugin_ops.install_profile_plugin_with_allow_build(
+            &node,
+            &entry,
+            &home,
+            &profile,
+            &preset.url,
+            &preset.allow_build,
+        )?);
+    }
+    Ok(results)
+}
+
+/// 读取当前 active profile 的直装依赖列表，用于插件管理 UI。
+#[tauri::command]
+fn get_installed_plugins(
+    state: State<AppState>,
+) -> Result<Vec<profiles::InstalledPluginSummary>, String> {
+    let home = app_profile_home(&state)?;
+    let profile = profiles::load_state(&state.profile_state_path).active;
+    Ok(profiles::list_installed_plugins(&home, &profile))
+}
+
+#[tauri::command]
+fn install_profile_plugin(
+    state: State<AppState>,
+    spec: String,
+) -> Result<plugin_ops::PluginOperationResult, String> {
+    let (node, entry, home, profile) = plugin_operation_context(&state)?;
+    state
+        .plugin_ops
+        .install_profile_plugin(&node, &entry, &home, &profile, &spec)
+}
+
+#[tauri::command]
+fn remove_profile_plugin(
+    state: State<AppState>,
+    name: String,
+) -> Result<plugin_ops::PluginOperationResult, String> {
+    let (node, entry, home, profile) = plugin_operation_context(&state)?;
+    state
+        .plugin_ops
+        .remove_profile_plugin(&node, &entry, &home, &profile, &name)
+}
+
+#[tauri::command]
+fn update_profile_plugins(
+    state: State<AppState>,
+) -> Result<plugin_ops::PluginOperationResult, String> {
+    let (node, entry, home, profile) = plugin_operation_context(&state)?;
+    state
+        .plugin_ops
+        .update_profile_plugins(&node, &entry, &home, &profile)
+}
+
+/// 解析当前 active profile 的插件操作运行环境。
+fn plugin_operation_context(
+    state: &AppState,
+) -> Result<(PathBuf, PathBuf, PathBuf, String), String> {
+    let config = config::load(&state.config_path).effective(|k| std::env::var(k).ok());
+    let (node, entry) =
+        resolve_dsh(&config).ok_or_else(|| "未检测到 DSH，无法管理插件".to_string())?;
+    let home = app_profile_home(state)?;
+    let profile = profiles::load_state(&state.profile_state_path).active;
+    Ok((node, entry, home, profile))
+}
+
 #[tauri::command]
 fn restart(state: State<AppState>) -> Result<(), String> {
     state
@@ -2155,6 +2803,18 @@ fn validate_config_paths(config: &DshConfig) -> Result<(), String> {
     if let Some(value) = &config.dsh_home {
         validate_config_path_setting("DSH_HOME", value, false)?;
     }
+    if let Some(value) = &config.remote_plugins_path {
+        if value.trim().is_empty() || value.chars().any(char::is_control) {
+            return Err("DSH_DESKTOP_REMOTE_PLUGINS_PATH 路径无效".to_string());
+        }
+        let path = Path::new(value);
+        if !path.is_absolute() {
+            return Err("DSH_DESKTOP_REMOTE_PLUGINS_PATH 必须是绝对路径".to_string());
+        }
+        if path.exists() && !path.is_file() && !path.is_dir() {
+            return Err("DSH_DESKTOP_REMOTE_PLUGINS_PATH 必须是文件或目录".to_string());
+        }
+    }
     Ok(())
 }
 
@@ -2185,9 +2845,11 @@ fn get_config(state: State<AppState>) -> DshConfig {
 #[tauri::command]
 fn set_config(state: State<AppState>, mut config: DshConfig) -> Result<(), String> {
     validate_config_paths(&config)?;
-    // shortcuts 由壳侧快捷键注册表统一管理；set_config 只负责路径配置，
-    // 因此始终保留现有注册记录，避免一次配置保存清空持久化快捷键。
-    config.shortcuts = config::load(&state.config_path).shortcuts;
+    // shortcuts 与远程插件预设分别由快捷键注册表和 set_remote_plugins 管理；
+    // set_config 只负责路径配置，因此始终保留现有记录，避免一次配置保存清空持久化数据。
+    let stored = config::load(&state.config_path);
+    config.shortcuts = stored.shortcuts;
+    config.remote_plugins = stored.remote_plugins;
     config::save(&state.config_path, &config)
 }
 
@@ -2252,6 +2914,60 @@ fn set_desktop_settings(
         }
     }
     desktop_settings::save_desktop_settings(&state.desktop_settings_path, &settings)
+}
+
+/// 读取局域网代理配置与当前运行状态。
+#[tauri::command]
+fn get_lan_proxy(state: State<AppState>) -> Result<lan_proxy::LanProxySnapshot, String> {
+    lan_proxy_snapshot(&state)
+}
+
+/// 保存局域网代理配置；运行中时按新配置自动重启。
+#[tauri::command]
+fn set_lan_proxy(
+    state: State<AppState>,
+    settings: lan_proxy::LanProxySettings,
+) -> Result<lan_proxy::LanProxySnapshot, String> {
+    lan_proxy::validate(&settings)?;
+    lan_proxy::save(&state.lan_proxy_config_path, &settings)?;
+    if state.lan_proxy.is_running() {
+        start_lan_proxy_internal(&state)?;
+    }
+    lan_proxy_snapshot(&state)
+}
+
+/// 启动局域网代理。
+#[tauri::command]
+fn start_lan_proxy(state: State<AppState>) -> Result<lan_proxy::LanProxySnapshot, String> {
+    start_lan_proxy_internal(&state)
+}
+
+/// 停止局域网代理。
+#[tauri::command]
+fn stop_lan_proxy(state: State<AppState>) -> Result<lan_proxy::LanProxySnapshot, String> {
+    state.lan_proxy.stop();
+    lan_proxy_snapshot(&state)
+}
+
+fn lan_proxy_snapshot(state: &AppState) -> Result<lan_proxy::LanProxySnapshot, String> {
+    let settings = lan_proxy::load(&state.lan_proxy_config_path);
+    Ok(state.lan_proxy.snapshot(&settings))
+}
+
+fn start_lan_proxy_internal(state: &AppState) -> Result<lan_proxy::LanProxySnapshot, String> {
+    let settings = lan_proxy::load(&state.lan_proxy_config_path);
+    lan_proxy::validate(&settings)?;
+    let config = config::load(&state.config_path).effective(|key| std::env::var(key).ok());
+    let node =
+        resolve_node(&config).ok_or_else(|| "未检测到 Node.js，无法启动局域网代理".to_string())?;
+    let current_url = state.inner.lock().unwrap().snapshot().url;
+    state.lan_proxy.start(
+        &node,
+        &state.lan_proxy_path,
+        &settings,
+        current_url.as_deref(),
+    )?;
+    Ok(state.lan_proxy.snapshot(&settings))
 }
 
 /// 读取本地项目列表（项目列表与右键菜单状态的唯一状态源）。
@@ -2939,7 +3655,7 @@ fn find_in_path_entries(entries: &[PathBuf], name: &str) -> Option<PathBuf> {
 }
 
 /// 合并 GUI 进程自身、系统全局 PATH 与用户 shell PATH，保证桌面启动时也能找到 node/npm/dsh。
-fn effective_path() -> String {
+pub(crate) fn effective_path() -> String {
     static CACHE: OnceLock<String> = OnceLock::new();
 
     CACHE
@@ -3591,6 +4307,28 @@ mod tests {
     }
 
     #[test]
+    fn load_external_remote_plugins_directory_uses_file_name_as_group() {
+        let root =
+            std::env::temp_dir().join(format!("dsh-external-plugins-test-{}", std::process::id()));
+        let dir = root.join("external");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("tools.json"),
+            r#"[{"url":"https://example.com/tool.tgz","allow_build":["dsh-better-sidebar"]}]"#,
+        )
+        .unwrap();
+
+        let presets = load_external_remote_plugins_path(&dir).unwrap();
+        assert_eq!(presets.len(), 1);
+        assert_eq!(presets[0].group, "tools");
+        assert_eq!(presets[0].url, "https://example.com/tool.tgz");
+        assert_eq!(presets[0].source, config::RemotePluginSource::External);
+        assert_eq!(presets[0].allow_build, vec!["dsh-better-sidebar"]);
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
     fn config_paths_require_absolute_and_existing_binaries() {
         let dir = std::env::temp_dir().join(format!("dsh-config-path-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -3601,23 +4339,91 @@ mod tests {
             dsh_bin: Some(bin.to_string_lossy().into_owned()),
             dsh_node: None,
             dsh_home: Some(dir.to_string_lossy().into_owned()),
+            remote_plugins_path: None,
             shortcuts: vec![],
+            remote_plugins: vec![],
         })
         .is_ok());
         assert!(validate_config_paths(&DshConfig {
             dsh_bin: Some("dsh".into()),
             dsh_node: None,
             dsh_home: None,
+            remote_plugins_path: None,
             shortcuts: vec![],
+            remote_plugins: vec![],
         })
         .is_err());
         assert!(validate_config_paths(&DshConfig {
             dsh_bin: None,
             dsh_node: None,
             dsh_home: Some(dir.join("missing").to_string_lossy().into_owned()),
+            remote_plugins_path: None,
             shortcuts: vec![],
+            remote_plugins: vec![],
         })
         .is_ok());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn dsh_web_args_uses_active_profile_with_overlay() {
+        let overlay = std::env::temp_dir().join("dsh-overlay.yml");
+        let args = dsh_web_args("workbench", Some(&overlay));
+
+        assert_eq!(args.first().map(String::as_str), Some("--profile"));
+        assert_eq!(args.get(1).map(String::as_str), Some("workbench"));
+        assert!(args.iter().any(|arg| arg == "--patch"));
+        assert!(args
+            .iter()
+            .any(|arg| arg == &overlay.to_string_lossy().to_string()));
+        assert!(!args.iter().any(|arg| arg == "web"));
+        assert_eq!(
+            args,
+            vec![
+                "--profile".to_string(),
+                "workbench".to_string(),
+                "--patch".to_string(),
+                overlay.to_string_lossy().into_owned(),
+                "--host".to_string(),
+                "127.0.0.1".to_string(),
+                "--port".to_string(),
+                "0".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn remote_plugin_preset_rejects_invalid_allow_build() {
+        let result = normalize_remote_plugins(vec![config::RemotePluginPreset {
+            id: "plugin".into(),
+            url: "https://example.com/plugin.tgz".into(),
+            enabled: true,
+            group: "default".into(),
+            source: config::RemotePluginSource::Local,
+            allow_build: vec!["-bad".into()],
+        }]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("allow_build"));
+    }
+
+    #[test]
+    fn dsh_web_args_omits_patch_without_overlay() {
+        let args = dsh_web_args("workbench", None);
+
+        assert_eq!(args.first().map(String::as_str), Some("--profile"));
+        assert_eq!(args.get(1).map(String::as_str), Some("workbench"));
+        assert!(!args.iter().any(|arg| arg == "--patch"));
+        assert!(!args.iter().any(|arg| arg == "web"));
+        assert_eq!(
+            args,
+            vec![
+                "--profile".to_string(),
+                "workbench".to_string(),
+                "--host".to_string(),
+                "127.0.0.1".to_string(),
+                "--port".to_string(),
+                "0".to_string(),
+            ]
+        );
     }
 }

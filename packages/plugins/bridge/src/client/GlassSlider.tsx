@@ -37,7 +37,7 @@ export function GlassSlider({
         onChange={onChange}
       />
       <Button type="button" variant="ghost" onClick={() => onChange(100)}>
-        {t("wallpaper.reset")}
+        {t("glass.reset")}
       </Button>
     </SettingsSection>
   );

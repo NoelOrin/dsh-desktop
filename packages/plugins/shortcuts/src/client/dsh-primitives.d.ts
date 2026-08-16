@@ -26,5 +26,14 @@ declare module "@deepseek-ai/dsh-client-ui-primitives" {
 
   export function IconPlusOutline16(props?: { size?: number; className?: string }): JSX.Element;
 
+  export function IconNewChatOutline16(props?: { size?: number; className?: string }): JSX.Element;
+
+  export function IconPanelLeftOutline16(props?: {
+    size?: number;
+    className?: string;
+  }): JSX.Element;
+
+  export function IconStopFill16(props?: { size?: number; className?: string }): JSX.Element;
+
   export function IconTrashOutline16(props?: { size?: number; className?: string }): JSX.Element;
 }

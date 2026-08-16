@@ -19,6 +19,28 @@ export interface BridgeLike {
     get(): Promise<DesktopSettings>;
     set(settings: DesktopSettings): Promise<void>;
   };
+  lanProxy: {
+    get(): Promise<LanProxySnapshot>;
+    set(settings: LanProxySettings): Promise<LanProxySnapshot>;
+    start(): Promise<LanProxySnapshot>;
+    stop(): Promise<LanProxySnapshot>;
+  };
+  profiles: {
+    list(): Promise<DshProfileSummary[]>;
+    active(): Promise<DesktopProfileState>;
+    select(name: string): Promise<ProfileSelectionResult>;
+  };
+  remotePlugins: {
+    list(): Promise<RemotePluginPreset[]>;
+    save(presets: RemotePluginPreset[]): Promise<RemotePluginPreset[]>;
+  };
+  plugins: {
+    installed(): Promise<InstalledPluginSummary[]>;
+    install(spec: string): Promise<PluginOperationResult>;
+    remove(name: string): Promise<PluginOperationResult>;
+    update(): Promise<PluginOperationResult>;
+    sync(group?: string): Promise<PluginOperationResult[]>;
+  };
   openExternal(target: string): Promise<void>;
   update: {
     check(): Promise<string | null>;
@@ -42,15 +64,89 @@ export interface DshConfig {
   dsh_bin: string | null;
   dsh_node: string | null;
   dsh_home: string | null;
+  remote_plugins_path: string | null;
   shortcuts: string[];
+  remote_plugins: RemotePluginPreset[];
+}
+
+/** 远程插件预设来源；外部目录/文件中的预设为固定配置。 */
+export type RemotePluginSource = "local" | "external";
+
+/** 远程插件预设（与 packages/contracts 对齐）。 */
+export interface RemotePluginPreset {
+  id: string;
+  url: string;
+  enabled: boolean;
+  group: string;
+  source: RemotePluginSource;
+  allow_build?: string[];
 }
 
 export type StartupMode = "normal" | "tray" | "minimized";
+
+export type DesktopMode = "compatibility" | "advanced";
+
+export interface DesktopModeSettings {
+  mode: DesktopMode;
+}
 
 /** 壳侧开机自启设置（与 packages/contracts 的 DesktopSettings 对齐）。 */
 export interface DesktopSettings {
   autostart: boolean;
   startup_mode: StartupMode;
+}
+
+/** 局域网反向代理配置与快照（与 Rust lan-proxy.rs 对齐）。 */
+export interface LanProxySettings {
+  bind: string;
+  port: number;
+  target: string | null;
+}
+
+export interface LanProxySnapshot {
+  settings: LanProxySettings;
+  running: boolean;
+  url: string | null;
+  urls: string[];
+  error: string | null;
+}
+
+/** dsh profile 摘要（与 packages/contracts 的 DshProfileSummary 对齐）。 */
+export interface DshProfileSummary {
+  name: string;
+  dir: string;
+  exists: boolean;
+  web_capable: boolean;
+  problem: string | null;
+}
+
+/** profile 状态机快照（与 packages/contracts 的 DesktopProfileState 对齐）。 */
+export interface DesktopProfileState {
+  version: 1;
+  active: string;
+  pending: string | null;
+  last_known_good: string;
+}
+
+/** profile 选择结果（与 packages/contracts 的 ProfileSelectionResult 对齐）。 */
+export interface ProfileSelectionResult {
+  profile: string;
+  restart_required: boolean;
+}
+
+/** 受管插件操作结果（与 packages/contracts 的 PluginOperationResult 对齐）。 */
+export interface PluginOperationResult {
+  ok: boolean;
+  exit_code: number | null;
+  output: string[];
+}
+
+/** 当前 profile 直装依赖摘要（与 packages/contracts 对齐）。 */
+export interface InstalledPluginSummary {
+  name: string;
+  version: string | null;
+  bundle: boolean;
+  problem: string | null;
 }
 
 /** SettingsScope<T> 的最小形状：getSnapshot / subscribe / set。 */

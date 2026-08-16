@@ -1,8 +1,11 @@
 import { injectPluginCss } from "../../client-kit/inject";
 import { AppearanceSection } from "./client/AppearanceSection";
+import { resolveAdvancedParams } from "./client/advanced/theme-presenter";
 import { DesktopPanel } from "./client/DesktopPanel";
 import { applyDesktopShell } from "./client/desktop-shell";
-import type { SettingsScopeLike, Translate } from "./client/runtime";
+import { PluginPanel } from "./client/PluginPanel";
+import type { DesktopModeSettings, SettingsScopeLike, Translate } from "./client/runtime";
+import { applySettingsNavIcons } from "./client/settings-nav-icons";
 import { applyThemeSection, ensurePageStyle } from "./client/theme-apply";
 import { createThemeStore } from "./client/theme-store";
 import { THEME_SETTINGS_NAMESPACE, type ThemeSettings } from "./shared/theme";
@@ -35,9 +38,13 @@ export const inject = ["slots", "locale", "connection", "remote", "settingsScope
 export function apply(ctx: ClientContextLike): void {
   const NS = "settings.desktop";
   const t = ctx.locale.bind(NS);
+  const PLUGIN_NS = "settings.desktop.plugins";
+  const pluginT = ctx.locale.bind(PLUGIN_NS);
 
   ctx.effect(() => ensurePageStyle(), "bridge: 全局页面样式");
-  ctx.effect(applyDesktopShell, "bridge: 桌面壳形态");
+  const shellParams = resolveAdvancedParams(window.location.search);
+  ctx.effect(() => applyDesktopShell(shellParams.mode, shellParams.platform), "bridge: 桌面壳形态");
+  ctx.effect(applySettingsNavIcons, "bridge: 设置菜单插件图标");
 
   // ── 主题与背景（ui-theme 命名空间由上游 dsh-client-ui-theme host 注册，这里只 bind）──
   const THEME_NS = "settings.appearance";
@@ -45,6 +52,9 @@ export function apply(ctx: ClientContextLike): void {
     namespace: THEME_SETTINGS_NAMESPACE,
   });
   const themeStore = createThemeStore(themeScope);
+  const modeScope = ctx.settingsScope.bind<DesktopModeSettings>({
+    namespace: "dsh-desktop",
+  });
 
   const systemDark = (): boolean =>
     typeof matchMedia !== "undefined" && matchMedia("(prefers-color-scheme: dark)").matches;
@@ -96,6 +106,25 @@ export function apply(ctx: ClientContextLike): void {
         "nav.tools.desc": "打开日志目录或检查桌面端更新",
         "nav.autostart": "开机自启",
         "nav.autostart.desc": "控制登录时是否启动及窗口状态",
+        "lanProxy.title": "局域网访问",
+        "lanProxy.sectionDesc": "让局域网设备访问本机 dsh web",
+        "lanProxy.enabled": "启用局域网访问",
+        "lanProxy.desc": "反向代理会按当前 dsh 地址自动填充上游目标",
+        "lanProxy.bind": "监听地址",
+        "lanProxy.port": "监听端口",
+        "lanProxy.target": "上游 dsh 地址",
+        "lanProxy.save": "保存配置",
+        "lanProxy.refresh": "刷新",
+        "lanProxy.start": "启动",
+        "lanProxy.stop": "停止",
+        "lanProxy.running": "运行中",
+        "lanProxy.stopped": "未运行",
+        "lanProxy.placeholderTarget": "留空自动使用当前 dsh 地址",
+        "lanProxy.saved": "配置已保存，运行中会自动重启代理",
+        "lanProxy.refreshed": "代理状态已刷新",
+        "lanProxy.started": "局域网访问已启动",
+        "lanProxy.stopNotice": "局域网访问已停止",
+        "lanProxy.unavailable": "桌面壳桥接不可用",
         "status.detecting": "正在检测运行环境...",
         "status.detail": "运行环境详情",
         "status.phase": "阶段",
@@ -114,15 +143,23 @@ export function apply(ctx: ClientContextLike): void {
         "status.retry": "重试",
         "status.openLogs": "日志目录",
         "config.save": "保存",
-        "config.restart": "重启 dsh 生效",
-        "config.saved": "已保存，重启 dsh 后生效。",
+        "config.saved": "已保存，点击“应用并重启”生效。",
         "tools.openLogs.title": "打开日志目录",
         "tools.openLogs.desc": "打开 dsh 运行日志目录",
         "tools.openLogs.action": "打开",
         "tools.checkUpdate.title": "检查更新",
         "tools.checkUpdate.desc": "检查 GitHub Release 是否有新版本并安装",
         "tools.checkUpdate.action": "检查",
+        "mode.title": "界面模式",
+        "mode.compatibility": "兼容模式",
+        "mode.advanced": "高级模式",
+        "mode.restart": "已保存，重启 dsh 后生效",
+        "mode.pending": "已选择，点击“应用并重启”生效",
         "autostart.title": "开机自启",
+        "applyRestart.title": "应用与重启",
+        "applyRestart.desc": "统一保存待应用的桌面设置，并重启 dsh 使其生效",
+        "applyRestart.action": "应用并重启",
+        "applyRestart.failed": "应用并重启失败",
         "autostart.desc": "登录系统时自动启动桌面应用",
         "autostart.mode": "自启后窗口状态",
         "autostart.mode.normal": "正常显示",
@@ -143,6 +180,25 @@ export function apply(ctx: ClientContextLike): void {
         "nav.tools.desc": "Open logs or check for desktop updates",
         "nav.autostart": "Launch at login",
         "nav.autostart.desc": "Control startup behavior and window state",
+        "lanProxy.title": "LAN access",
+        "lanProxy.sectionDesc": "Expose local dsh web to LAN devices",
+        "lanProxy.enabled": "Enable LAN access",
+        "lanProxy.desc": "The reverse proxy fills in the current dsh address automatically",
+        "lanProxy.bind": "Bind address",
+        "lanProxy.port": "Listen port",
+        "lanProxy.target": "Upstream dsh address",
+        "lanProxy.save": "Save settings",
+        "lanProxy.refresh": "Refresh",
+        "lanProxy.start": "Start",
+        "lanProxy.stop": "Stop",
+        "lanProxy.running": "Running",
+        "lanProxy.stopped": "Stopped",
+        "lanProxy.placeholderTarget": "Leave empty to use the current dsh address",
+        "lanProxy.saved": "Settings saved; a running proxy will restart automatically",
+        "lanProxy.refreshed": "Proxy status refreshed",
+        "lanProxy.started": "LAN access started",
+        "lanProxy.stopNotice": "LAN access stopped",
+        "lanProxy.unavailable": "Desktop shell bridge unavailable",
         "status.detecting": "Detecting the runtime environment...",
         "status.detail": "Runtime details",
         "status.phase": "Phase",
@@ -161,15 +217,23 @@ export function apply(ctx: ClientContextLike): void {
         "status.retry": "Retry",
         "status.openLogs": "Log directory",
         "config.save": "Save",
-        "config.restart": "Restart dsh",
-        "config.saved": "Saved. Restart dsh to apply.",
+        "config.saved": "Saved. Use Apply & restart to activate.",
         "tools.openLogs.title": "Open log directory",
         "tools.openLogs.desc": "Open the dsh runtime log directory",
         "tools.openLogs.action": "Open",
         "tools.checkUpdate.title": "Check for updates",
         "tools.checkUpdate.desc": "Check GitHub releases for a new version and install it",
         "tools.checkUpdate.action": "Check",
+        "mode.title": "Interface mode",
+        "mode.compatibility": "Compatibility mode",
+        "mode.advanced": "Advanced mode",
+        "mode.restart": "Saved. Restart dsh to apply.",
+        "mode.pending": "Selected. Use Apply & restart to activate.",
         "autostart.title": "Launch at login",
+        "applyRestart.title": "Apply & restart",
+        "applyRestart.desc": "Save pending desktop settings, then restart dsh to apply them",
+        "applyRestart.action": "Apply & restart",
+        "applyRestart.failed": "Failed to apply and restart",
         "autostart.desc": "Start the desktop app automatically when you log in",
         "autostart.mode": "Window state after autostart",
         "autostart.mode.normal": "Show normally",
@@ -177,6 +241,118 @@ export function apply(ctx: ClientContextLike): void {
         "autostart.mode.minimized": "Start minimized",
       }),
     "bridge: English dictionary",
+  );
+
+  ctx.effect(
+    () =>
+      ctx.locale.register(PLUGIN_NS, "zh", {
+        nav: "桌面插件",
+        "install.title": "插件管理",
+        "install.desc": "安装到当前 active profile，重启 dsh 后生效",
+        "install.profile": "当前 profile",
+        "install.placeholder": "包名或 git URL",
+        "install.button": "安装插件",
+        "install.success": "安装成功，重启后生效",
+        "operation.running": "操作中",
+        "operation.failed": "操作失败",
+        "operation.busy": "当前只有一个插件操作可运行",
+        "operation.unavailable": "桌面壳桥接不可用",
+        restart: "重启 dsh",
+        "presets.title": "远程插件预设",
+        "presets.desc": "添加插件 URL 或 git 地址，启动时自动安装到当前 profile",
+        "presets.sync": "立即同步",
+        "presets.syncGroup": "同步本组",
+        "presets.add": "添加预设",
+        "presets.urlRequired": "请输入插件 URL 或 git 地址",
+        "presets.duplicate": "该远程插件 URL 已存在",
+        "presets.groupPlaceholder": "分组，默认 default",
+        "presets.groupEnabled": "整组启用",
+        "presets.removeGroup": "移除本组",
+        "presets.external": "外部固定",
+        "presets.enabled": "启动时自动下载",
+        "presets.disabled": "已停用",
+        "presets.remove": "移除",
+        "presets.empty": "尚未添加远程插件",
+        "presets.saved": "远程插件预设已保存，重启 dsh 后自动下载",
+        "presets.synced": "远程插件同步完成",
+        "presets.syncedGroup": "当前分组同步完成",
+        "installed.title": "已安装插件",
+        "installed.desc": "当前 profile 的直装依赖；安装、更新或移除后需重启 dsh",
+        "installed.update": "更新全部",
+        "installed.remove": "移除",
+        "installed.updated": "插件更新完成，重启 dsh 后生效",
+        "installed.removed": "插件已移除，重启 dsh 后生效",
+        "installed.bundle": "bundle",
+        "installed.dependency": "依赖",
+        "installed.empty": "当前 profile 没有额外安装的插件",
+        "output.title": "操作输出",
+        "output.desc": "最近一次 dsh plugin 命令的原始输出",
+      }),
+    "bridge: 插件中文字典",
+  );
+  ctx.effect(
+    () =>
+      ctx.locale.register(PLUGIN_NS, "en", {
+        nav: "Desktop plugins",
+        "install.title": "Plugin management",
+        "install.desc": "Install into the active profile; restart dsh to apply",
+        "install.profile": "Active profile",
+        "install.placeholder": "Package name or git URL",
+        "install.button": "Install plugin",
+        "install.success": "Plugin installed. Restart dsh to apply.",
+        "operation.running": "Running...",
+        "operation.failed": "Operation failed",
+        "operation.busy": "Only one plugin operation can run at a time",
+        "operation.unavailable": "Desktop shell bridge unavailable",
+        restart: "Restart dsh",
+        "presets.title": "Remote plugin presets",
+        "presets.desc":
+          "Add plugin URLs or git addresses to install into the active profile on startup",
+        "presets.sync": "Sync now",
+        "presets.syncGroup": "Sync group",
+        "presets.add": "Add preset",
+        "presets.urlRequired": "Enter a plugin URL or git address",
+        "presets.duplicate": "This remote plugin URL already exists",
+        "presets.groupPlaceholder": "Group, default is default",
+        "presets.groupEnabled": "Enable group",
+        "presets.removeGroup": "Remove group",
+        "presets.external": "External",
+        "presets.enabled": "Download on startup",
+        "presets.disabled": "Disabled",
+        "presets.remove": "Remove",
+        "presets.empty": "No remote plugins configured",
+        "presets.saved": "Preset saved. It will download on the next dsh restart.",
+        "presets.synced": "Remote plugins synced",
+        "presets.syncedGroup": "Current group synced",
+        "installed.title": "Installed plugins",
+        "installed.desc":
+          "Direct dependencies of the active profile; restart dsh after install, update or remove",
+        "installed.update": "Update all",
+        "installed.remove": "Remove",
+        "installed.updated": "Plugins updated. Restart dsh to apply.",
+        "installed.removed": "Plugin removed. Restart dsh to apply.",
+        "installed.bundle": "bundle",
+        "installed.dependency": "dependency",
+        "installed.empty": "No extra plugins installed in the active profile",
+        "output.title": "Operation output",
+        "output.desc": "Raw output from the latest dsh plugin command",
+      }),
+    "bridge: Plugins English dictionary",
+  );
+
+  ctx.slots.inject("settings.section", () =>
+    ctx.slots.register(
+      {
+        name: "settings.section",
+        id: "desktop-plugins",
+        // 官方插件设置节已占用 plugins id；菜单/标签图标由 settings-nav-icons 补齐。
+        order: 85,
+        label: () => pluginT("nav"),
+        locale: PLUGIN_NS,
+        children: {},
+      },
+      () => <PluginPanel t={pluginT} />,
+    ),
   );
 
   ctx.slots.inject("settings.section", () =>
@@ -189,7 +365,7 @@ export function apply(ctx: ClientContextLike): void {
         locale: NS,
         children: {},
       },
-      () => <DesktopPanel t={t} />,
+      () => <DesktopPanel t={t} modeScope={modeScope} />,
     ),
   );
 }
@@ -221,6 +397,7 @@ const themeSectionZh: Record<string, string> = {
   "glass.title": "玻璃透明度",
   "glass.desc": "数值越低，侧栏、对话框和输入框越通透",
   "glass.opacity": "透明度",
+  "glass.reset": "恢复默认",
   "glass.preview": "玻璃表面预览",
   "glass.surface": "面板玻璃",
   "custom.title": "自定义主题",
@@ -244,6 +421,7 @@ const themeSectionZh: Record<string, string> = {
   "type.title": "排版",
   "type.desc": "界面与代码字号、字体族",
   "type.interfaceSize": "界面字号",
+  "type.reset": "恢复默认",
   "type.codeSize": "代码字号",
   "type.sans": "界面字体族",
   "type.code": "代码字体族",
@@ -279,6 +457,7 @@ const themeSectionEn: Record<string, string> = {
   "glass.title": "Glass opacity",
   "glass.desc": "Lower values make sidebar, dialogs and composer more translucent",
   "glass.opacity": "Opacity",
+  "glass.reset": "Reset glass",
   "glass.preview": "Glass surface preview",
   "glass.surface": "Panel glass",
   "custom.title": "Custom themes",
@@ -302,6 +481,7 @@ const themeSectionEn: Record<string, string> = {
   "type.title": "Typography",
   "type.desc": "Interface and code font sizes and families",
   "type.interfaceSize": "Interface font size",
+  "type.reset": "Reset typography",
   "type.codeSize": "Code font size",
   "type.sans": "Interface font family",
   "type.code": "Code font family",

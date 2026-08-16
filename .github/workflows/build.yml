@@ -1,11 +1,9 @@
-name: Build & Release
+name: CI
 
 on:
   push:
     branches:
       - release
-    tags:
-      - "v*"
   pull_request:
     paths:
       - "apps/shell/**"
@@ -20,8 +18,8 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: build-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   prepare:
@@ -29,6 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: read
     outputs:
       version: ${{ steps.bump.outputs.version }}
       bumped: ${{ steps.bump.outputs.bumped }}
@@ -49,12 +48,13 @@ jobs:
         shell: bash
         env:
           HEAD_MESSAGE: ${{ github.event.head_commit.message }}
+          GH_TOKEN: ${{ github.token }}
         run: node .github/scripts/bump-version.mjs
 
   build:
     name: ${{ matrix.name }}
     needs: prepare
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || needs.prepare.outputs.bumped == 'false'
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -137,70 +137,4 @@ jobs:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.bundle }}
           if-no-files-found: error
-
-  release:
-    name: Publish GitHub Release
-    if: (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/release') || startsWith(github.ref, 'refs/tags/v')
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-        with:
-          ref: ${{ github.ref }}
-
-      - name: Enable Corepack
-        run: corepack enable
-
-      - name: Resolve version
-        id: version
-        shell: bash
-        run: |
-          VERSION="$(node -e 'console.log(require("./package.json").version)')"
-          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Download build artifacts
-        uses: actions/download-artifact@v5
-        with:
-          pattern: DSH-Desktop-*
-          merge-multiple: true
-
-      - name: Rename artifacts with platform names
-        shell: bash
-        run: |
-          VERSION="${{ steps.version.outputs.VERSION }}"
-          find . -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' \) | while read -r f; do
-            dir=$(dirname "$f")
-            case "$f" in
-              *.dmg) new="DSH.Desktop-${VERSION}-macOS-aarch64.dmg" ;;
-              *.exe) new="DSH.Desktop-${VERSION}-Windows-x64.exe" ;;
-              *.AppImage) new="DSH.Desktop-${VERSION}-Linux-x64.AppImage" ;;
-              *.deb) new="DSH.Desktop-${VERSION}-Linux-x64.deb" ;;
-            esac
-            mv "$f" "$dir/$new"
-          done
-          find . -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' \)
-
-      - name: Extract latest changelog
-        id: notes
-        shell: bash
-        run: |
-          awk 'BEGIN{found=0} /^## \[/{if(found) exit; found=1} found{print}' CHANGELOG.md > /tmp/RELEASE_NOTES.md
-          if [ ! -s /tmp/RELEASE_NOTES.md ]; then
-            printf '# DSH Desktop v%s\n' "${{ steps.version.outputs.VERSION }}" > /tmp/RELEASE_NOTES.md
-          fi
-
-      - name: Publish release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ steps.version.outputs.VERSION }}
-          release_name: DSH Desktop v${{ steps.version.outputs.VERSION }}
-          body_path: /tmp/RELEASE_NOTES.md
-          files: |
-            **/*.dmg
-            **/*.exe
-            **/*.AppImage
-            **/*.deb
+          retention-days: 90

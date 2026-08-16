@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "bridge",
-  "description": "DSH web（当前托管的 loopback 远程页面）桌面设置与桥接能力：仅保留 bridge/shortcuts/projects 实际消费的最小命令切片",
+  "description": "DSH web（当前托管的 loopback 远程页面）桌面设置与桥接能力：仅保留远程页面实际消费的最小命令切片",
   "windows": ["main"],
   "remote": {
     "urls": ["http://127.0.0.1:*"]
@@ -22,6 +22,20 @@
     "allow-set-autostart",
     "allow-get-desktop-settings",
     "allow-set-desktop-settings",
+    "allow-get-lan-proxy",
+    "allow-set-lan-proxy",
+    "allow-start-lan-proxy",
+    "allow-stop-lan-proxy",
+    "allow-get-profiles",
+    "allow-select-profile",
+    "allow-get-active-profile",
+    "allow-install-profile-plugin",
+    "allow-remove-profile-plugin",
+    "allow-update-profile-plugins",
+    "allow-get-remote-plugins",
+    "allow-set-remote-plugins",
+    "allow-sync-remote-plugins",
+    "allow-get-installed-plugins",
     "allow-check-update",
     "allow-install-update",
     "allow-window-action"

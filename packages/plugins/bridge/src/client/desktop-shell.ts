@@ -5,6 +5,7 @@
  * 不会触发这些改动。
  */
 import { getBridge } from "../../../client-kit/inject";
+import { applyAdvancedModeMarker } from "./advanced/theme-presenter";
 
 const CONTROLS_ID = "dsh-desktop-controls";
 const DRAG_ID = "dsh-desktop-drag";
@@ -12,6 +13,8 @@ const MAC_TRAFFIC_WIDTH = 80;
 const WINDOW_CONTROLS_WIDTH = 96;
 
 export type DesktopPlatform = "darwin" | "win32" | "linux";
+
+export type DesktopMode = "compatibility" | "advanced";
 
 interface DesktopBridgeLike {
   platform?: string;
@@ -119,14 +122,37 @@ function attachTopBar(bar: HTMLElement, platform: DesktopPlatform, hasControls: 
 /**
  * 应用桌面壳平台标记与标题栏形态。返回 disposer，插件 HMR 时由 cordis 清理。
  */
-export function applyDesktopShell(): () => void {
+export function applyDesktopShell(
+  mode: DesktopMode = "compatibility",
+  platformHint?: string,
+): () => void {
   if (typeof document === "undefined") return () => {};
   const bridge = getBridge<DesktopBridgeLike>();
-  if (bridge === null) return () => {};
-  const platform = resolveDesktopPlatform(bridge?.platform);
+  const platform = resolveDesktopPlatform(platformHint ?? bridge?.platform);
   const root = document.documentElement;
   root.dataset.dshDesktop = "true";
   root.dataset.dshDesktopPlatform = platform;
+  root.dataset.dshDesktopMode = mode;
+
+  if (mode === "advanced") {
+    // 上游 ui-layout 的 AppFrame 已提供三栏、拖拽把手与 overlay；这里只切换
+    // advanced 标记，不重复注册 root，避免 shadow 官方布局。
+    const removeMarker = applyAdvancedModeMarker();
+    return () => {
+      removeMarker();
+      root.removeAttribute("data-dsh-desktop");
+      root.removeAttribute("data-dsh-desktop-platform");
+      root.removeAttribute("data-dsh-desktop-mode");
+    };
+  }
+
+  if (bridge === null) {
+    return () => {
+      root.removeAttribute("data-dsh-desktop");
+      root.removeAttribute("data-dsh-desktop-platform");
+      root.removeAttribute("data-dsh-desktop-mode");
+    };
+  }
 
   const controls = createControls(bridge);
   const drag = createDragStrip();
@@ -161,5 +187,6 @@ export function applyDesktopShell(): () => void {
     drag.remove();
     root.removeAttribute("data-dsh-desktop");
     root.removeAttribute("data-dsh-desktop-platform");
+    root.removeAttribute("data-dsh-desktop-mode");
   };
 }

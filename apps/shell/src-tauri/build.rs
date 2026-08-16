@@ -14,6 +14,10 @@ fn main() {
             "set_autostart",
             "get_desktop_settings",
             "set_desktop_settings",
+            "get_lan_proxy",
+            "set_lan_proxy",
+            "start_lan_proxy",
+            "stop_lan_proxy",
             "get_projects",
             "add_project",
             "update_project",
@@ -37,6 +41,16 @@ fn main() {
             "update_dsh",
             "open_paths",
             "import_paths",
+            "get_profiles",
+            "select_profile",
+            "get_active_profile",
+            "install_profile_plugin",
+            "remove_profile_plugin",
+            "update_profile_plugins",
+            "get_remote_plugins",
+            "set_remote_plugins",
+            "sync_remote_plugins",
+            "get_installed_plugins",
         ]));
     if let Err(error) = tauri_build::try_build(attributes) {
         println!("{error}");

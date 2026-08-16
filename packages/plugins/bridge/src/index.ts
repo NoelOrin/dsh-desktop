@@ -1,7 +1,18 @@
 import type { Context } from "@deepseek-ai/cordis";
+import type { SettingsProvider } from "@deepseek-ai/dsh-settings";
+import { settingsNamespace } from "@deepseek-ai/dsh-settings";
+import z from "@deepseek-ai/schemastery";
 import type {
+  DesktopProfileState,
   DesktopSettings,
   DshConfig,
+  DshProfileSummary,
+  InstalledPluginSummary,
+  LanProxySettings,
+  LanProxySnapshot,
+  PluginOperationResult,
+  ProfileSelectionResult,
+  RemotePluginPreset,
   RuntimeSnapshot,
   WindowAction,
 } from "@dsh-desktop/contracts";
@@ -11,6 +22,8 @@ import type {
 // Rust 侧在 apps/shell/src-tauri/capabilities/bridge.json 声明实现与权限，
 // 白名单见 docs/plugin-tauri-boundary.md。契约与 packages/contracts（native）分离。
 export const name = "bridge";
+
+export const inject = ["settings"] as const;
 
 /** 壳注入到 dsh web 页面的受控桥接 API（window.__DSH_DESKTOP__）。 */
 export interface DshDesktopBridge {
@@ -33,6 +46,32 @@ export interface DshDesktopBridge {
   desktop: {
     get(): Promise<DesktopSettings>;
     set(settings: DesktopSettings): Promise<void>;
+  };
+  /** 局域网反向代理：配置持久化与受管启停。 */
+  lanProxy: {
+    get(): Promise<LanProxySnapshot>;
+    set(settings: LanProxySettings): Promise<LanProxySnapshot>;
+    start(): Promise<LanProxySnapshot>;
+    stop(): Promise<LanProxySnapshot>;
+  };
+  /** profile 发现与切换；active 为状态机快照，pending 需重启后生效。 */
+  profiles: {
+    list(): Promise<DshProfileSummary[]>;
+    active(): Promise<DesktopProfileState>;
+    select(name: string): Promise<ProfileSelectionResult>;
+  };
+  /** 远程插件预设：启动时自动安装到 active profile。 */
+  remotePlugins: {
+    list(): Promise<RemotePluginPreset[]>;
+    save(presets: RemotePluginPreset[]): Promise<RemotePluginPreset[]>;
+  };
+  /** 受管 dsh 插件操作；profile 由 Rust 自动取 active。 */
+  plugins: {
+    installed(): Promise<InstalledPluginSummary[]>;
+    install(spec: string): Promise<PluginOperationResult>;
+    remove(name: string): Promise<PluginOperationResult>;
+    update(): Promise<PluginOperationResult>;
+    sync(group?: string): Promise<PluginOperationResult[]>;
   };
   shortcuts: {
     register(shortcut: string, cb?: () => void): Promise<() => void>;
@@ -76,6 +115,14 @@ interface BridgeHealthContext {
 }
 
 export function apply(ctx: Context): void {
+  const DESKTOP_NS = settingsNamespace("dsh-desktop");
+  (ctx as Context & { settings: SettingsProvider }).settings.register(
+    DESKTOP_NS,
+    z.object({
+      mode: z.union(["compatibility", "advanced"] as const).default("compatibility"),
+    }),
+    { applies: "restart" },
+  );
   // 固定健康端点由桥接插件提供，壳侧用 HTTP 探测 dsh web 是否真正就绪。
   (ctx as unknown as BridgeHealthContext).inject(["webServer"] as never, (sctx) => {
     sctx.webServer.register({

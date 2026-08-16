@@ -18,7 +18,7 @@ DSH Desktop 的 main 窗口启动页：Vite + TypeScript 的单页应用（无�
 | 调用 | `invoke("restart")` | 重新检测并启动 dsh |
 | 调用 | `invoke("open_log_directory")` | 打开日志目录 |
 | 调用 | `invoke("get_ui_theme")` | 拉取壳侧主题快照 `UiThemeSnapshot` |
-| 调用 | `invoke("window_action")` | 无边框窗口控制（minimize / maximize / close） |
+| 调用 | `invoke("window_action")` | 无边框窗口控制（minimize / maximize / close / toggle-visible） |
 | 监听 | `dsh-status` | 状态快照（phase / message / url / logs 等） |
 | 监听 | `dsh-log` | 追加一行日志文本 |
 | 监听 | `dsh-theme` | 系统主题（light / dark，供启动页深色适配） |

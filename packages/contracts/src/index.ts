@@ -9,6 +9,9 @@ export type RuntimePhase =
 
 export type StartupMode = "normal" | "tray" | "minimized";
 
+/** dsh 桌面运行模式。 */
+export type DesktopMode = "compatibility" | "advanced";
+
 export interface DeepLinkPayload {
   id: string;
   url: string;
@@ -54,12 +57,43 @@ export interface DshConfig {
   dsh_bin: string | null;
   dsh_node: string | null;
   dsh_home: string | null;
+  remote_plugins_path: string | null;
   shortcuts: string[];
+  remote_plugins: RemotePluginPreset[];
+}
+
+/** 远程插件预设来源；外部目录/文件中的预设为固定配置。 */
+export type RemotePluginSource = "local" | "external";
+
+/** 用户预设的远程插件源；启动时自动执行 `dsh plugin add <url>`。 */
+export interface RemotePluginPreset {
+  id: string;
+  url: string;
+  enabled: boolean;
+  group: string;
+  source: RemotePluginSource;
+  allow_build?: string[];
 }
 
 export interface DesktopSettings {
   autostart: boolean;
   startup_mode: StartupMode;
+}
+
+/** 局域网反向代理配置，存于壳侧 lan-proxy.json。 */
+export interface LanProxySettings {
+  bind: string;
+  port: number;
+  target: string | null;
+}
+
+/** 局域网反向代理状态快照。 */
+export interface LanProxySnapshot {
+  settings: LanProxySettings;
+  running: boolean;
+  url: string | null;
+  urls: string[];
+  error: string | null;
 }
 
 /** 壳侧维护的本地项目条目（项目列表与右键菜单操作的唯一状态源）。 */
@@ -82,6 +116,44 @@ export interface ProjectWorktreeResult {
   entry: ProjectEntry;
   target: string;
   branch: string;
+}
+
+/** dsh profile 摘要（profile 发现结果）。 */
+export interface DshProfileSummary {
+  name: string;
+  dir: string;
+  exists: boolean;
+  web_capable: boolean;
+  problem: string | null;
+}
+
+/** profile 切换状态机快照（版本化，便于损坏恢复）。 */
+export interface DesktopProfileState {
+  version: 1;
+  active: string;
+  pending: string | null;
+  last_known_good: string;
+}
+
+/** profile 选择结果。 */
+export interface ProfileSelectionResult {
+  profile: string;
+  restart_required: boolean;
+}
+
+/** 受管 dsh 插件操作结果。 */
+export interface PluginOperationResult {
+  ok: boolean;
+  exit_code: number | null;
+  output: string[];
+}
+
+/** 当前 profile 直装依赖摘要，供插件管理 UI 使用。 */
+export interface InstalledPluginSummary {
+  name: string;
+  version: string | null;
+  bundle: boolean;
+  problem: string | null;
 }
 
 export interface UiThemeTokens {
@@ -119,6 +191,10 @@ export const COMMANDS = {
   windowAction: "window_action",
   getDesktopSettings: "get_desktop_settings",
   setDesktopSettings: "set_desktop_settings",
+  getLanProxy: "get_lan_proxy",
+  setLanProxy: "set_lan_proxy",
+  startLanProxy: "start_lan_proxy",
+  stopLanProxy: "stop_lan_proxy",
   getProjects: "get_projects",
   addProject: "add_project",
   updateProject: "update_project",
@@ -128,6 +204,16 @@ export const COMMANDS = {
   archiveProjectChats: "archive_project_chats",
   createProjectWorktree: "create_project_worktree",
   showProjectInFinder: "show_project_in_finder",
+  getProfiles: "get_profiles",
+  selectProfile: "select_profile",
+  getActiveProfile: "get_active_profile",
+  installProfilePlugin: "install_profile_plugin",
+  removeProfilePlugin: "remove_profile_plugin",
+  updateProfilePlugins: "update_profile_plugins",
+  getRemotePlugins: "get_remote_plugins",
+  setRemotePlugins: "set_remote_plugins",
+  syncRemotePlugins: "sync_remote_plugins",
+  getInstalledPlugins: "get_installed_plugins",
   getShortcuts: "get_shortcuts",
   unregisterAllShortcuts: "unregister_all_shortcuts",
   getPendingDeepLinks: "get_pending_deeplinks",

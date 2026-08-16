@@ -11,7 +11,8 @@ dsh 插件的开发容器：**每个含 `dsh` 字段的子目录一个 dsh 插�
   （Rust 侧在 `apps/shell/src-tauri/capabilities/bridge.json` 声明），不并入
   `packages/contracts`——contracts 只负责 native 内容（边界见 `docs/plugin-tauri-boundary.md`）。
   host 侧注册 `dsh-desktop/health` 健康端点，不实现 dsh 业务；client 侧在 dsh WebUI 设置面板
-  渲染“桌面”与“外观”设置节，桥接面覆盖桌面原生能力（详见 `./bridge/AGENTS.md`）
+  渲染“插件”、“桌面”与“外观”设置节，插件页按 group 管理本地与外部固定预设，并按 `dsh-desktop.mode` 提供兼容 / 高级桌面形态
+  （详见 `./bridge/AGENTS.md`）
 - `shortcuts/`（`@dsh-desktop/plugin-shortcuts`）— **全局快捷键设置插件**（client）：
   在 dsh WebUI 设置面板注册“快捷键”设置节，经 `window.__DSH_DESKTOP__.shortcuts`
   管理壳侧全局快捷键（注册 / 查询 / 移除 / 全部清理）；同时在 client 全局生命周期监听
@@ -28,7 +29,7 @@ dsh 插件的开发容器：**每个含 `dsh` 字段的子目录一个 dsh 插�
   端点只监听循环回环地址，动作均为工作区级最小切片。
 - `reasoning/`（`@dsh-desktop/plugin-reasoning`）— **模型设置插件**（client）：
   在 dsh WebUI 设置面板注册“模型”设置节，按参考实现复刻官方模型管理页，并在
-  pi-ai 模型行的自定义设置中提供 Low / Medium / High / Very High / Extreme 勾选；
+  pi-ai 模型行的自定义设置中提供 low / medium / high / xhigh / max 勾选；
   保存时经 settings RPC 写入 `reasoningEfforts`，让输入栏模型菜单直接切换推理等级。
   实现与维护约定见 `./reasoning/AGENTS.md`
 - `client-kit/` — **非插件共享源码**：统一 `window.__DSH_DESKTOP__` 读取、client CSS
@@ -53,7 +54,7 @@ dsh 插件的开发容器：**每个含 `dsh` 字段的子目录一个 dsh 插�
 - `cordis.patch.yml` 是 YAML 配置层：`- insert:` 向 profile 插入插件行（`id` / `name`）
 - 插件源码：`export const name` + `export function apply(ctx, config)`；事件名必须是
   cordis `Events` 接口里的键（骨架阶段不要注册未声明的事件）
-- 安装：**内嵌装配（主交付路径）**——`yarn build:plugins` 编译打包进 Tauri resources，`tauri dev` 与 `tauri build` 前都会自动构建，桌面应用启动时自动复制进 `$DSH_HOME/profiles/node_modules/@dsh-desktop/<name>/` 并以 `--patch` overlay 挂载（见 `docs/plugin-tauri-boundary.md` §6）；开发期亦可 `dsh plugin --profile web add <包>` 单独安装
+- 安装：**内嵌装配（主交付路径）**——`yarn build:plugins` 编译打包进 Tauri resources，`tauri dev` 与 `tauri build` 前都会自动构建，桌面应用启动时自动复制进 `$DSH_HOME/profiles/node_modules/@dsh-desktop/<name>/` 并以 `--patch` overlay 挂载（见 `docs/plugin-tauri-boundary.md` §6）；开发期亦可 `dsh plugin --profile <active> add <包>` 单独安装
 - 构建与装配：`yarn build:plugins`（根脚本）经 tsdown 编译各插件——host ESM 产出 `lib/index.js`，可选 client UMD 产出 `lib/client.js`——并把自包含 dist 包（`package.json` 白名单字段 + `cordis.patch.yml` + `lib/`）装配进 `apps/shell/src-tauri/resources/plugins/<name>/`；桌面应用启动时 Rust 侧自动装配进 dsh 的 profile 模块兜底目录并以 `--patch` overlay 挂载（机制见 `docs/plugin-tauri-boundary.md` §6）
   构建成功后自动清理 `resources/plugins` 中已不在源码里的旧插件目录；传入 `--home` 时还会清理 profile 中已不存在的 `@dsh-desktop/plugin-*` 包
 - 开发热更新：`yarn dev` 会先跑 `yarn build:plugins`，再经 `scripts/dev.mjs` 同时启动 Vite 与 `scripts/watch-plugins.mjs`；watch 扫描 `packages/plugins` 下全部源码（含 `client-kit/` 与 tsdown 配置，排除 `lib/` 产物），变化后重新构建并热部署到 `$DSH_HOME/profiles/node_modules`（未设置 `DSH_HOME` 时用 `~/.dsh`），dsh 自带的 `dsh-client-hmr` 会轮询 client bundle 并在 Web UI 中热替换；开发模式壳侧还会在收到 rebuilt 帧后自动整页刷新，作为页面级兜底。也可以只运行 `yarn dev:plugins` 重建并热部署，便于在已启动的 dsh web 中单独调试插件
@@ -130,6 +131,7 @@ dsh 插件的开发容器：**每个含 `dsh` 字段的子目录一个 dsh 插�
 - host 侧设置 namespace 必须小写 kebab-case，用 `ctx.settings.register(ns, schema,
   options)` 注册；`base` 是组合层，`applies` 是 `live` / `restart`，跨字段约束放
   `validate()`，不放 schema。
+- host 插件直接访问 `ctx.settings` 时，必须在模块导出中声明 `inject: ["settings"]`；namespace 禁止包含点号，避免 dsh settings 校验失败。
 - 用户层、组合 base、schema 默认值按“默认值 → base → user”解析；`replace` 才是删除/
   重置路径，`update` 只稀疏合并 user 层。
 - 对外传输设置描述必须 `redactSecrets: true`，secret 用 path op 写回，绝不能把
@@ -137,7 +139,7 @@ dsh 插件的开发容器：**每个含 `dsh` 字段的子目录一个 dsh 插�
 - client 面经 `@deepseek-ai/dsh-client-ui-settings` 的 `settingsScope.bind()` 读写，
   写入带 `expectedRevision`，避免覆盖并发变更；字段是否被用户覆盖按“是否出现在 user
   层”判断，不按值比较。
-- bridge client 只注册“桌面/外观”设置节；`ui-theme` 由上游
+- bridge client 只注册“插件 / 桌面 / 外观”设置节；`ui-theme` 由上游
   `dsh-client-ui-theme` host 注册，client 只 bind，绝不重复注册；`shortcuts` 插件
   独立注册“快捷键”设置节；`projects` 插件不注册设置节，只提供侧边栏菜单端点。
 
@@ -168,7 +170,7 @@ dsh 插件的开发容器：**每个含 `dsh` 字段的子目录一个 dsh 插�
 ## 边界
 
 - 本包不做业务：只负责插件自身逻辑；桥接命令契约由 `bridge/` 插件自持（不并入 `packages/contracts`，contracts 只负责 native）
-- 插件管理（清单 / 安装 UI）是 dsh 现成的 cordis 插件（`dsh-host-plugin-inventory` 等），
-  不在本包重复实现
+- dsh 内插件清单 / 安装 UI 仍是 dsh 现成的 cordis 插件（`dsh-host-plugin-inventory` 等）；
+  bridge 只补充壳侧远程插件预设（`packages/external-plugins` 外部目录 + config 本地分组）、受管 add/remove/update 与已安装依赖列表，不接管 dsh 内部清单
 - `@deepseek-ai/cordis` 等新版本发布不足 1 天会被 yarn 的 npmMinimalAgeGate 隔离；
   已在仓库 `.yarnrc.yml` 对 `@deepseek-ai/*` 定向放行

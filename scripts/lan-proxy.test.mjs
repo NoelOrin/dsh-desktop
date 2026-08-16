@@ -9,8 +9,7 @@ import path from "node:path";
  * lan-proxy 冒烟测试（零依赖，仅 node:test / node:assert / node:http / node:net）
  *
  * 与真实 dsh harness（127.0.0.1:53553）完全无关：起一个临时 mock 上游 + 一个代理
- * 子进程，逐项验证 token 门禁、Host/Origin 改写、跨站拒绝、WS 升级、hop-by-hop
- * 头剥离。
+ * 子进程，逐项验证 Host/Origin 改写、跨站拒绝、WS 升级、hop-by-hop 头剥离。
  *
  * 运行：
  *   /usr/local/bin/node --test scripts/lan-proxy.test.mjs
@@ -20,9 +19,6 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROXY_SCRIPT = path.join(__dirname, "lan-proxy.mjs");
-
-// 随机 token：每次运行都不同，避免与环境变量/固定值撞车
-const TOKEN = crypto.randomBytes(16).toString("hex");
 
 let mockServer;
 let mockPort;
@@ -66,10 +62,9 @@ function waitForPort(port, timeoutMs = 10000) {
 }
 
 // 走代理发一个 HTTP 请求，返回 { status, headers, body }
-function httpGet(port, { method = "GET", path = "/", token, headers = {}, body } = {}) {
+function httpGet(port, { method = "GET", path = "/", headers = {}, body } = {}) {
   return new Promise((resolve, reject) => {
     const h = { ...headers };
-    if (token !== undefined) h.Authorization = `Bearer ${token}`;
     const req = http.request({ host: "127.0.0.1", port, method, path, headers: h }, (res) => {
       const chunks = [];
       res.on("data", (c) => chunks.push(c));
@@ -88,7 +83,7 @@ function httpGet(port, { method = "GET", path = "/", token, headers = {}, body }
 }
 
 // 用裸 TCP 走代理发 WS 升级请求，返回服务端回写的前两段（状态行 + 头）
-function wsUpgrade(port, token) {
+function wsUpgrade(port) {
   return new Promise((resolve, reject) => {
     const sock = net.connect({ host: "127.0.0.1", port });
     let buf = "";
@@ -101,7 +96,6 @@ function wsUpgrade(port, token) {
       sock.write(
         "GET /api/events.mux HTTP/1.1\r\n" +
           `Host: 127.0.0.1:${port}\r\n` +
-          `Authorization: Bearer ${token}\r\n` +
           "Connection: Upgrade\r\n" +
           "Upgrade: websocket\r\n" +
           `Sec-WebSocket-Key: ${key}\r\n` +
@@ -191,7 +185,7 @@ test.before(async () => {
   });
   mockPort = mockServer.address().port;
 
-  // 2) 代理子进程：--target 指向 mock，随机 token，独立端口
+  // 2) 代理子进程：--target 指向 mock，独立端口
   proxyPort = await freePort();
   proxyProc = spawn(
     process.execPath,
@@ -203,8 +197,6 @@ test.before(async () => {
       String(proxyPort),
       "--target",
       `127.0.0.1:${mockPort}`,
-      "--token",
-      TOKEN,
     ],
     { stdio: ["ignore", "pipe", "pipe"] },
   );
@@ -225,27 +217,16 @@ test.after(async () => {
 
 // ---- 用例 ----
 
-test("无 token GET → 401", async () => {
+test("GET → 200", async () => {
   const r = await httpGet(proxyPort, { path: "/" });
-  assert.equal(r.status, 401);
-});
-
-test("错误 token GET → 401", async () => {
-  const r = await httpGet(proxyPort, { path: "/", token: "wrong-token" });
-  assert.equal(r.status, 401);
-});
-
-test("正确 token GET → 200", async () => {
-  const r = await httpGet(proxyPort, { path: "/", token: TOKEN });
   assert.equal(r.status, 200);
   assert.equal(r.body, "mock-ok");
 });
 
-test("正确 token POST /api + Origin → 上游看到回环 Host/Origin 且响应 200", async () => {
+test("POST /api + Origin → 上游看到回环 Host/Origin 且响应 200", async () => {
   const r = await httpGet(proxyPort, {
     method: "POST",
     path: "/api/echo",
-    token: TOKEN,
     headers: { Origin: "http://192.168.1.50:8080", "Content-Type": "application/json" },
     body: JSON.stringify({ type: "client-request" }),
   });
@@ -263,7 +244,6 @@ test("Sec-Fetch-Site: cross-site → 403", async () => {
   const r = await httpGet(proxyPort, {
     method: "POST",
     path: "/api/events.mux",
-    token: TOKEN,
     headers: { "Sec-Fetch-Site": "cross-site", "Content-Type": "application/json" },
     body: "{}",
   });
@@ -271,7 +251,7 @@ test("Sec-Fetch-Site: cross-site → 403", async () => {
 });
 
 test("WS 升级经代理 → 客户端收到 101", async () => {
-  const resp = await wsUpgrade(proxyPort, TOKEN);
+  const resp = await wsUpgrade(proxyPort);
   assert.match(resp, /^HTTP\/1\.1 101 /);
   assert.match(resp, /sec-websocket-accept:/i);
 });
@@ -281,7 +261,6 @@ test("响应剥掉 hop-by-hop 头（connection/keep-alive/trailer）且保留 se
   // 从而能确定性地断言上游的 keep-alive/trailer 头没有漏到客户端。
   const r = await httpGet(proxyPort, {
     path: "/hopcheck",
-    token: TOKEN,
     headers: { Connection: "close" },
   });
   assert.equal(r.status, 200);

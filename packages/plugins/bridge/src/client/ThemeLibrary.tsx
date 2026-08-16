@@ -1,4 +1,6 @@
 /** 主题库：每个家族一张双半预览卡，点哪半用哪半。 */
+
+import { IconCheckOutline16 } from "@deepseek-ai/dsh-client-ui-primitives";
 import { useSyncExternalStore } from "react";
 import { isBuiltinFamilyId, listThemeFamilies, type ThemeFamily } from "../shared/theme";
 import css from "./appearance.module.css";
@@ -53,8 +55,8 @@ export function ThemeLibrary({
                   style={{
                     background: light.background,
                     color: light.foreground,
-                    borderRight: "1px solid var(--dsw-alias-border-l1)",
                   }}
+                  aria-pressed={lightActive}
                   aria-label={`${family.name} ${t("library.lightHalf")}`}
                   title={t("library.lightHalf")}
                   onClick={() => store.setThemeHalf("light", family.id)}
@@ -69,7 +71,7 @@ export function ThemeLibrary({
                   <span className={css.themeHalfLabel}>{t("library.lightHalf")}</span>
                   {lightActive ? (
                     <span className={css.themeBadge} aria-hidden="true">
-                      ✓
+                      <IconCheckOutline16 size={14} />
                     </span>
                   ) : null}
                 </button>
@@ -77,6 +79,7 @@ export function ThemeLibrary({
                   type="button"
                   className={`${css.themeHalf}${darkActive ? ` ${css.themeHalfActive}` : ""}`}
                   style={{ background: dark.background, color: dark.foreground }}
+                  aria-pressed={darkActive}
                   aria-label={`${family.name} ${t("library.darkHalf")}`}
                   title={t("library.darkHalf")}
                   onClick={() => store.setThemeHalf("dark", family.id)}
@@ -91,7 +94,7 @@ export function ThemeLibrary({
                   <span className={css.themeHalfLabel}>{t("library.darkHalf")}</span>
                   {darkActive ? (
                     <span className={css.themeBadge} aria-hidden="true">
-                      ✓
+                      <IconCheckOutline16 size={14} />
                     </span>
                   ) : null}
                 </button>

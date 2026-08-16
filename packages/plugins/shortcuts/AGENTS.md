@@ -20,22 +20,21 @@ dsh 侧快捷键优先集中在这里，不散落到 bridge、projects 或其他
   - 新建对话：`ctx.workspaces.startSession()`（复用空白会话或新建，无工作区时进新建视图）
   - 预设经 `bridge.onShortcut` 分发：一次订阅把快捷键字符串映射回对应动作；
     默认全部关闭（避免抢占系统级组合键），快捷键字符串可编辑，启用后走壳侧注册并持久化
-- 通过 client 侧 localStorage 持久化快捷键设置，让行为可配置并跨页面刷新保留。
+- 通过 dsh settings 的 `dsh-desktop-shortcuts` namespace 持久化快捷键设置，让行为可配置并跨页面刷新保留。
 
 ## 双面结构
 
 | 面 | 文件 | 职责 |
 | --- | --- | --- |
-| host | `src/index.ts` | 无额外逻辑，保留插件入口 |
+| host | `src/index.ts` | 注册 `dsh-desktop-shortcuts` settings namespace |
 | shared | `src/shared/settings.ts` | client 共用的设置类型、默认值（含预设）与归一化函数 |
 | client | `src/client.tsx` | 快捷键设置节、全局 keydown 监听、常用动作预设 UI 与分发、停止对话动作、`shell.overlay` Toast 反馈 |
 | client runtime | `src/client/runtime.ts` | 桥接对象最小切片（含 `onShortcut` / `windowAction`）、设置 scope 最小切片 |
 | client UI | `src/client/*` | 设置页布局、样式、Toast 与快捷键管理组件 |
 
-## 本地配置存储
+## 配置持久化
 
-上游 `settings.describe` 默认不暴露自定义 settings namespace，因此本插件不依赖 host
-settings 注册，改用 `localStorage` 的 `@dsh-desktop/plugin-shortcuts:settings`。
+host 注册 `dsh-desktop-shortcuts` settings namespace；client 通过 `settingsScope.bind` 读写。
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
@@ -45,9 +44,9 @@ settings 注册，改用 `localStorage` 的 `@dsh-desktop/plugin-shortcuts:setti
 
 预设 id 与默认快捷键（可编辑）：`toggleWindow` → `CmdOrCtrl+Shift+Space`、
 `stopConversation` → `CmdOrCtrl+Shift+.`、`newConversation` → `CmdOrCtrl+Shift+N`。
-预设以 `presets` 字段稀疏更新，scope 写回时与现有值深合并，避免覆盖其他预设。
+预设以 `presets` 字段稀疏更新，写回时与现有值深合并，避免覆盖其他预设。
 
-设置由 client 面的本地 scope 读取并写回；没有 localStorage 时仅当前会话生效。
+旧 `localStorage` 数据仅在首次装载时一次性迁移，随后删除旧 key。
 
 ## 行为约定
 
@@ -64,7 +63,7 @@ settings 注册，改用 `localStorage` 的 `@dsh-desktop/plugin-shortcuts:setti
 ## 维护约定
 
 - 新增 dsh 侧快捷键时，先在本插件登记，避免快捷键逻辑散落到其他插件。
-- 需要持久化设置时，扩展 `src/shared/settings.ts` 与 host schema，并在设置页补控件。
+- 需要持久化设置时，扩展 `src/shared/settings.ts` 与 host settings schema，并保持 client `settingsScope` 读写一致。
 - 修改桥接命令或事件时，同步 `packages/plugins/bridge/AGENTS.md`、
   `apps/shell/src-tauri/capabilities/shortcuts.json`、`bridge.json` 与本文档。
 - `lib/` 为构建产物，不手改；修改后运行 `yarn typecheck`、`yarn lint`、

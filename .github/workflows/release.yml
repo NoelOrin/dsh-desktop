@@ -53,7 +53,7 @@ jobs:
           RUN_ID=""
 
           for attempt in $(seq 1 90); do
-            RUN_JSON="$(gh api "repos/$REPO/actions/runs?event=push&branch=release&per_page=100" \
+            RUN_JSON="$(gh api "repos/$REPO/actions/runs?per_page=100" \
               | jq -c --arg sha "$TARGET_SHA" --arg path "$CI_WORKFLOW" \
                 '[.workflow_runs[] | select(.path == $path and .head_sha == $sha)] | first // empty')"
 

@@ -135,6 +135,8 @@ export function applyDesktopShell(
   root.dataset.dshDesktopMode = mode;
 
   if (mode === "advanced") {
+    // 上游 ui-layout 的 AppFrame 已提供三栏、拖拽把手与 overlay；这里只切换
+    // advanced 标记，不重复注册 root，避免 shadow 官方布局。
     const removeMarker = applyAdvancedModeMarker();
     return () => {
       removeMarker();

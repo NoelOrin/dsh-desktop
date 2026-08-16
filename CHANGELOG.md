@@ -1,8 +1,16 @@
 # Changelog
 
-## [Unreleased]
+## [0.4.0] - 2026-08-16
 
 ### Features
+
+- feat(ci): 构建成功后自动发布 GitHub Release (#5)
+
+### Other
+
+- docs(changelog): 关联 PR #5 全自动发布说明 (#5)
+
+### Pending Updates
 
 - [PR #5](https://github.com/NoelOrin/dsh-desktop/pull/5)：构建成功后自动创建并发布 GitHub Release
 

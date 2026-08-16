@@ -25,6 +25,16 @@ pub struct DshProfileSummary {
     pub problem: Option<String>,
 }
 
+/// 当前 profile 的直装依赖摘要，供插件管理 UI 使用。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct InstalledPluginSummary {
+    pub name: String,
+    pub version: Option<String>,
+    pub bundle: bool,
+    pub problem: Option<String>,
+}
+
 /// profile 切换状态机快照（版本化，便于损坏恢复）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -216,7 +226,7 @@ fn sanitize_state(state: &mut ProfileState) {
     if state
         .pending
         .as_deref()
-        .map_or(false, |name| !is_valid_profile_name(name))
+        .is_some_and(|name| !is_valid_profile_name(name))
     {
         state.pending = None;
     }
@@ -298,7 +308,7 @@ pub fn begin_startup(state_path: &Path, home: &Path) -> Result<StartupContext, S
 
     let pending_valid = pending
         .as_deref()
-        .map_or(false, |name| is_web_capable(&profiles, name));
+        .is_some_and(|name| is_web_capable(&profiles, name));
     let last_known_good_valid = is_web_capable(&profiles, &last_known_good);
 
     if !last_known_good_valid {
@@ -364,6 +374,64 @@ pub fn rollback_startup(state_path: &Path) -> Result<ProfileState, String> {
     state.pending = None;
     save_state(state_path, &state)?;
     Ok(state)
+}
+
+/// 读取 profile 的 direct dependencies 作为已安装插件列表。
+///
+/// 列表来自 `profiles/<name>/package.json` 的 `dependencies`；每个包从
+/// `node_modules/<name>/package.json` 读取版本与 `dsh.bundle` 声明。
+pub fn list_installed_plugins(home: &Path, profile: &str) -> Vec<InstalledPluginSummary> {
+    if !is_valid_profile_name(profile) {
+        return Vec::new();
+    }
+    let profile_dir = home.join("profiles").join(profile);
+    let package_path = profile_dir.join("package.json");
+    let Ok(raw) = fs::read_to_string(&package_path) else {
+        return Vec::new();
+    };
+    let Ok(root) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return Vec::new();
+    };
+    let Some(dependencies) = root.get("dependencies").and_then(|value| value.as_object()) else {
+        return Vec::new();
+    };
+
+    let mut installed = Vec::with_capacity(dependencies.len());
+    for (name, _) in dependencies {
+        if (name == "." || name == ".." || name.contains('/'))
+            && (!name.starts_with('@') || name.matches('/').count() != 1)
+        {
+            continue;
+        }
+        let manifest_path = profile_dir
+            .join("node_modules")
+            .join(name)
+            .join("package.json");
+        let (version, bundle) = match fs::read_to_string(&manifest_path) {
+            Ok(manifest_text) => {
+                let manifest: serde_json::Value =
+                    serde_json::from_str(&manifest_text).unwrap_or_default();
+                let version = manifest
+                    .get("version")
+                    .and_then(|value| value.as_str())
+                    .map(ToString::to_string);
+                let bundle = manifest
+                    .get("dsh")
+                    .and_then(|value| value.get("bundle"))
+                    .is_some();
+                (version, bundle)
+            }
+            Err(_) => (None, false),
+        };
+        installed.push(InstalledPluginSummary {
+            name: name.to_string(),
+            version,
+            bundle,
+            problem: None,
+        });
+    }
+    installed.sort_by(|left, right| left.name.cmp(&right.name));
+    installed
 }
 
 #[cfg(test)]

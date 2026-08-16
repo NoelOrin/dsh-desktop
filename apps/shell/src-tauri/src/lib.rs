@@ -501,6 +501,13 @@ const BRIDGE_SCRIPT: &str = r#"(function () {
 const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
   "use strict";
 
+  var DSH_HOST_TOKEN = new URLSearchParams(window.location.search).get("dsh_desktop_token") || "";
+  function shellHeaders(extra) {
+    var headers = extra ? Object.assign({}, extra) : {};
+    if (DSH_HOST_TOKEN) headers["x-dsh-desktop-token"] = DSH_HOST_TOKEN;
+    return headers;
+  }
+
   function findSidebarRoot() {
     // 侧栏根节点用稳定的 data-slot 定位，避免依赖 CSS module 哈希 class。
     var slot = document.querySelector('[data-slot="sidebar"]');
@@ -650,7 +657,7 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
     if (sidebarWorkspacesCache && now - sidebarWorkspacesCacheAt < 5000) {
       return Promise.resolve(sidebarWorkspacesCache);
     }
-    return fetch("/dsh-desktop/workspaces", { headers: { accept: "application/json" } })
+    return fetch("/dsh-desktop/workspaces", { headers: shellHeaders({ accept: "application/json" }) })
       .then(function (response) {
         if (!response.ok) throw new Error("HTTP " + response.status);
         return response.json();
@@ -668,7 +675,7 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
     if (sidebarSessionsCache && now - sidebarSessionsCacheAt < 5000) {
       return Promise.resolve(sidebarSessionsCache);
     }
-    return fetch("/dsh-desktop/sessions", { headers: { accept: "application/json" } })
+    return fetch("/dsh-desktop/sessions", { headers: shellHeaders({ accept: "application/json" }) })
       .then(function (response) {
         if (!response.ok) throw new Error("HTTP " + response.status);
         return response.json();
@@ -695,7 +702,7 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
     }
     return fetch("/dsh-desktop/workspaces/action", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: shellHeaders({ "content-type": "application/json" }),
       body: JSON.stringify(payload)
     }).then(function (response) {
       return response.json();
@@ -709,7 +716,7 @@ const HARNESS_CHROME_SCRIPT: &str = r##"(function () {
     }
     return fetch("/dsh-desktop/workspaces/action", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: shellHeaders({ "content-type": "application/json" }),
       body: JSON.stringify(payload)
     }).then(function (response) {
       return response.json();

@@ -1,6 +1,9 @@
 import {
   Button,
+  IconNewChatOutline16,
+  IconPanelLeftOutline16,
   IconPlusOutline16,
+  IconStopFill16,
   IconTrashOutline16,
   Input,
   Toast,
@@ -27,60 +30,22 @@ import {
 injectPluginCss("@dsh-desktop/plugin-shortcuts", "@dsh-desktop/plugin-shortcuts/ui");
 
 const DEFAULT_SHORTCUTS_SETTINGS = normalizeShortcutsSettings(undefined);
-let localShortcutsSettings = readLocalShortcutsSettings();
-const localSettingsListeners = new Set<() => void>();
-let localSettingsSnapshot: { status: "ready"; value: ShortcutsSettings } = {
-  status: "ready",
-  value: localShortcutsSettings,
-};
 
-function readLocalShortcutsSettings(): ShortcutsSettings {
-  if (typeof localStorage === "undefined") {
-    return normalizeShortcutsSettings(undefined);
-  }
+
+
+function migrateLegacyShortcuts(scope: SettingsScopeLike<ShortcutsSettings>): void {
+  if (typeof localStorage === "undefined") return;
   try {
     const raw = localStorage.getItem(SHORTCUTS_STORAGE_KEY);
-    return normalizeShortcutsSettings(raw ? JSON.parse(raw) : undefined);
+    if (!raw) return;
+    const parsed = normalizeShortcutsSettings(JSON.parse(raw));
+    void scope.set("doubleEscapeStopEnabled", parsed.doubleEscapeStopEnabled);
+    void scope.set("doubleEscapeStopTimeoutMs", parsed.doubleEscapeStopTimeoutMs);
+    void scope.set("presets", parsed.presets);
+    localStorage.removeItem(SHORTCUTS_STORAGE_KEY);
   } catch {
-    return normalizeShortcutsSettings(undefined);
+    // 旧数据损坏时静默忽略，让 schema 默认值接管。
   }
-}
-
-function createLocalSettingsScope(): SettingsScopeLike<ShortcutsSettings> {
-  return {
-    getSnapshot() {
-      return localSettingsSnapshot;
-    },
-    subscribe(listener) {
-      localSettingsListeners.add(listener);
-      return () => {
-        localSettingsListeners.delete(listener);
-      };
-    },
-    async set(field, value) {
-      // presets 为按 id 稀疏更新的记录，需要与现有值深合并，避免覆盖其他预设。
-      const next =
-        field === "presets" && value && typeof value === "object" && !Array.isArray(value)
-          ? {
-              ...localShortcutsSettings,
-              presets: {
-                ...localShortcutsSettings.presets,
-                ...(value as Partial<Record<ShortcutPresetId, ShortcutPresetSettings>>),
-              },
-            }
-          : { ...localShortcutsSettings, [field]: value };
-      localShortcutsSettings = normalizeShortcutsSettings(next);
-      if (typeof localStorage !== "undefined") {
-        try {
-          localStorage.setItem(SHORTCUTS_STORAGE_KEY, JSON.stringify(localShortcutsSettings));
-        } catch {
-          // 本地存储不可用时仍保留当前会话内的设置。
-        }
-      }
-      localSettingsSnapshot = { status: "ready", value: localShortcutsSettings };
-      for (const listener of localSettingsListeners) listener();
-    },
-  };
 }
 
 interface EscapeHint {
@@ -156,6 +121,9 @@ interface ClientContextLike {
     bind(ns: string): Translate;
     register(ns: string, locale: string, dict: Record<string, string>): unknown;
   };
+  settingsScope: {
+    bind<T>(spec: { namespace: string }): SettingsScopeLike<T>;
+  };
   slots: {
     inject(key: string, callback: () => unknown): unknown;
     register(options: unknown, component: unknown): unknown;
@@ -163,7 +131,7 @@ interface ClientContextLike {
 }
 
 /** 所需服务（cordis fiber inject）；client 面入口只注册设置节。 */
-export const inject = ["slots", "locale", "sessions", "workspaces"];
+export const inject = ["slots", "locale", "sessions", "workspaces", "settingsScope"];
 
 function isCurrentConversationRunning(sessions: SessionsLike): boolean {
   const snapshot = sessions.list.getSnapshot();
@@ -200,6 +168,12 @@ function runPresetAction(presetId: ShortcutPresetId, ctx: ClientContextLike): vo
       break;
   }
 }
+
+const PRESET_ICONS: Record<ShortcutPresetId, JSX.Element> = {
+  toggleWindow: <IconPanelLeftOutline16 />,
+  stopConversation: <IconStopFill16 />,
+  newConversation: <IconNewChatOutline16 />,
+};
 
 function StopShortcutSettings({
   scope,
@@ -249,6 +223,7 @@ function StopShortcutSettings({
             type="checkbox"
             checked={settings.doubleEscapeStopEnabled}
             onChange={(event) => void setEnabled(event.currentTarget.checked)}
+            aria-label={t("stop.title")}
           />
         </label>
       </div>
@@ -274,10 +249,12 @@ function StopShortcutSettings({
 
 function PresetShortcutInput({
   value,
+  label,
   disabled,
   onCommit,
 }: {
   value: string;
+  label: string;
   disabled: boolean;
   onCommit: (value: string) => void;
 }): JSX.Element {
@@ -291,6 +268,7 @@ function PresetShortcutInput({
       value={draft}
       disabled={disabled}
       spellCheck={false}
+      aria-label={label}
       onChange={(event) => setDraft(event.currentTarget.value)}
       onKeyDown={(event) => {
         if (event.key === "Enter") event.currentTarget.blur();
@@ -466,22 +444,31 @@ function PresetShortcuts({
         if (!preset) return null;
         return (
           <div key={id} className={css.presetRow}>
-            <div className={css.settingText}>
-              <span className={css.settingTitle}>{t(`preset.${id}.title`)}</span>
-              <span className={css.settingDesc}>{t(`preset.${id}.desc`)}</span>
+            <div className={css.presetIdentity}>
+              <span className={css.presetIcon} aria-hidden="true">
+                {PRESET_ICONS[id]}
+              </span>
+              <div className={css.settingText}>
+                <span className={css.settingTitle}>{t(`preset.${id}.title`)}</span>
+                <span className={css.settingDesc}>{t(`preset.${id}.desc`)}</span>
+              </div>
             </div>
             <div className={css.presetControls}>
               <PresetShortcutInput
                 value={preset.shortcut}
+                label={t(`preset.${id}.title`)}
                 disabled={busyId === id}
                 onCommit={(value) => void updateShortcut(id, value)}
               />
-              <span className={css.presetStatus}>
+              <span
+                className={`${css.presetStatus}${preset.enabled ? ` ${css.presetStatusOn}` : ""}`}
+              >
                 {preset.enabled ? t("preset.status.on") : t("preset.status.off")}
               </span>
               <label className={css.toggle}>
                 <input
                   type="checkbox"
+                  aria-label={t(`preset.${id}.title`)}
                   checked={preset.enabled}
                   disabled={busyId === id}
                   onChange={(event) => void togglePreset(id, event.currentTarget.checked)}
@@ -635,11 +622,16 @@ function ShortcutsPanel({
     <div className={css.stack}>
       <StopShortcutSettings scope={scope} t={t} />
       <PresetShortcuts scope={scope} t={t} />
+      <div className={css.listHead}>
+        <span className={css.listTitle}>{t("registered.title")}</span>
+        <span className={css.listDesc}>{t("registered.desc")}</span>
+      </div>
       <div className={css.addRow}>
         <Input
           className={css.addInput}
           value={draft}
           placeholder={t("add.placeholder")}
+          aria-label={t("add.placeholder")}
           disabled={loading}
           onChange={(event) => {
             setDraft(event.currentTarget.value);
@@ -710,7 +702,10 @@ function ShortcutsPanel({
 export function apply(ctx: ClientContextLike): void {
   const NS = "settings.shortcuts";
   const t = ctx.locale.bind(NS);
-  const settingsScope = createLocalSettingsScope();
+  const settingsScope = ctx.settingsScope.bind<ShortcutsSettings>({
+    namespace: "dsh-desktop.shortcuts",
+  });
+  ctx.effect(() => migrateLegacyShortcuts(settingsScope), "shortcuts: 迁移旧 localStorage 设置");
 
   ctx.effect(() => {
     let lastEscapeAt = 0;
@@ -791,6 +786,8 @@ export function apply(ctx: ClientContextLike): void {
         "add.placeholder": "CmdOrCtrl+Shift+D",
         "add.action": "添加",
         "list.empty": "暂无已注册快捷键",
+        "registered.title": "已注册快捷键",
+        "registered.desc": "当前由桌面壳托管的系统级快捷键",
         "status.registered": "已注册",
         "status.loading": "正在读取…",
         "row.remove": "移除",
@@ -835,6 +832,8 @@ export function apply(ctx: ClientContextLike): void {
         "add.placeholder": "CmdOrCtrl+Shift+D",
         "add.action": "Add",
         "list.empty": "No shortcuts registered",
+        "registered.title": "Registered shortcuts",
+        "registered.desc": "System-wide shortcuts managed by the desktop shell",
         "status.registered": "Registered",
         "status.loading": "Loading…",
         "row.remove": "Remove",

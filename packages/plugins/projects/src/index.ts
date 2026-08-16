@@ -371,7 +371,11 @@ function headerValue(req: IncomingMessageLike, name: string): string {
 }
 
 /** 仅接受来自当前 dsh web loopback origin 的请求，防止其他本地页面构造动作 POST。 */
-function isTrustedActionRequest(req: IncomingMessageLike): boolean {
+function isTrustedRequest(req: IncomingMessageLike): boolean {
+  const expectedToken = process.env.DSH_DESKTOP_HOST_TOKEN ?? "";
+  if (!expectedToken || headerValue(req, "x-dsh-desktop-token") !== expectedToken) {
+    return false;
+  }
   const host = headerValue(req, "host").toLowerCase();
   const origin = headerValue(req, "origin") || headerValue(req, "referer");
   if (host && origin) {
@@ -426,14 +430,22 @@ export function apply(ctx: ProjectsContext): void {
         sctx.webServer.register({
           kind: "exact",
           path: "/dsh-desktop/workspaces",
-          handler: (_req, res) => {
+          handler: (req, res) => {
+            if (!isTrustedRequest(req)) {
+              sendJson(res, 403, { ok: false, error: "untrusted request" });
+              return;
+            }
             sendJson(res, 200, { ok: true, workspaces: listWorkspaces(ctx) });
           },
         }),
         sctx.webServer.register({
           kind: "exact",
           path: "/dsh-desktop/sessions",
-          handler: async (_req, res) => {
+          handler: async (req, res) => {
+            if (!isTrustedRequest(req)) {
+              sendJson(res, 403, { ok: false, error: "untrusted request" });
+              return;
+            }
             sendJson(res, 200, { ok: true, sessions: await listSessions(ctx) });
           },
         }),
@@ -441,7 +453,7 @@ export function apply(ctx: ProjectsContext): void {
           kind: "exact",
           path: "/dsh-desktop/workspaces/action",
           handler: async (req, res) => {
-            if (!isTrustedActionRequest(req)) {
+            if (!isTrustedRequest(req)) {
               sendJson(res, 403, { ok: false, error: "untrusted action origin" });
               return;
             }

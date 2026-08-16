@@ -71,7 +71,12 @@
   cursor: pointer;
   transition:
     background var(--ds-transition-duration-fast, 0.1s) ease,
-    border-color var(--ds-transition-duration-fast, 0.1s) ease;
+    border-color var(--ds-transition-duration-fast, 0.1s) ease,
+    box-shadow var(--ds-transition-duration-fast, 0.1s) ease;
+}
+
+.toggle:hover:not(:disabled) {
+  border-color: var(--dsw-alias-border-l3);
 }
 
 .toggle::after {
@@ -83,14 +88,17 @@
   height: 14px;
   border-radius: 999px;
   background: var(--dsw-alias-label-tertiary);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--dsw-alias-label-primary) 18%, transparent);
   transition:
     left var(--ds-transition-duration-fast, 0.1s) ease,
-    background var(--ds-transition-duration-fast, 0.1s) ease;
+    background var(--ds-transition-duration-fast, 0.1s) ease,
+    transform var(--ds-transition-duration-fast, 0.1s) ease;
 }
 
 .toggle:checked {
   border-color: var(--dsw-alias-brand-primary);
   background: var(--dsw-alias-brand-primary);
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--dsw-alias-brand-primary) 22%, transparent);
 }
 
 .toggle:checked::after {
@@ -126,7 +134,7 @@
 
 .segmented {
   display: grid;
-  grid-auto-columns: minmax(84px, 1fr);
+  grid-auto-columns: minmax(92px, 1fr);
   grid-auto-flow: column;
   gap: 2px;
   min-width: 0;
@@ -142,11 +150,11 @@
   justify-content: center;
   gap: 6px;
   min-width: 0;
-  min-height: 30px;
-  padding: 0 12px;
+  min-height: 32px;
+  padding: 0 14px;
   overflow: hidden;
   border: 0;
-  border-radius: 6px;
+  border-radius: 7px;
   background: transparent;
   color: var(--dsw-alias-label-secondary);
   font: inherit;
@@ -156,7 +164,8 @@
   cursor: pointer;
   transition:
     background var(--ds-transition-duration-fast, 0.1s) ease,
-    color var(--ds-transition-duration-fast, 0.1s) ease;
+    color var(--ds-transition-duration-fast, 0.1s) ease,
+    box-shadow var(--ds-transition-duration-fast, 0.1s) ease;
 }
 
 .segment:hover:not(:disabled) {
@@ -168,7 +177,9 @@
 .segmentActive:hover:not(:disabled) {
   background: var(--dsw-alias-bg-layer-1);
   color: var(--dsw-alias-label-primary);
-  box-shadow: 0 0 0 1px var(--dsw-alias-border-l2);
+  box-shadow:
+    inset 0 0 0 1px var(--dsw-alias-border-l2),
+    0 1px 2px color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent);
 }
 
 .segment:disabled {
@@ -268,5 +279,14 @@
   .segmented {
     grid-auto-columns: minmax(0, 1fr);
     grid-auto-flow: row;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toggle,
+  .toggle::after,
+  .segment,
+  .slider::-webkit-slider-thumb {
+    transition: none;
   }
 }

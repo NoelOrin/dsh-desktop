@@ -54,7 +54,7 @@ export function TypographySection({
             })
           }
         >
-          {t("wallpaper.reset")}
+          {t("type.reset")}
         </Button>
       }
     >

@@ -1,8 +1,16 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.1] - 2026-08-16
 
 ### Bug Fixes
+
+- fix(ci): bump 后显式 dispatch CI 构建 (#4)
+
+### Other
+
+- docs(changelog): 关联 PR #4 修复说明 (#4)
+
+### Pending Updates
 
 - [PR #4](https://github.com/NoelOrin/dsh-desktop/pull/4)：修复 bump 后未自动触发 CI 构建的问题
 

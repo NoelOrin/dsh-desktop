@@ -1,9 +1,6 @@
 import type { ReactNode } from "react";
-import {
-  computeDesktopColumns,
-  type AdvancedLayoutState,
-} from "./layout-state";
 import css from "./advanced.module.css";
+import { type AdvancedLayoutState, computeDesktopColumns } from "./layout-state";
 
 export interface AdvancedFrameProps {
   layout: AdvancedLayoutState;

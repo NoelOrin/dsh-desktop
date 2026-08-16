@@ -10,14 +10,14 @@ import {
 import { useEffect, useRef, useState } from "react";
 import css from "./desktop.module.css";
 import {
+  type DesktopModeSettings,
   type DesktopProfileState,
   type DshConfig,
   type DshProfileSummary,
-  type DesktopModeSettings,
-  type SettingsScopeLike,
   getBridge,
   type RemotePluginPreset,
   type RuntimeSnapshot,
+  type SettingsScopeLike,
   type StartupMode,
   type Translate,
 } from "./runtime";

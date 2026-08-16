@@ -18,8 +18,14 @@ export function apply(ctx: Context): void {
         doubleEscapeStopEnabled: z.boolean().default(true),
         doubleEscapeStopTimeoutMs: z.number().default(1000),
         presets: z.object({
-          toggleWindow: PRESET_SCHEMA.default({ enabled: false, shortcut: "CmdOrCtrl+Shift+Space" }),
-          stopConversation: PRESET_SCHEMA.default({ enabled: false, shortcut: "CmdOrCtrl+Shift+." }),
+          toggleWindow: PRESET_SCHEMA.default({
+            enabled: false,
+            shortcut: "CmdOrCtrl+Shift+Space",
+          }),
+          stopConversation: PRESET_SCHEMA.default({
+            enabled: false,
+            shortcut: "CmdOrCtrl+Shift+.",
+          }),
           newConversation: PRESET_SCHEMA.default({ enabled: false, shortcut: "CmdOrCtrl+Shift+N" }),
         }),
       }),

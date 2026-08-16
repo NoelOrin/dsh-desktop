@@ -24,14 +24,11 @@ import {
   SHORTCUT_PRESET_IDS,
   SHORTCUTS_STORAGE_KEY,
   type ShortcutPresetId,
-  type ShortcutPresetSettings,
 } from "./shared/settings";
 
 injectPluginCss("@dsh-desktop/plugin-shortcuts", "@dsh-desktop/plugin-shortcuts/ui");
 
 const DEFAULT_SHORTCUTS_SETTINGS = normalizeShortcutsSettings(undefined);
-
-
 
 function migrateLegacyShortcuts(scope: SettingsScopeLike<ShortcutsSettings>): void {
   if (typeof localStorage === "undefined") return;

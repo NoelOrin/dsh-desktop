@@ -1,8 +1,8 @@
 /** 插件管理设置节：远程插件分组预设、已安装插件、安装/更新/移除与同步输出。 */
 import {
   Button,
+  IconCordisPluginOutline14,
   IconDownloadOutline16,
-  IconLinkOutline16,
   IconPlusOutline16,
   IconRefreshOutline16,
   IconTrashOutline16,
@@ -62,11 +62,7 @@ export function PluginPanel({ t }: { t: Translate }): JSX.Element {
       setLoaded(true);
       return;
     }
-    Promise.all([
-      bridge.remotePlugins.list(),
-      bridge.plugins.installed(),
-      bridge.profiles.active(),
-    ])
+    Promise.all([bridge.remotePlugins.list(), bridge.plugins.installed(), bridge.profiles.active()])
       .then(([presetList, installedList, profileState]) => {
         if (disposed) return;
         setPresets(presetList);
@@ -352,7 +348,10 @@ export function PluginPanel({ t }: { t: Translate }): JSX.Element {
                   <section key={groupName} className={css.pluginGroup}>
                     <div className={css.groupHead}>
                       <div className={css.toolText}>
-                        <span className={css.groupTitle}>{groupName}</span>
+                        <div className={css.groupIdentity}>
+                          <IconCordisPluginOutline14 />
+                          <span className={css.groupTitle}>{groupName}</span>
+                        </div>
                         <span className={css.groupMeta}>
                           {groupItems.length} 项
                           {externalCount > 0 ? ` · ${t("presets.external")} ${externalCount}` : ""}
@@ -396,7 +395,7 @@ export function PluginPanel({ t }: { t: Translate }): JSX.Element {
                         return (
                           <div key={preset.id} className={css.remoteRow}>
                             <code className={css.remoteUrl}>
-                              <IconLinkOutline16 />
+                              <IconCordisPluginOutline14 />
                               <span>{preset.url}</span>
                             </code>
                             <div className={css.presetBadges}>
@@ -459,7 +458,10 @@ export function PluginPanel({ t }: { t: Translate }): JSX.Element {
             {installed.map((plugin) => (
               <div key={plugin.name} className={css.pluginRow}>
                 <div className={css.toolText}>
-                  <span className={css.pluginName}>{plugin.name}</span>
+                  <div className={css.pluginIdentity}>
+                    <IconCordisPluginOutline14 />
+                    <span className={css.pluginName}>{plugin.name}</span>
+                  </div>
                   <span className={css.pluginMeta}>
                     {plugin.version ? <code>{plugin.version}</code> : null}
                     <span className={plugin.bundle ? css.pluginBadge : undefined}>

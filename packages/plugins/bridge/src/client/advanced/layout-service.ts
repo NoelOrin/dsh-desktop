@@ -1,7 +1,4 @@
-import {
-  DEFAULT_LAYOUT_STATE,
-  type AdvancedLayoutState,
-} from "./layout-state";
+import { type AdvancedLayoutState, DEFAULT_LAYOUT_STATE } from "./layout-state";
 
 /** advanced 布局的轻量可订阅状态。 */
 export class AdvancedLayoutService {

@@ -171,7 +171,7 @@ impl PluginOps {
         let mut active = self.state.active.lock().unwrap();
         let is_current = active
             .as_ref()
-            .map_or(false, |current| Arc::ptr_eq(current, running));
+            .is_some_and(|current| Arc::ptr_eq(current, running));
         if is_current {
             active.take();
             drop(active);
@@ -184,7 +184,7 @@ impl PluginOps {
         let mut active = self.state.active.lock().unwrap();
         while active
             .as_ref()
-            .map_or(false, |current| Arc::ptr_eq(current, running))
+            .is_some_and(|current| Arc::ptr_eq(current, running))
         {
             #[cfg(test)]
             self.state.cancel_wait_started.store(true, Ordering::SeqCst);

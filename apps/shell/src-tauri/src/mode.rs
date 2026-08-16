@@ -49,10 +49,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!(
-            "dsh-mode-{label}-{}-{nonce}",
-            std::process::id()
-        ))
+        std::env::temp_dir().join(format!("dsh-mode-{label}-{}-{nonce}", std::process::id()))
     }
 
     #[test]

@@ -33,12 +33,14 @@
   color: var(--dsw-alias-label-primary);
   font-size: 13px;
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .settingDesc {
   color: var(--dsw-alias-label-secondary);
   font-size: 12px;
   line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .toggle {
@@ -62,7 +64,12 @@
   cursor: pointer;
   transition:
     background var(--ds-transition-duration-fast, 0.1s) ease,
-    border-color var(--ds-transition-duration-fast, 0.1s) ease;
+    border-color var(--ds-transition-duration-fast, 0.1s) ease,
+    box-shadow var(--ds-transition-duration-fast, 0.1s) ease;
+}
+
+.toggle input:hover:not(:disabled) {
+  border-color: var(--dsw-alias-border-l3);
 }
 
 .toggle input::after {
@@ -74,6 +81,7 @@
   height: 14px;
   border-radius: 999px;
   background: var(--dsw-alias-label-tertiary);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--dsw-alias-label-primary) 18%, transparent);
   transition:
     left var(--ds-transition-duration-fast, 0.1s) ease,
     background var(--ds-transition-duration-fast, 0.1s) ease;
@@ -82,6 +90,7 @@
 .toggle input:checked {
   border-color: var(--dsw-alias-brand-primary);
   background: var(--dsw-alias-brand-primary);
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--dsw-alias-brand-primary) 22%, transparent);
 }
 
 .toggle input:checked::after {
@@ -144,6 +153,26 @@
   width: 100%;
 }
 
+.listHead {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding-top: 4px;
+}
+
+.listTitle {
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.listDesc {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .list {
   display: flex;
   flex-direction: column;
@@ -166,13 +195,20 @@
 .rowText {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  align-items: flex-start;
+  gap: 6px;
   min-width: 0;
 }
 
 .shortcutName {
-  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 2px 8px;
   overflow-wrap: anywhere;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-2);
   color: var(--dsw-alias-label-primary);
   font-family: var(--ds-font-family-code);
   font-size: 12px;
@@ -191,6 +227,7 @@
 }
 
 .empty {
+  margin: 0;
   padding: 12px 0;
   color: var(--dsw-alias-label-tertiary);
   font-size: 12px;
@@ -230,6 +267,34 @@
   align-items: center;
   gap: 16px;
   min-width: 0;
+  padding: 12px 0;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.presetIdentity {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.presetIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.presetIcon svg {
+  width: 16px;
+  height: 16px;
+  display: block;
 }
 
 .presetControls {
@@ -241,7 +306,7 @@
 
 .presetInput {
   box-sizing: border-box;
-  width: 200px;
+  width: 220px;
   min-height: 32px;
   min-width: 0;
 }
@@ -254,8 +319,19 @@
 
 .presetStatus {
   flex: none;
+  padding: 2px 7px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-1);
   color: var(--dsw-alias-label-tertiary);
   font-size: 11px;
+  white-space: nowrap;
+}
+
+.presetStatusOn {
+  border-color: color-mix(in srgb, var(--dsw-alias-state-success-primary) 22%, transparent);
+  background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 10%, transparent);
+  color: var(--dsw-alias-state-success-primary);
 }
 
 @media (max-width: 640px) {
@@ -288,5 +364,15 @@
 
   .timeoutRow label {
     grid-column: 1 / -1;
+  }
+
+  .timeoutInput {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toggle input {
+    transition: none;
   }
 }

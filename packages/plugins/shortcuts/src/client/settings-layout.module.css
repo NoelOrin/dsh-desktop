@@ -1,8 +1,11 @@
 .page {
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 22px;
   max-width: 720px;
+  min-width: 0;
+  box-sizing: border-box;
+  width: 100%;
 }
 
 .section {
@@ -10,6 +13,12 @@
   flex-direction: column;
   gap: 12px;
   min-width: 0;
+  width: 100%;
+}
+
+.section + .section {
+  padding-top: 22px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
 }
 
 .header {
@@ -18,33 +27,60 @@
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 16px;
+  min-width: 0;
 }
 
 .headerText {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
   flex: 1;
+  flex-direction: column;
+  gap: 5px;
   min-width: 0;
+}
+
+.headerActions {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
 .heading {
   margin: 0;
-  font-size: var(--dsw-font-size-l);
-  font-weight: var(--dsw-font-weight-semibold);
   color: var(--dsw-alias-label-primary);
+  font-size: var(--dsw-font-size-l, 16px);
+  font-weight: var(--dsw-font-weight-semibold, 600);
+  line-height: 1.4;
+  letter-spacing: 0;
 }
 
 .hint {
+  max-width: 620px;
   margin: 0;
-  font-size: var(--dsw-font-size-s);
-  line-height: 1.6;
   color: var(--dsw-alias-label-secondary);
+  font-size: var(--dsw-font-size-s, 12px);
+  line-height: 1.6;
 }
 
 .body {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
   min-width: 0;
+  width: 100%;
+}
+
+@media (max-width: 640px) {
+  .page {
+    gap: 20px;
+  }
+
+  .header {
+    flex-direction: column;
+  }
+
+  .headerActions {
+    width: 100%;
+  }
 }

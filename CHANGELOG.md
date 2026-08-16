@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Bug Fixes
+
+- [PR #4](https://github.com/NoelOrin/dsh-desktop/pull/4)：修复 bump 后未自动触发 CI 构建的问题
+
 ## [0.3.0] - 2026-08-16
 
 ### Features

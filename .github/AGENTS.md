@@ -12,11 +12,12 @@
 
 - `build.yml`：
   - push 到 `release` 分支：`prepare` 依据提交信息 bump 版本、更新 `CHANGELOG.md`、创建 `v<version>` tag 并推送；`prepare` 报告 `bumped=false` 时（例如自动 bump 提交）才执行三平台构建
+  - `prepare` 实际 bump 后会通过 `gh workflow run build.yml --ref v<version>` 显式触发一次 CI，避免 `GITHUB_TOKEN` 推送不会再次触发 workflow 的问题
   - PR 中改动 `apps/shell/**`、`packages/**`、`scripts/**`、`.github/**`、`package.json`、`yarn.lock`、`biome.json`、`lefthook.yml`、`.yarnrc.yml`：执行三平台构建验证
   - `workflow_dispatch`：手动触发构建
 - `release.yml`：
   - 仅 `release` 事件 `published` 触发；tag push 不再自动发布
-  - checkout release tag，按 tag commit 查找 `build.yml` 中成功的 push 到 `release` CI run，下载 `DSH-Desktop-*` artifacts，按平台重命名后上传到现有 GitHub Release
+  - checkout release tag，按 tag commit 查找 `build.yml` 中成功的 CI run（push 或 `workflow_dispatch`），下载 `DSH-Desktop-*` artifacts，按平台重命名后上传到现有 GitHub Release
   - 若 CI 尚未完成，最多等待 30 分钟；CI 失败或 artifacts 已过期时 workflow 失败
 
 ## bump-version.mjs 行为

@@ -28,6 +28,10 @@
     "allow-install-profile-plugin",
     "allow-remove-profile-plugin",
     "allow-update-profile-plugins",
+    "allow-get-remote-plugins",
+    "allow-set-remote-plugins",
+    "allow-sync-remote-plugins",
+    "allow-get-installed-plugins",
     "allow-check-update",
     "allow-install-update",
     "allow-window-action"

@@ -43,6 +43,10 @@ fn main() {
             "install_profile_plugin",
             "remove_profile_plugin",
             "update_profile_plugins",
+            "get_remote_plugins",
+            "set_remote_plugins",
+            "sync_remote_plugins",
+            "get_installed_plugins",
         ]));
     if let Err(error) = tauri_build::try_build(attributes) {
         println!("{error}");

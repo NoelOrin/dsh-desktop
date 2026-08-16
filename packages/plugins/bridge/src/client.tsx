@@ -2,7 +2,9 @@ import { injectPluginCss } from "../../client-kit/inject";
 import { AppearanceSection } from "./client/AppearanceSection";
 import { DesktopPanel } from "./client/DesktopPanel";
 import { applyDesktopShell } from "./client/desktop-shell";
+import { PluginPanel } from "./client/PluginPanel";
 import type { SettingsScopeLike, Translate } from "./client/runtime";
+import { applySettingsNavIcons } from "./client/settings-nav-icons";
 import { applyThemeSection, ensurePageStyle } from "./client/theme-apply";
 import { createThemeStore } from "./client/theme-store";
 import { THEME_SETTINGS_NAMESPACE, type ThemeSettings } from "./shared/theme";
@@ -35,9 +37,12 @@ export const inject = ["slots", "locale", "connection", "remote", "settingsScope
 export function apply(ctx: ClientContextLike): void {
   const NS = "settings.desktop";
   const t = ctx.locale.bind(NS);
+  const PLUGIN_NS = "settings.desktop.plugins";
+  const pluginT = ctx.locale.bind(PLUGIN_NS);
 
   ctx.effect(() => ensurePageStyle(), "bridge: 全局页面样式");
   ctx.effect(applyDesktopShell, "bridge: 桌面壳形态");
+  ctx.effect(applySettingsNavIcons, "bridge: 设置菜单插件图标");
 
   // ── 主题与背景（ui-theme 命名空间由上游 dsh-client-ui-theme host 注册，这里只 bind）──
   const THEME_NS = "settings.appearance";
@@ -177,6 +182,118 @@ export function apply(ctx: ClientContextLike): void {
         "autostart.mode.minimized": "Start minimized",
       }),
     "bridge: English dictionary",
+  );
+
+  ctx.effect(
+    () =>
+      ctx.locale.register(PLUGIN_NS, "zh", {
+        nav: "桌面插件",
+        "install.title": "插件管理",
+        "install.desc": "安装到当前 active profile，重启 dsh 后生效",
+        "install.profile": "当前 profile",
+        "install.placeholder": "包名或 git URL",
+        "install.button": "安装插件",
+        "install.success": "安装成功，重启后生效",
+        "operation.running": "操作中",
+        "operation.failed": "操作失败",
+        "operation.busy": "当前只有一个插件操作可运行",
+        "operation.unavailable": "桌面壳桥接不可用",
+        restart: "重启 dsh",
+        "presets.title": "远程插件预设",
+        "presets.desc": "添加插件 URL 或 git 地址，启动时自动安装到当前 profile",
+        "presets.sync": "立即同步",
+        "presets.syncGroup": "同步本组",
+        "presets.add": "添加预设",
+        "presets.urlRequired": "请输入插件 URL 或 git 地址",
+        "presets.duplicate": "该远程插件 URL 已存在",
+        "presets.groupPlaceholder": "分组，默认 default",
+        "presets.groupEnabled": "整组启用",
+        "presets.removeGroup": "移除本组",
+        "presets.external": "外部固定",
+        "presets.enabled": "启动时自动下载",
+        "presets.disabled": "已停用",
+        "presets.remove": "移除",
+        "presets.empty": "尚未添加远程插件",
+        "presets.saved": "远程插件预设已保存，重启 dsh 后自动下载",
+        "presets.synced": "远程插件同步完成",
+        "presets.syncedGroup": "当前分组同步完成",
+        "installed.title": "已安装插件",
+        "installed.desc": "当前 profile 的直装依赖；安装、更新或移除后需重启 dsh",
+        "installed.update": "更新全部",
+        "installed.remove": "移除",
+        "installed.updated": "插件更新完成，重启 dsh 后生效",
+        "installed.removed": "插件已移除，重启 dsh 后生效",
+        "installed.bundle": "bundle",
+        "installed.dependency": "依赖",
+        "installed.empty": "当前 profile 没有额外安装的插件",
+        "output.title": "操作输出",
+        "output.desc": "最近一次 dsh plugin 命令的原始输出",
+      }),
+    "bridge: 插件中文字典",
+  );
+  ctx.effect(
+    () =>
+      ctx.locale.register(PLUGIN_NS, "en", {
+        nav: "Desktop plugins",
+        "install.title": "Plugin management",
+        "install.desc": "Install into the active profile; restart dsh to apply",
+        "install.profile": "Active profile",
+        "install.placeholder": "Package name or git URL",
+        "install.button": "Install plugin",
+        "install.success": "Plugin installed. Restart dsh to apply.",
+        "operation.running": "Running...",
+        "operation.failed": "Operation failed",
+        "operation.busy": "Only one plugin operation can run at a time",
+        "operation.unavailable": "Desktop shell bridge unavailable",
+        "restart": "Restart dsh",
+        "presets.title": "Remote plugin presets",
+        "presets.desc":
+          "Add plugin URLs or git addresses to install into the active profile on startup",
+        "presets.sync": "Sync now",
+        "presets.syncGroup": "Sync group",
+        "presets.add": "Add preset",
+        "presets.urlRequired": "Enter a plugin URL or git address",
+        "presets.duplicate": "This remote plugin URL already exists",
+        "presets.groupPlaceholder": "Group, default is default",
+        "presets.groupEnabled": "Enable group",
+        "presets.removeGroup": "Remove group",
+        "presets.external": "External",
+        "presets.enabled": "Download on startup",
+        "presets.disabled": "Disabled",
+        "presets.remove": "Remove",
+        "presets.empty": "No remote plugins configured",
+        "presets.saved": "Preset saved. It will download on the next dsh restart.",
+        "presets.synced": "Remote plugins synced",
+        "presets.syncedGroup": "Current group synced",
+        "installed.title": "Installed plugins",
+        "installed.desc":
+          "Direct dependencies of the active profile; restart dsh after install, update or remove",
+        "installed.update": "Update all",
+        "installed.remove": "Remove",
+        "installed.updated": "Plugins updated. Restart dsh to apply.",
+        "installed.removed": "Plugin removed. Restart dsh to apply.",
+        "installed.bundle": "bundle",
+        "installed.dependency": "dependency",
+        "installed.empty": "No extra plugins installed in the active profile",
+        "output.title": "Operation output",
+        "output.desc": "Raw output from the latest dsh plugin command",
+      }),
+    "bridge: Plugins English dictionary",
+  );
+
+  ctx.slots.inject("settings.section", () =>
+    ctx.slots.register(
+      {
+        name: "settings.section",
+        id: "desktop-plugins",
+        // 官方插件设置节已占用 plugins id；菜单/标签图标由 settings-nav-icons 补齐。
+        order: 85,
+        label: () => pluginT("nav"),
+        locale: PLUGIN_NS,
+        children: {},
+      },
+      () => <PluginPanel t={pluginT} />,
+    ),
   );
 
   ctx.slots.inject("settings.section", () =>

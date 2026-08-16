@@ -57,7 +57,21 @@ export interface DshConfig {
   dsh_bin: string | null;
   dsh_node: string | null;
   dsh_home: string | null;
+  remote_plugins_path: string | null;
   shortcuts: string[];
+  remote_plugins: RemotePluginPreset[];
+}
+
+/** 远程插件预设来源；外部目录/文件中的预设为固定配置。 */
+export type RemotePluginSource = "local" | "external";
+
+/** 用户预设的远程插件源；启动时自动执行 `dsh plugin add <url>`。 */
+export interface RemotePluginPreset {
+  id: string;
+  url: string;
+  enabled: boolean;
+  group: string;
+  source: RemotePluginSource;
 }
 
 export interface DesktopSettings {
@@ -117,6 +131,14 @@ export interface PluginOperationResult {
   output: string[];
 }
 
+/** 当前 profile 直装依赖摘要，供插件管理 UI 使用。 */
+export interface InstalledPluginSummary {
+  name: string;
+  version: string | null;
+  bundle: boolean;
+  problem: string | null;
+}
+
 export interface UiThemeTokens {
   bg: string;
   fg: string;
@@ -167,6 +189,10 @@ export const COMMANDS = {
   installProfilePlugin: "install_profile_plugin",
   removeProfilePlugin: "remove_profile_plugin",
   updateProfilePlugins: "update_profile_plugins",
+  getRemotePlugins: "get_remote_plugins",
+  setRemotePlugins: "set_remote_plugins",
+  syncRemotePlugins: "sync_remote_plugins",
+  getInstalledPlugins: "get_installed_plugins",
   getShortcuts: "get_shortcuts",
   unregisterAllShortcuts: "unregister_all_shortcuts",
   getPendingDeepLinks: "get_pending_deeplinks",

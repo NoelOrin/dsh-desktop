@@ -4,8 +4,10 @@ import type {
   DesktopSettings,
   DshConfig,
   DshProfileSummary,
+  InstalledPluginSummary,
   PluginOperationResult,
   ProfileSelectionResult,
+  RemotePluginPreset,
   RuntimeSnapshot,
   WindowAction,
 } from "@dsh-desktop/contracts";
@@ -44,11 +46,18 @@ export interface DshDesktopBridge {
     active(): Promise<DesktopProfileState>;
     select(name: string): Promise<ProfileSelectionResult>;
   };
+  /** 远程插件预设：启动时自动安装到 active profile。 */
+  remotePlugins: {
+    list(): Promise<RemotePluginPreset[]>;
+    save(presets: RemotePluginPreset[]): Promise<RemotePluginPreset[]>;
+  };
   /** 受管 dsh 插件操作；profile 由 Rust 自动取 active。 */
   plugins: {
+    installed(): Promise<InstalledPluginSummary[]>;
     install(spec: string): Promise<PluginOperationResult>;
     remove(name: string): Promise<PluginOperationResult>;
     update(): Promise<PluginOperationResult>;
+    sync(group?: string): Promise<PluginOperationResult[]>;
   };
   shortcuts: {
     register(shortcut: string, cb?: () => void): Promise<() => void>;

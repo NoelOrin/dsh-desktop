@@ -24,10 +24,16 @@ export interface BridgeLike {
     active(): Promise<DesktopProfileState>;
     select(name: string): Promise<ProfileSelectionResult>;
   };
+  remotePlugins: {
+    list(): Promise<RemotePluginPreset[]>;
+    save(presets: RemotePluginPreset[]): Promise<RemotePluginPreset[]>;
+  };
   plugins: {
+    installed(): Promise<InstalledPluginSummary[]>;
     install(spec: string): Promise<PluginOperationResult>;
     remove(name: string): Promise<PluginOperationResult>;
     update(): Promise<PluginOperationResult>;
+    sync(group?: string): Promise<PluginOperationResult[]>;
   };
   openExternal(target: string): Promise<void>;
   update: {
@@ -52,7 +58,21 @@ export interface DshConfig {
   dsh_bin: string | null;
   dsh_node: string | null;
   dsh_home: string | null;
+  remote_plugins_path: string | null;
   shortcuts: string[];
+  remote_plugins: RemotePluginPreset[];
+}
+
+/** 远程插件预设来源；外部目录/文件中的预设为固定配置。 */
+export type RemotePluginSource = "local" | "external";
+
+/** 远程插件预设（与 packages/contracts 对齐）。 */
+export interface RemotePluginPreset {
+  id: string;
+  url: string;
+  enabled: boolean;
+  group: string;
+  source: RemotePluginSource;
 }
 
 export type StartupMode = "normal" | "tray" | "minimized";
@@ -91,6 +111,14 @@ export interface PluginOperationResult {
   ok: boolean;
   exit_code: number | null;
   output: string[];
+}
+
+/** 当前 profile 直装依赖摘要（与 packages/contracts 对齐）。 */
+export interface InstalledPluginSummary {
+  name: string;
+  version: string | null;
+  bundle: boolean;
+  problem: string | null;
 }
 
 /** SettingsScope<T> 的最小形状：getSnapshot / subscribe / set。 */

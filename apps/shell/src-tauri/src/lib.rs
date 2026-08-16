@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::fs::OpenOptions;
+use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
@@ -17,6 +17,7 @@ mod embedded;
 mod host_lifecycle;
 mod inject;
 mod notifications;
+mod mode;
 pub mod plugin_ops;
 mod process;
 mod profiles;
@@ -149,6 +150,13 @@ fn normalize_remote_plugins(
     for mut plugin in plugins {
         plugin.url = plugin.url.trim().to_string();
         validate_remote_plugin_spec(&plugin.url)?;
+        plugin.group = plugin.group.trim().to_string();
+        if plugin.group.is_empty() {
+            plugin.group = "default".to_string();
+        }
+        if plugin.group.chars().any(char::is_control) || plugin.group.chars().count() > 64 {
+            return Err("远程插件分组无效".to_string());
+        }
         if plugin.id.trim().is_empty() {
             plugin.id = generate_remote_plugin_id();
         } else {
@@ -163,13 +171,184 @@ fn normalize_remote_plugins(
         if !seen_urls.insert(plugin.url.clone()) {
             return Err("远程插件 URL 重复".to_string());
         }
+        plugin.source = config::RemotePluginSource::Local;
         normalized.push(plugin);
     }
     Ok(normalized)
 }
 
+/// 外部插件路径优先级：config/env 显式路径 > `$DSH_HOME/remote-plugins` >
+/// 应用数据目录 > 仓库 `packages/external-plugins`。默认路径只有存在时才被检测到。
+fn resolve_external_remote_plugins_path(
+    config: &config::DshConfig,
+    profile_home: &Path,
+    app_data_dir: Option<&Path>,
+) -> Option<PathBuf> {
+    if let Some(path) = config
+        .remote_plugins_path
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        return Some(PathBuf::from(path));
+    }
+    let mut candidates = vec![
+        profile_home.join("remote-plugins"),
+        profile_home.join("remote-plugins.json"),
+    ];
+    if let Some(dir) = app_data_dir {
+        candidates.push(dir.join("remote-plugins"));
+        candidates.push(dir.join("remote-plugins.json"));
+    }
+    candidates
+        .push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../packages/external-plugins"));
+    candidates
+        .into_iter()
+        .find(|candidate| candidate.is_dir() || candidate.is_file())
+}
+
+/// 单个外部 JSON 文件；支持数组、`{ "presets": [...] }` 或单个 `{ "url": ... }`。
+fn load_external_remote_plugins_file(
+    path: &Path,
+    default_group: &str,
+) -> Result<Vec<config::RemotePluginPreset>, String> {
+    let raw = fs::read_to_string(path)
+        .map_err(|error| format!("读取外部远程插件文件失败（{}）：{error}", path.display()))?;
+    let value: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|error| format!("解析外部远程插件文件失败（{}）：{error}", path.display()))?;
+    let entries = if let Some(array) = value.as_array() {
+        array.clone()
+    } else if let Some(array) = value.get("presets").and_then(|value| value.as_array()) {
+        array.clone()
+    } else if value.get("url").is_some() {
+        vec![value]
+    } else {
+        return Err(format!(
+            "外部远程插件文件必须包含数组、presets 数组或单个预设（{}）",
+            path.display()
+        ));
+    };
+    let mut presets = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let has_group = entry
+            .get("group")
+            .and_then(|value| value.as_str())
+            .is_some_and(|group| !group.trim().is_empty());
+        let mut preset: config::RemotePluginPreset = serde_json::from_value(entry)
+            .map_err(|error| format!("外部远程插件条目无效（{}）：{error}", path.display()))?;
+        if !has_group {
+            preset.group = default_group.to_string();
+        }
+        presets.push(preset);
+    }
+    let normalized = normalize_remote_plugins(presets)?;
+    Ok(normalized
+        .into_iter()
+        .map(|mut preset| {
+            preset.source = config::RemotePluginSource::External;
+            preset
+        })
+        .collect())
+}
+
+fn external_group_from_filename(path: &Path) -> String {
+    let group = path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "default".to_string());
+    if group == "remote-plugins" {
+        "default".to_string()
+    } else {
+        group
+    }
+}
+
+/// 读取外部插件路径；文件按文件名作为 group，目录扫描顶层 `*.json` 作为 group。
+fn load_external_remote_plugins_path(
+    path: &Path,
+) -> Result<Vec<config::RemotePluginPreset>, String> {
+    if path.is_file() {
+        let group = external_group_from_filename(path);
+        return load_external_remote_plugins_file(path, &group);
+    }
+    if path.is_dir() {
+        let entries = fs::read_dir(path)
+            .map_err(|error| format!("读取外部远程插件目录失败（{}）：{error}", path.display()))?;
+        let mut files = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|error| {
+                format!("读取外部远程插件目录失败（{}）：{error}", path.display())
+            })?;
+            let file_path = entry.path();
+            if file_path.is_file()
+                && file_path
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
+            {
+                files.push(file_path);
+            }
+        }
+        files.sort();
+        let mut presets = Vec::new();
+        for file in files {
+            let group = external_group_from_filename(&file);
+            presets.extend(load_external_remote_plugins_file(&file, &group)?);
+        }
+        let normalized = normalize_remote_plugins(presets)?;
+        return Ok(normalized
+            .into_iter()
+            .map(|mut preset| {
+                preset.source = config::RemotePluginSource::External;
+                preset
+            })
+            .collect());
+    }
+    Err(format!("外部远程插件路径不存在: {}", path.display()))
+}
+
+/// 外部文件固定预设优先，本地 config 预设去重后追加。
+fn merge_remote_plugins(
+    mut external: Vec<config::RemotePluginPreset>,
+    local: Vec<config::RemotePluginPreset>,
+) -> Vec<config::RemotePluginPreset> {
+    let mut seen = HashSet::new();
+    for preset in &external {
+        seen.insert(preset.url.clone());
+    }
+    for preset in local {
+        if seen.insert(preset.url.clone()) {
+            external.push(preset);
+        }
+    }
+    external
+}
+
+/// 合并外部文件与 config 的有效远程插件预设；显式路径缺失时返回错误。
+fn load_effective_remote_plugins(
+    config: &config::DshConfig,
+    profile_home: &Path,
+    app_data_dir: Option<&Path>,
+) -> Result<Vec<config::RemotePluginPreset>, String> {
+    let local = config.remote_plugins.clone();
+    let Some(path) = resolve_external_remote_plugins_path(config, profile_home, app_data_dir)
+    else {
+        return Ok(local);
+    };
+    let external = load_external_remote_plugins_path(&path)?;
+    Ok(merge_remote_plugins(external, local))
+}
+
 /// 构造 dsh 启动参数：以 --profile <active> 开头，不使用 "web" 别名。
 /// overlay 非 None 时追加 --patch <path>。
+fn desktop_platform() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "darwin"
+    } else if cfg!(target_os = "windows") {
+        "win32"
+    } else {
+        "linux"
+    }
+}
 fn dsh_web_args(active: &str, overlay: Option<&Path>) -> Vec<String> {
     let mut args = vec!["--profile".to_string(), active.to_string()];
     if let Some(overlay_path) = overlay {
@@ -297,7 +476,7 @@ const BRIDGE_SCRIPT: &str = r#"(function () {
       install: function (spec) { return invoke("install_profile_plugin", { spec: spec }); },
       remove: function (name) { return invoke("remove_profile_plugin", { name: name }); },
       update: function () { return invoke("update_profile_plugins"); },
-      sync: function () { return invoke("sync_remote_plugins"); },
+      sync: function (group) { return invoke("sync_remote_plugins", group ? { group: group } : {}); },
     },
     shortcuts: {
       register: function (s, cb) {
@@ -1123,6 +1302,7 @@ struct DshManager {
     profile_state_path: PathBuf,
     startup_context: Option<profiles::StartupContext>,
     start_in_tray: Arc<AtomicBool>,
+    desktop_mode: mode::DesktopMode,
     plugin_ops: plugin_ops::PluginOps,
 }
 
@@ -1269,6 +1449,7 @@ pub fn run() {
                 profile_state_path: app_data.join("profile-state.json"),
                 startup_context: None,
                 start_in_tray: start_in_tray.clone(),
+                desktop_mode: mode::DesktopMode::Compatibility,
                 plugin_ops: plugin_ops.clone(),
                 managed_dsh_url: managed_dsh_url.clone(),
                 host_token: host_token.clone(),
@@ -1773,6 +1954,7 @@ impl DshManager {
                 .map(|dir| dir.join(".dsh"))
                 .ok_or_else(|| "无法解析 DSH profile 目录".to_string())?,
         };
+        self.desktop_mode = mode::read_desktop_mode(&profile_home);
         // 丢弃上一次启动残留的上下文，避免陈旧 context 影响日志/回滚。
         self.startup_context = None;
         let startup_context = profiles::begin_startup(&self.profile_state_path, &profile_home)?;
@@ -1782,11 +1964,19 @@ impl DshManager {
         // 自动下载启用的远程插件预设（best-effort）：复用 dsh plugin add，失败只记日志，
         // 不阻塞 dsh 启动。
         let startup_config = config::load(&self.config_path).effective(|k| std::env::var(k).ok());
-        for preset in startup_config
-            .remote_plugins
-            .iter()
-            .filter(|preset| preset.enabled)
-        {
+        let app_data_dir = self.app.path().app_data_dir().ok();
+        let remote_plugins = match load_effective_remote_plugins(
+            &startup_config,
+            &profile_home,
+            app_data_dir.as_deref(),
+        ) {
+            Ok(presets) => presets,
+            Err(error) => {
+                self.append_log(&format!("[desktop] 外部远程插件加载失败: {error}"));
+                startup_config.remote_plugins.clone()
+            }
+        };
+        for preset in remote_plugins.iter().filter(|preset| preset.enabled) {
             self.append_log(&format!("[desktop] 自动下载远程插件: {}", preset.url));
             match self.plugin_ops.install_profile_plugin(
                 &node,
@@ -1840,10 +2030,11 @@ impl DshManager {
             cmd.env("DSH_HOME", home);
         }
         cmd.env("DSH_DESKTOP_MANAGED", "1");
+        cmd.env("DSH_DESKTOP_MODE", self.desktop_mode.as_str());
         cmd.env("DSH_DESKTOP_PROFILE", &active);
         let profile_dir = profile_home.join("profiles").join(&active);
         cmd.env("DSH_DESKTOP_PROFILE_DIR", &profile_dir);
-        if let Some(state_dir) = self.app.path().app_data_dir().ok() {
+        if let Ok(state_dir) = self.app.path().app_data_dir() {
             cmd.env("DSH_DESKTOP_STATE_DIR", &state_dir);
         }
         if let Some(host_token) = self.host_token.lock().ok().and_then(|guard| guard.clone()) {
@@ -1921,6 +2112,10 @@ impl DshManager {
                     url.query_pairs_mut()
                         .append_pair(HOST_TOKEN_QUERY_KEY, &token);
                 }
+                url.query_pairs_mut()
+                    .append_pair("dsh-desktop-mode", self.desktop_mode.as_str());
+                url.query_pairs_mut()
+                    .append_pair("dsh-desktop-platform", desktop_platform());
                 let _ = window.navigate(url);
             }
             if !self.start_in_tray.load(Ordering::Relaxed) {
@@ -2305,34 +2500,56 @@ fn select_profile(state: State<AppState>, name: String) -> Result<ProfileSelecti
     })
 }
 
-/// 读取壳侧保存的远程插件预设。
-#[tauri::command]
-fn get_remote_plugins(state: State<AppState>) -> Vec<config::RemotePluginPreset> {
-    config::load(&state.config_path).remote_plugins
+/// 读取外部插件路径与本地 config 合并后的远程插件预设。
+fn effective_remote_plugins_for_state(
+    state: &AppState,
+) -> Result<Vec<config::RemotePluginPreset>, String> {
+    let config = config::load(&state.config_path).effective(|k| std::env::var(k).ok());
+    let home = app_profile_home(state)?;
+    load_effective_remote_plugins(
+        &config,
+        &home,
+        state.app.path().app_data_dir().ok().as_deref(),
+    )
 }
 
-/// 保存远程插件预设；空 id 由壳侧生成，URL 会做白名单校验。
+/// 读取合并后的远程插件预设；外部固定预设 source 为 external。
+#[tauri::command]
+fn get_remote_plugins(state: State<AppState>) -> Result<Vec<config::RemotePluginPreset>, String> {
+    effective_remote_plugins_for_state(&state)
+}
+
+/// 保存本地远程插件预设；空 id 由壳侧生成，URL 会做白名单校验，外部固定预设不写入 config。
 #[tauri::command]
 fn set_remote_plugins(
     state: State<AppState>,
     plugins: Vec<config::RemotePluginPreset>,
 ) -> Result<Vec<config::RemotePluginPreset>, String> {
-    let normalized = normalize_remote_plugins(plugins)?;
+    let local = plugins
+        .into_iter()
+        .filter(|preset| preset.source != config::RemotePluginSource::External)
+        .collect();
+    let normalized = normalize_remote_plugins(local)?;
     let mut stored = config::load(&state.config_path);
-    stored.remote_plugins = normalized.clone();
+    stored.remote_plugins = normalized;
     config::save(&state.config_path, &stored)?;
-    Ok(normalized)
+    effective_remote_plugins_for_state(&state)
 }
 
-/// 立即对 active profile 同步所有启用的远程插件预设。
+/// 立即对 active profile 同步启用中的远程插件预设；group 为空时同步全部。
 #[tauri::command]
 fn sync_remote_plugins(
     state: State<AppState>,
+    group: Option<String>,
 ) -> Result<Vec<plugin_ops::PluginOperationResult>, String> {
     let (node, entry, home, profile) = plugin_operation_context(&state)?;
-    let config = config::load(&state.config_path).effective(|k| std::env::var(k).ok());
+    let presets = effective_remote_plugins_for_state(&state)?;
     let mut results = Vec::new();
-    for preset in config.remote_plugins.iter().filter(|preset| preset.enabled) {
+    for preset in presets
+        .iter()
+        .filter(|preset| preset.enabled)
+        .filter(|preset| group.as_deref().is_none_or(|group| preset.group == group))
+    {
         results.push(state.plugin_ops.install_profile_plugin(
             &node,
             &entry,
@@ -2529,6 +2746,18 @@ fn validate_config_paths(config: &DshConfig) -> Result<(), String> {
     }
     if let Some(value) = &config.dsh_home {
         validate_config_path_setting("DSH_HOME", value, false)?;
+    }
+    if let Some(value) = &config.remote_plugins_path {
+        if value.trim().is_empty() || value.chars().any(char::is_control) {
+            return Err("DSH_DESKTOP_REMOTE_PLUGINS_PATH 路径无效".to_string());
+        }
+        let path = Path::new(value);
+        if !path.is_absolute() {
+            return Err("DSH_DESKTOP_REMOTE_PLUGINS_PATH 必须是绝对路径".to_string());
+        }
+        if path.exists() && !path.is_file() && !path.is_dir() {
+            return Err("DSH_DESKTOP_REMOTE_PLUGINS_PATH 必须是文件或目录".to_string());
+        }
     }
     Ok(())
 }
@@ -3968,6 +4197,27 @@ mod tests {
     }
 
     #[test]
+    fn load_external_remote_plugins_directory_uses_file_name_as_group() {
+        let root =
+            std::env::temp_dir().join(format!("dsh-external-plugins-test-{}", std::process::id()));
+        let dir = root.join("external");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("tools.json"),
+            r#"[{"url":"https://example.com/tool.tgz"}]"#,
+        )
+        .unwrap();
+
+        let presets = load_external_remote_plugins_path(&dir).unwrap();
+        assert_eq!(presets.len(), 1);
+        assert_eq!(presets[0].group, "tools");
+        assert_eq!(presets[0].url, "https://example.com/tool.tgz");
+        assert_eq!(presets[0].source, config::RemotePluginSource::External);
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
     fn config_paths_require_absolute_and_existing_binaries() {
         let dir = std::env::temp_dir().join(format!("dsh-config-path-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -3978,6 +4228,7 @@ mod tests {
             dsh_bin: Some(bin.to_string_lossy().into_owned()),
             dsh_node: None,
             dsh_home: Some(dir.to_string_lossy().into_owned()),
+            remote_plugins_path: None,
             shortcuts: vec![],
             remote_plugins: vec![],
         })
@@ -3986,6 +4237,7 @@ mod tests {
             dsh_bin: Some("dsh".into()),
             dsh_node: None,
             dsh_home: None,
+            remote_plugins_path: None,
             shortcuts: vec![],
             remote_plugins: vec![],
         })
@@ -3994,6 +4246,7 @@ mod tests {
             dsh_bin: None,
             dsh_node: None,
             dsh_home: Some(dir.join("missing").to_string_lossy().into_owned()),
+            remote_plugins_path: None,
             shortcuts: vec![],
             remote_plugins: vec![],
         })

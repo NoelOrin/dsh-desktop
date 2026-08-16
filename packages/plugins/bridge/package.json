@@ -15,7 +15,7 @@
   },
   "scripts": {
     "build": "tsdown",
-    "test": "yarn build && node tests/theme.test.mjs",
+    "test": "yarn build && node tests/theme.test.mjs && node tests/advanced-layout.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

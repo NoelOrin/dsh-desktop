@@ -47,7 +47,10 @@ export default defineConfig([
   {
     // shared 面：纯函数共享模型，供 host 单测与 client 内联打包
     name: "@dsh-desktop/plugin-bridge/shared",
-    entry: { shared: "src/shared/theme.ts" },
+    entry: {
+      shared: "src/shared/theme.ts",
+      advanced: "src/client/advanced/layout-state.ts",
+    },
     outDir: "lib",
     format: ["esm"],
     platform: "neutral",

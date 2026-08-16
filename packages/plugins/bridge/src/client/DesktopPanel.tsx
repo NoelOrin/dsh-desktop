@@ -13,7 +13,10 @@ import {
   type DesktopProfileState,
   type DshConfig,
   type DshProfileSummary,
+  type DesktopModeSettings,
+  type SettingsScopeLike,
   getBridge,
+  type RemotePluginPreset,
   type RuntimeSnapshot,
   type StartupMode,
   type Translate,
@@ -250,7 +253,9 @@ function ConfigPanel({ t }: { t: Translate }): JSX.Element {
   const [dshBin, setDshBin] = useState("");
   const [dshNode, setDshNode] = useState("");
   const [dshHome, setDshHome] = useState("");
+  const [dshRemotePluginsPath, setDshRemotePluginsPath] = useState("");
   const dshShortcutsRef = useRef<string[]>([]);
+  const dshRemotePluginsRef = useRef<RemotePluginPreset[]>([]);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -263,7 +268,9 @@ function ConfigPanel({ t }: { t: Translate }): JSX.Element {
         setDshBin(c.dsh_bin ?? "");
         setDshNode(c.dsh_node ?? "");
         setDshHome(c.dsh_home ?? "");
+        setDshRemotePluginsPath(c.remote_plugins_path ?? "");
         dshShortcutsRef.current = c.shortcuts ?? [];
+        dshRemotePluginsRef.current = c.remote_plugins ?? [];
       })
       .catch((e: unknown) => {
         if (disposed) return;
@@ -279,7 +286,9 @@ function ConfigPanel({ t }: { t: Translate }): JSX.Element {
       dsh_bin: dshBin || null,
       dsh_node: dshNode || null,
       dsh_home: dshHome || null,
+      remote_plugins_path: dshRemotePluginsPath || null,
       shortcuts: dshShortcutsRef.current,
+      remote_plugins: dshRemotePluginsRef.current,
     };
     const bridge = getBridge();
     if (!bridge) {
@@ -327,6 +336,14 @@ function ConfigPanel({ t }: { t: Translate }): JSX.Element {
       placeholder: "留空则继承环境变量",
       value: dshHome,
       onChange: setDshHome,
+    },
+    {
+      id: "desktop-remote-plugins-path",
+      label: "外部远程插件目录",
+      env: "DSH_DESKTOP_REMOTE_PLUGINS_PATH",
+      placeholder: "例如 /path/to/packages/external-plugins",
+      value: dshRemotePluginsPath,
+      onChange: setDshRemotePluginsPath,
     },
   ];
 
@@ -568,7 +585,78 @@ function ProfilePanel(): JSX.Element {
   );
 }
 
-export function DesktopPanel({ t }: { t: Translate }): JSX.Element {
+function ModePanel({
+  modeScope,
+  t,
+}: {
+  modeScope: SettingsScopeLike<DesktopModeSettings>;
+  t: Translate;
+}): JSX.Element {
+  const [mode, setMode] = useState<DesktopModeSettings["mode"]>("compatibility");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    let disposed = false;
+    const applySnapshot = () => {
+      const snapshot = modeScope.getSnapshot();
+      if (disposed) return;
+      if (snapshot.status === "ready" && snapshot.value) {
+        setMode(snapshot.value.mode);
+        setLoading(false);
+      } else if (snapshot.status === "unavailable") {
+        setError("桌面壳桥接不可用");
+        setLoading(false);
+      }
+    };
+    applySnapshot();
+    const unsubscribe = modeScope.subscribe(applySnapshot);
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
+  }, [modeScope]);
+
+  const applyMode = async (next: DesktopModeSettings["mode"]) => {
+    setError(null);
+    setNotice(null);
+    try {
+      await modeScope.set("mode", next);
+      setMode(next);
+      setNotice(t("mode.restart"));
+    } catch (e) {
+      setError(`模式设置失败: ${String(e)}`);
+    }
+  };
+
+  const options: Array<SegmentOption<DesktopModeSettings["mode"]>> = [
+    { value: "compatibility", label: t("mode.compatibility") },
+    { value: "advanced", label: t("mode.advanced") },
+  ];
+
+  return (
+    <div className={css.modeBlock}>
+      <SegmentedField<DesktopModeSettings["mode"]>
+        label={t("mode.title")}
+        value={mode}
+        options={options}
+        disabled={loading}
+        onChange={(next) => void applyMode(next)}
+      />
+      {error ? <p className={css.messageError}>{error}</p> : null}
+      {notice ? <p className={css.messageInfo}>{notice}</p> : null}
+    </div>
+  );
+}
+
+export function DesktopPanel({
+  t,
+  modeScope,
+}: {
+  t: Translate;
+  modeScope: SettingsScopeLike<DesktopModeSettings>;
+}): JSX.Element {
   return (
     <SettingsPage>
       <SettingsSection
@@ -591,6 +679,7 @@ export function DesktopPanel({ t }: { t: Translate }): JSX.Element {
         description="选择 dsh web 使用的 profile"
       >
         <ProfilePanel />
+        <ModePanel modeScope={modeScope} t={t} />
       </SettingsSection>
       <SettingsSection
         headingId="desktop-tools-heading"

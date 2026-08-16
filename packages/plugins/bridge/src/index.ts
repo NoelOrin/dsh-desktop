@@ -1,4 +1,6 @@
 import type { Context } from "@deepseek-ai/cordis";
+import { settingsNamespace } from "@deepseek-ai/dsh-settings";
+import z from "@deepseek-ai/schemastery";
 import type {
   DesktopProfileState,
   DesktopSettings,
@@ -101,6 +103,14 @@ interface BridgeHealthContext {
 }
 
 export function apply(ctx: Context): void {
+  const DESKTOP_NS = settingsNamespace("dsh-desktop");
+  ctx.settings.register(
+    DESKTOP_NS,
+    z.object({
+      mode: z.union(["compatibility", "advanced"] as const).default("compatibility"),
+    }),
+    { applies: "restart" },
+  );
   // 固定健康端点由桥接插件提供，壳侧用 HTTP 探测 dsh web 是否真正就绪。
   (ctx as unknown as BridgeHealthContext).inject(["webServer"] as never, (sctx) => {
     sctx.webServer.register({

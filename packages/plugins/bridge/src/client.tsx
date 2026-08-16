@@ -3,7 +3,8 @@ import { AppearanceSection } from "./client/AppearanceSection";
 import { DesktopPanel } from "./client/DesktopPanel";
 import { applyDesktopShell } from "./client/desktop-shell";
 import { PluginPanel } from "./client/PluginPanel";
-import type { SettingsScopeLike, Translate } from "./client/runtime";
+import type { DesktopModeSettings, SettingsScopeLike, Translate } from "./client/runtime";
+import { resolveAdvancedParams } from "./client/advanced/theme-presenter";
 import { applySettingsNavIcons } from "./client/settings-nav-icons";
 import { applyThemeSection, ensurePageStyle } from "./client/theme-apply";
 import { createThemeStore } from "./client/theme-store";
@@ -41,7 +42,11 @@ export function apply(ctx: ClientContextLike): void {
   const pluginT = ctx.locale.bind(PLUGIN_NS);
 
   ctx.effect(() => ensurePageStyle(), "bridge: 全局页面样式");
-  ctx.effect(applyDesktopShell, "bridge: 桌面壳形态");
+  const shellParams = resolveAdvancedParams(window.location.search);
+  ctx.effect(
+    () => applyDesktopShell(shellParams.mode, shellParams.platform),
+    "bridge: 桌面壳形态",
+  );
   ctx.effect(applySettingsNavIcons, "bridge: 设置菜单插件图标");
 
   // ── 主题与背景（ui-theme 命名空间由上游 dsh-client-ui-theme host 注册，这里只 bind）──
@@ -50,6 +55,9 @@ export function apply(ctx: ClientContextLike): void {
     namespace: THEME_SETTINGS_NAMESPACE,
   });
   const themeStore = createThemeStore(themeScope);
+  const modeScope = ctx.settingsScope.bind<DesktopModeSettings>({
+    namespace: "dsh-desktop",
+  });
 
   const systemDark = (): boolean =>
     typeof matchMedia !== "undefined" && matchMedia("(prefers-color-scheme: dark)").matches;
@@ -127,6 +135,10 @@ export function apply(ctx: ClientContextLike): void {
         "tools.checkUpdate.title": "检查更新",
         "tools.checkUpdate.desc": "检查 GitHub Release 是否有新版本并安装",
         "tools.checkUpdate.action": "检查",
+        "mode.title": "界面模式",
+        "mode.compatibility": "兼容模式",
+        "mode.advanced": "高级模式",
+        "mode.restart": "已保存，重启 dsh 后生效",
         "autostart.title": "开机自启",
         "autostart.desc": "登录系统时自动启动桌面应用",
         "autostart.mode": "自启后窗口状态",
@@ -174,6 +186,10 @@ export function apply(ctx: ClientContextLike): void {
         "tools.checkUpdate.title": "Check for updates",
         "tools.checkUpdate.desc": "Check GitHub releases for a new version and install it",
         "tools.checkUpdate.action": "Check",
+        "mode.title": "Interface mode",
+        "mode.compatibility": "Compatibility mode",
+        "mode.advanced": "Advanced mode",
+        "mode.restart": "Saved. Restart dsh to apply.",
         "autostart.title": "Launch at login",
         "autostart.desc": "Start the desktop app automatically when you log in",
         "autostart.mode": "Window state after autostart",
@@ -245,7 +261,7 @@ export function apply(ctx: ClientContextLike): void {
         "operation.failed": "Operation failed",
         "operation.busy": "Only one plugin operation can run at a time",
         "operation.unavailable": "Desktop shell bridge unavailable",
-        "restart": "Restart dsh",
+        restart: "Restart dsh",
         "presets.title": "Remote plugin presets",
         "presets.desc":
           "Add plugin URLs or git addresses to install into the active profile on startup",
@@ -306,7 +322,7 @@ export function apply(ctx: ClientContextLike): void {
         locale: NS,
         children: {},
       },
-      () => <DesktopPanel t={t} />,
+      () => <DesktopPanel t={t} modeScope={modeScope} />,
     ),
   );
 }
@@ -338,6 +354,7 @@ const themeSectionZh: Record<string, string> = {
   "glass.title": "玻璃透明度",
   "glass.desc": "数值越低，侧栏、对话框和输入框越通透",
   "glass.opacity": "透明度",
+  "glass.reset": "恢复默认",
   "glass.preview": "玻璃表面预览",
   "glass.surface": "面板玻璃",
   "custom.title": "自定义主题",
@@ -361,6 +378,7 @@ const themeSectionZh: Record<string, string> = {
   "type.title": "排版",
   "type.desc": "界面与代码字号、字体族",
   "type.interfaceSize": "界面字号",
+  "type.reset": "恢复默认",
   "type.codeSize": "代码字号",
   "type.sans": "界面字体族",
   "type.code": "代码字体族",
@@ -396,6 +414,7 @@ const themeSectionEn: Record<string, string> = {
   "glass.title": "Glass opacity",
   "glass.desc": "Lower values make sidebar, dialogs and composer more translucent",
   "glass.opacity": "Opacity",
+  "glass.reset": "Reset glass",
   "glass.preview": "Glass surface preview",
   "glass.surface": "Panel glass",
   "custom.title": "Custom themes",
@@ -419,6 +438,7 @@ const themeSectionEn: Record<string, string> = {
   "type.title": "Typography",
   "type.desc": "Interface and code font sizes and families",
   "type.interfaceSize": "Interface font size",
+  "type.reset": "Reset typography",
   "type.codeSize": "Code font size",
   "type.sans": "Interface font family",
   "type.code": "Code font family",

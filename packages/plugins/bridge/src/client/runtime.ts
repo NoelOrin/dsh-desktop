@@ -77,6 +77,12 @@ export interface RemotePluginPreset {
 
 export type StartupMode = "normal" | "tray" | "minimized";
 
+export type DesktopMode = "compatibility" | "advanced";
+
+export interface DesktopModeSettings {
+  mode: DesktopMode;
+}
+
 /** 壳侧开机自启设置（与 packages/contracts 的 DesktopSettings 对齐）。 */
 export interface DesktopSettings {
   autostart: boolean;

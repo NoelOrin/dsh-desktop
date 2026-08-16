@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -60,6 +60,7 @@ const UPDATE_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(600);
 
 static LOG_LOCK: Mutex<()> = Mutex::new(());
 static SHELL_PATH_TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+static REMOTE_PLUGIN_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 // 托盘菜单项 id
 const TRAY_STATUS: &str = "tray-status";
@@ -100,6 +101,71 @@ fn generate_host_token() -> String {
     let mut bytes = [0u8; 24];
     getrandom::getrandom(&mut bytes).expect("生成 dsh web 注入 token 失败");
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// 生成远程插件预设 id；只在用户新增且未带 id 时使用。
+fn generate_remote_plugin_id() -> String {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    format!(
+        "remote-{nonce:x}-{}",
+        REMOTE_PLUGIN_ID_COUNTER.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
+fn is_valid_remote_plugin_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+}
+
+/// 远程插件预设接受 dsh/pnpm 可安装的 URL 或 git 地址。
+fn validate_remote_plugin_spec(spec: &str) -> Result<(), String> {
+    if spec.trim().is_empty() || spec.chars().any(char::is_control) || spec.len() > 2048 {
+        return Err("远程插件 URL 无效".to_string());
+    }
+    let lower = spec.to_ascii_lowercase();
+    let accepted = [
+        "http://", "https://", "git+", "git@", "ssh://", "github:", "gitlab:",
+    ]
+    .iter()
+    .any(|prefix| lower.starts_with(prefix));
+    if !accepted {
+        return Err("只允许 http(s)、git URL 或 git 主机地址".to_string());
+    }
+    Ok(())
+}
+
+fn normalize_remote_plugins(
+    plugins: Vec<config::RemotePluginPreset>,
+) -> Result<Vec<config::RemotePluginPreset>, String> {
+    let mut seen_ids = HashSet::new();
+    let mut seen_urls = HashSet::new();
+    let mut normalized = Vec::with_capacity(plugins.len());
+    for mut plugin in plugins {
+        plugin.url = plugin.url.trim().to_string();
+        validate_remote_plugin_spec(&plugin.url)?;
+        if plugin.id.trim().is_empty() {
+            plugin.id = generate_remote_plugin_id();
+        } else {
+            plugin.id = plugin.id.trim().to_string();
+        }
+        if !is_valid_remote_plugin_id(&plugin.id) {
+            return Err("远程插件 id 无效".to_string());
+        }
+        if !seen_ids.insert(plugin.id.clone()) {
+            return Err("远程插件 id 重复".to_string());
+        }
+        if !seen_urls.insert(plugin.url.clone()) {
+            return Err("远程插件 URL 重复".to_string());
+        }
+        normalized.push(plugin);
+    }
+    Ok(normalized)
 }
 
 /// 构造 dsh 启动参数：以 --profile <active> 开头，不使用 "web" 别名。
@@ -221,6 +287,17 @@ const BRIDGE_SCRIPT: &str = r#"(function () {
       list: function () { return invoke("get_profiles"); },
       active: function () { return invoke("get_active_profile"); },
       select: function (name) { return invoke("select_profile", { name: name }); },
+    },
+    remotePlugins: {
+      list: function () { return invoke("get_remote_plugins"); },
+      save: function (plugins) { return invoke("set_remote_plugins", { plugins: plugins }); },
+    },
+    plugins: {
+      installed: function () { return invoke("get_installed_plugins"); },
+      install: function (spec) { return invoke("install_profile_plugin", { spec: spec }); },
+      remove: function (name) { return invoke("remove_profile_plugin", { name: name }); },
+      update: function () { return invoke("update_profile_plugins"); },
+      sync: function () { return invoke("sync_remote_plugins"); },
     },
     shortcuts: {
       register: function (s, cb) {
@@ -981,6 +1058,7 @@ struct AppState {
     start_in_tray: Arc<AtomicBool>,
     /// 已注册的自定义全局快捷键注册表（快捷键字符串 → Shortcut），供注销时查表。
     shortcuts: Arc<Mutex<HashMap<String, Shortcut>>>,
+    plugin_ops: plugin_ops::PluginOps,
 }
 
 fn enqueue_launch_payload(
@@ -1169,6 +1247,15 @@ pub fn run() {
             let logger_inner = inner.clone();
             let logger_path = log_path.clone();
 
+            let plugin_ops = plugin_ops::PluginOps::new().with_logger(move |line| {
+                append_line(
+                    &logger_app,
+                    &logger_inner,
+                    &logger_path,
+                    &format!("[plugin] {line}"),
+                );
+            });
+
             let manager = DshManager {
                 app: app_handle.clone(),
                 inner: inner.clone(),
@@ -1182,16 +1269,7 @@ pub fn run() {
                 profile_state_path: app_data.join("profile-state.json"),
                 startup_context: None,
                 start_in_tray: start_in_tray.clone(),
-                plugin_ops: {
-                    plugin_ops::PluginOps::new().with_logger(move |line| {
-                        append_line(
-                            &logger_app,
-                            &logger_inner,
-                            &logger_path,
-                            &format!("[plugin] {line}"),
-                        );
-                    })
-                },
+                plugin_ops: plugin_ops.clone(),
                 managed_dsh_url: managed_dsh_url.clone(),
                 host_token: host_token.clone(),
             };
@@ -1211,6 +1289,7 @@ pub fn run() {
                 exiting: exiting.clone(),
                 start_in_tray: start_in_tray.clone(),
                 shortcuts: Arc::new(Mutex::new(HashMap::new())),
+                plugin_ops,
             });
 
             // 重启后恢复上次持久化的全局快捷键（注册冲突仅跳过，不阻塞启动）
@@ -1329,6 +1408,13 @@ pub fn run() {
             get_profiles,
             get_active_profile,
             select_profile,
+            get_remote_plugins,
+            set_remote_plugins,
+            sync_remote_plugins,
+            get_installed_plugins,
+            install_profile_plugin,
+            remove_profile_plugin,
+            update_profile_plugins,
             register_shortcut,
             unregister_shortcut,
             get_shortcuts,
@@ -1692,6 +1778,36 @@ impl DshManager {
         let startup_context = profiles::begin_startup(&self.profile_state_path, &profile_home)?;
         let active = startup_context.active.clone();
         self.startup_context = Some(startup_context);
+
+        // 自动下载启用的远程插件预设（best-effort）：复用 dsh plugin add，失败只记日志，
+        // 不阻塞 dsh 启动。
+        let startup_config = config::load(&self.config_path).effective(|k| std::env::var(k).ok());
+        for preset in startup_config
+            .remote_plugins
+            .iter()
+            .filter(|preset| preset.enabled)
+        {
+            self.append_log(&format!("[desktop] 自动下载远程插件: {}", preset.url));
+            match self.plugin_ops.install_profile_plugin(
+                &node,
+                &entry,
+                &profile_home,
+                &active,
+                &preset.url,
+            ) {
+                Ok(result) => {
+                    for line in &result.output {
+                        self.append_log(line);
+                    }
+                    if result.ok {
+                        self.append_log("[desktop] 远程插件安装成功，重启 dsh 后生效");
+                    } else {
+                        self.append_log("[desktop] 远程插件安装失败（dsh plugin 非零退出）");
+                    }
+                }
+                Err(error) => self.append_log(&format!("[desktop] 远程插件安装失败: {error}")),
+            }
+        }
 
         // 装配内嵌插件（best-effort）并生成 --patch overlay：任何失败只记日志，不影响 dsh 启动
         let mut log = |line: &str| self.append_log(line);
@@ -2189,6 +2305,99 @@ fn select_profile(state: State<AppState>, name: String) -> Result<ProfileSelecti
     })
 }
 
+/// 读取壳侧保存的远程插件预设。
+#[tauri::command]
+fn get_remote_plugins(state: State<AppState>) -> Vec<config::RemotePluginPreset> {
+    config::load(&state.config_path).remote_plugins
+}
+
+/// 保存远程插件预设；空 id 由壳侧生成，URL 会做白名单校验。
+#[tauri::command]
+fn set_remote_plugins(
+    state: State<AppState>,
+    plugins: Vec<config::RemotePluginPreset>,
+) -> Result<Vec<config::RemotePluginPreset>, String> {
+    let normalized = normalize_remote_plugins(plugins)?;
+    let mut stored = config::load(&state.config_path);
+    stored.remote_plugins = normalized.clone();
+    config::save(&state.config_path, &stored)?;
+    Ok(normalized)
+}
+
+/// 立即对 active profile 同步所有启用的远程插件预设。
+#[tauri::command]
+fn sync_remote_plugins(
+    state: State<AppState>,
+) -> Result<Vec<plugin_ops::PluginOperationResult>, String> {
+    let (node, entry, home, profile) = plugin_operation_context(&state)?;
+    let config = config::load(&state.config_path).effective(|k| std::env::var(k).ok());
+    let mut results = Vec::new();
+    for preset in config.remote_plugins.iter().filter(|preset| preset.enabled) {
+        results.push(state.plugin_ops.install_profile_plugin(
+            &node,
+            &entry,
+            &home,
+            &profile,
+            &preset.url,
+        )?);
+    }
+    Ok(results)
+}
+
+/// 读取当前 active profile 的直装依赖列表，用于插件管理 UI。
+#[tauri::command]
+fn get_installed_plugins(
+    state: State<AppState>,
+) -> Result<Vec<profiles::InstalledPluginSummary>, String> {
+    let home = app_profile_home(&state)?;
+    let profile = profiles::load_state(&state.profile_state_path).active;
+    Ok(profiles::list_installed_plugins(&home, &profile))
+}
+
+#[tauri::command]
+fn install_profile_plugin(
+    state: State<AppState>,
+    spec: String,
+) -> Result<plugin_ops::PluginOperationResult, String> {
+    let (node, entry, home, profile) = plugin_operation_context(&state)?;
+    state
+        .plugin_ops
+        .install_profile_plugin(&node, &entry, &home, &profile, &spec)
+}
+
+#[tauri::command]
+fn remove_profile_plugin(
+    state: State<AppState>,
+    name: String,
+) -> Result<plugin_ops::PluginOperationResult, String> {
+    let (node, entry, home, profile) = plugin_operation_context(&state)?;
+    state
+        .plugin_ops
+        .remove_profile_plugin(&node, &entry, &home, &profile, &name)
+}
+
+#[tauri::command]
+fn update_profile_plugins(
+    state: State<AppState>,
+) -> Result<plugin_ops::PluginOperationResult, String> {
+    let (node, entry, home, profile) = plugin_operation_context(&state)?;
+    state
+        .plugin_ops
+        .update_profile_plugins(&node, &entry, &home, &profile)
+}
+
+/// 解析当前 active profile 的插件操作运行环境。
+fn plugin_operation_context(
+    state: &AppState,
+) -> Result<(PathBuf, PathBuf, PathBuf, String), String> {
+    let config = config::load(&state.config_path).effective(|k| std::env::var(k).ok());
+    let (node, entry) =
+        resolve_dsh(&config).ok_or_else(|| "未检测到 DSH，无法管理插件".to_string())?;
+    let home = app_profile_home(state)?;
+    let profile = profiles::load_state(&state.profile_state_path).active;
+    Ok((node, entry, home, profile))
+}
+
 #[tauri::command]
 fn restart(state: State<AppState>) -> Result<(), String> {
     state
@@ -2351,9 +2560,11 @@ fn get_config(state: State<AppState>) -> DshConfig {
 #[tauri::command]
 fn set_config(state: State<AppState>, mut config: DshConfig) -> Result<(), String> {
     validate_config_paths(&config)?;
-    // shortcuts 由壳侧快捷键注册表统一管理；set_config 只负责路径配置，
-    // 因此始终保留现有注册记录，避免一次配置保存清空持久化快捷键。
-    config.shortcuts = config::load(&state.config_path).shortcuts;
+    // shortcuts 与远程插件预设分别由快捷键注册表和 set_remote_plugins 管理；
+    // set_config 只负责路径配置，因此始终保留现有记录，避免一次配置保存清空持久化数据。
+    let stored = config::load(&state.config_path);
+    config.shortcuts = stored.shortcuts;
+    config.remote_plugins = stored.remote_plugins;
     config::save(&state.config_path, &config)
 }
 
@@ -3768,6 +3979,7 @@ mod tests {
             dsh_node: None,
             dsh_home: Some(dir.to_string_lossy().into_owned()),
             shortcuts: vec![],
+            remote_plugins: vec![],
         })
         .is_ok());
         assert!(validate_config_paths(&DshConfig {
@@ -3775,6 +3987,7 @@ mod tests {
             dsh_node: None,
             dsh_home: None,
             shortcuts: vec![],
+            remote_plugins: vec![],
         })
         .is_err());
         assert!(validate_config_paths(&DshConfig {
@@ -3782,6 +3995,7 @@ mod tests {
             dsh_node: None,
             dsh_home: Some(dir.join("missing").to_string_lossy().into_owned()),
             shortcuts: vec![],
+            remote_plugins: vec![],
         })
         .is_ok());
         std::fs::remove_dir_all(&dir).ok();

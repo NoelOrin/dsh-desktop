@@ -131,13 +131,17 @@ impl PluginOps {
         self.active.lock().unwrap().is_some()
     }
 
-    /// 取消当前操作；没有运行中的操作时直接返回成功。
+    /// 取消当前操作；active 槽位保留到 run_operation 完成输出收集后再清理。
     pub fn cancel_current(&self) -> Result<(), String> {
-        let Some(running) = self.active.lock().unwrap().take() else {
-            return Ok(());
+        let (child, cancelled) = {
+            let active = self.active.lock().unwrap();
+            let Some(running) = active.as_ref() else {
+                return Ok(());
+            };
+            (running.child.clone(), running.cancelled.clone())
         };
-        running.cancelled.store(true, Ordering::SeqCst);
-        let child = running.child.lock().unwrap().take();
+        cancelled.store(true, Ordering::SeqCst);
+        let child = child.lock().unwrap().take();
         if let Some(mut child) = child {
             terminate_child(&mut child);
         }
@@ -332,6 +336,7 @@ mod tests {
     use super::*;
     use std::fs;
     use std::path::{Path, PathBuf};
+    use std::sync::mpsc;
     use std::sync::{Arc, Mutex};
     use std::thread;
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -511,6 +516,47 @@ process.stderr.write("stderr from fake dsh\n");
         assert!(error.contains("已取消"));
         assert!(!ops.is_busy());
         assert!(ops.cancel_current().is_ok());
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn cancel_current_keeps_active_until_cleanup_finishes() {
+        let root = temp_root("cancel-active");
+        let home = setup_profile(&root, "web");
+        let fake_dsh = write_script(&root, "slow.js", LONG_RUNNING_SCRIPT);
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let blocked = Arc::new(Mutex::new(Some(release_rx)));
+        let logger_blocked = blocked.clone();
+        let ops = PluginOps::new().with_logger(move |_line| {
+            let release = logger_blocked
+                .lock()
+                .unwrap()
+                .take()
+                .expect("logger 只应阻塞一次");
+            let _ = release.recv();
+        });
+        let run_ops = ops.clone();
+        let run_fake_dsh = fake_dsh.clone();
+        let run_home = home.clone();
+        let handle = thread::spawn(move || {
+            run_ops.install_profile_plugin(&node_path(), &run_fake_dsh, &run_home, "web", "pkg")
+        });
+
+        wait_until_busy(&ops);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while blocked.lock().unwrap().is_some() {
+            assert!(Instant::now() < deadline, "logger 未开始阻塞");
+            thread::sleep(Duration::from_millis(2));
+        }
+
+        ops.cancel_current().unwrap();
+        assert!(ops.is_busy(), "取消后旧操作清理完成前应保持忙碌");
+
+        release_tx.send(()).unwrap();
+        let error = handle.join().unwrap().unwrap_err();
+        assert!(error.contains("已取消"));
+        assert!(!ops.is_busy());
 
         fs::remove_dir_all(&root).ok();
     }

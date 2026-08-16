@@ -7,7 +7,8 @@
 - `dsh/README.md` - dsh 资料目录索引
 - `screenshots/splash-desktop.png` - 桌面端启动页截图
 - `screenshots/splash-mobile.png` - 窄屏启动页截图
-- `superpowers/plans/*.md` - 原生能力扩展与主题/背景图等历史实施计划
+- `full-project-review-2026-08-15.md` - 历史全项目 Review 记录（结论不视为当前实现）
+- `superpowers/plans/*.md` - 原生能力扩展、插件能力重构与主题/背景图等历史实施计划
 - `superpowers/specs/*.md` - Monorepo 改造、桌面壳设置与主题/背景图等历史设计记录
 
 ## 维护约定

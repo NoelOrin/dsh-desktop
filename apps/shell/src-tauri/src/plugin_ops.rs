@@ -100,6 +100,30 @@ impl PluginOps {
         )
     }
 
+    pub fn install_profile_plugin_with_allow_build(
+        &self,
+        node: &Path,
+        dsh: &Path,
+        home: &Path,
+        profile: &str,
+        spec: &str,
+        allow_build: &[String],
+    ) -> Result<PluginOperationResult, String> {
+        validate_value("spec", spec)?;
+        for package in allow_build {
+            validate_value("allow_build", package)?;
+        }
+        validate_profile(profile)?;
+        let cwd = profile_dir(home, profile)?;
+        let mut args = vec!["plugin", "--profile", profile, "add"];
+        for package in allow_build {
+            args.push("--allow-build");
+            args.push(package.as_str());
+        }
+        args.push(spec);
+        self.run_operation(node, dsh, home, cwd, &args)
+    }
+
     pub fn remove_profile_plugin(
         &self,
         node: &Path,
@@ -539,6 +563,47 @@ process.stderr.write("stderr from fake dsh\n");
         assert!(!result.ok);
         assert_eq!(result.exit_code, Some(7));
         assert!(result.output.iter().any(|line| line == "boom"));
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn install_profile_plugin_with_allow_build_passes_flags() {
+        let root = temp_root("install-allow-build");
+        let home = setup_profile(&root, "web");
+        let result_path = root.join("result.json");
+        let fake_dsh = write_script(&root, "fake-dsh.js", &fake_dsh_install_script(&result_path));
+        let ops = PluginOps::new();
+        let allow_build = vec!["dsh-better-sidebar".to_string(), "node-pty".to_string()];
+
+        let result = ops
+            .install_profile_plugin_with_allow_build(
+                &node_path(),
+                &fake_dsh,
+                &home,
+                "web",
+                "@scope/pkg@1.2.3",
+                &allow_build,
+            )
+            .unwrap();
+
+        assert!(result.ok);
+        let payload: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&result_path).unwrap()).unwrap();
+        assert_eq!(
+            payload["argv"],
+            serde_json::json!([
+                "plugin",
+                "--profile",
+                "web",
+                "add",
+                "--allow-build",
+                "dsh-better-sidebar",
+                "--allow-build",
+                "node-pty",
+                "@scope/pkg@1.2.3",
+            ])
+        );
 
         fs::remove_dir_all(&root).ok();
     }

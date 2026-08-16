@@ -1,0 +1,8 @@
+[
+  {
+    "id": "dsh-better-sidebar",
+    "url": "https://github.com/omdsh-dev/DSH-better-sidebar",
+    "enabled": true,
+    "allow_build": ["dsh-better-sidebar", "node-pty", "protobufjs"]
+  }
+]

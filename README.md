@@ -34,7 +34,7 @@
 - 主题与背景图：设置 → 外观（内置 7 主题家族浅/深两半、自定义主题、背景图毛玻璃/像素化/玻璃透明度、排版），启动页与窗口背景跟随
 - 第三方思考强度：设置 → 模型 的自定义设置里可为自定义 / 第三方模型勾选 `low` / `medium` / `high` / `xhigh` / `max`，输入栏模型菜单可直接切换推理等级
 - 无边框窗口 + 自绘标题栏：可拖动、双击最大化，最小化/最大化/关闭按钮齐全，标题栏背景跟随主题
-- 局域网访问：内置零依赖反向代理脚本，让局域网设备访问本机 `dsh web`（支持 Bearer token 门禁）
+- 局域网访问：内置零依赖反向代理脚本，让局域网设备访问本机 `dsh web`（无鉴权，仅限可信网络）
 
 ## 架构
 
@@ -120,6 +120,7 @@ npm install -g @deepseek-ai/dsh
 `packages/plugins` 是本仓库的 dsh 插件容器，当前包含：
 
 - `bridge`（`@dsh-desktop/plugin-bridge`）— 桥接 Tauri 壳能力的双面插件：在 dsh WebUI 设置面板渲染“插件”页（外部固定 + 本地分组远程插件 / 整组同步 / 已安装插件 / 移除 / 更新）、“桌面”页（状态 / 配置 / 运行环境 profile / 界面模式 / 工具 / 开机自启）与“外观”页（主题偏好 / 主题库 / 背景图 / 玻璃透明度 / 自定义主题 / 排版），通过 `window.__DSH_DESKTOP__` 调用壳能力（打开外部链接 / 窗口控制 / 运行状态与日志 / 配置 / profile / 远程插件 / 开机自启 / 全局快捷键 / 更新）
+- `bridge`（`@dsh-desktop/plugin-bridge`）— 桥接 Tauri 壳能力的双面插件：在 dsh WebUI 设置面板渲染“插件”页（外部固定 + 本地分组远程插件 / 整组同步 / 已安装插件 / 移除 / 更新）、“桌面”页（状态 / 配置 / 局域网访问 / 运行环境 profile / 界面模式 / 工具 / 开机自启）与“外观”页（主题偏好 / 主题库 / 背景图 / 玻璃透明度 / 自定义主题 / 排版），通过 `window.__DSH_DESKTOP__` 调用壳能力（打开外部链接 / 窗口控制 / 运行状态与日志 / 配置 / 局域网代理 / profile / 远程插件 / 开机自启 / 全局快捷键 / 更新）
 - `projects`（`@dsh-desktop/plugin-projects`）— 项目 host 插件：为侧边栏右键菜单提供 dsh 工作区/会话数据与动作端点
 - `shortcuts`（`@dsh-desktop/plugin-shortcuts`）— 全局快捷键设置插件：在 dsh WebUI 设置面板管理壳侧全局快捷键，并提供双击 Esc 停止当前对话
 - `reasoning`（`@dsh-desktop/plugin-reasoning`）— 模型设置插件：在“模型”页中为自定义 / 第三方模型配置推理等级，写入 `reasoningEfforts` 后输入栏模型菜单可直接切换
@@ -131,14 +132,21 @@ npm install -g @deepseek-ai/dsh
 
 远程插件预设分为两类：外部目录中的固定预设（如仓库 `packages/external-plugins`，每个顶层 `*.json` 文件为一个 group，合并结果只读）与 `config.json.remote_plugins` 中的本地分组预设。启动时会对 active profile 执行 `dsh plugin add`，bridge 插件“插件”页支持整组同步、已安装插件列表、移除与更新。
 
+预设可声明 `allow_build` 数组，安装时透传 pnpm `--allow-build`，用于 GitHub/git 插件等需要构建脚本的场景。
+构建时 `yarn build:plugins` 会把 `packages/external-plugins/*.json` 装配进 Tauri resources，随发布包分发，默认远程预设会随应用一起生效。
+
 > 插件域与 Tauri 壳域的职责边界、受控桥接与端口白名单机制，见 [docs/plugin-tauri-boundary.md](docs/plugin-tauri-boundary.md)。
 
 ## 局域网访问（可选）
 
 `dsh` 默认只绑 `127.0.0.1`，局域网设备无法访问。仓库提供零依赖反向代理脚本，将本机回环身份伪装成 dsh 看到的来源（改写 Host / Origin，透传 `Sec-Fetch-Site`，支持 WebSocket 与流式响应）：
 
+桌面壳已把代理收进 bridge 插件：设置 → 桌面 → 局域网访问，可配置监听地址、端口、上游 dsh 地址，并直接启动 / 停止。令牌已取消，局域网设备无需鉴权即可访问，请在可信网络中使用。
+
+也保留独立 CLI 入口：
+
 ```sh
-yarn lan-proxy --token "一个足够长的随机串"
+yarn lan-proxy
 ```
 
 常用参数（环境变量 `DSH_PROXY_*` 优先级低于同名参数）：
@@ -148,7 +156,6 @@ yarn lan-proxy --token "一个足够长的随机串"
 | `--bind` | `0.0.0.0` | 监听地址 |
 | `--port` | `8080` | 监听端口 |
 | `--target` | `127.0.0.1:53553` | 上游 dsh web 地址 |
-| `--token` | 关闭 | 启用 Bearer token 门禁（强烈建议） |
 
 ## 配置
 
@@ -161,7 +168,7 @@ PATH 检测会合并桌面进程自身 PATH、macOS 系统 PATH（`/etc/paths` +
 | `DSH_BIN` | PATH 中的 `dsh` | 指定 dsh 入口 |
 | `DSH_NODE` | PATH 中的 `node` | 指定 Node 解释器 |
 | `DSH_HOME` | 继承当前环境 | 传给 dsh 的 Harness 数据目录 |
-| `DSH_DESKTOP_REMOTE_PLUGINS_PATH` | 未设置时自动检测 `$DSH_HOME/remote-plugins(.json)`、应用数据目录与仓库 `packages/external-plugins` | 外部远程插件预设文件或目录 |
+| `DSH_DESKTOP_REMOTE_PLUGINS_PATH` | 未设置时自动检测 `$DSH_HOME/remote-plugins(.json)`、应用数据目录、随包 `resources/external-plugins` 与仓库 `packages/external-plugins` | 外部远程插件预设文件或目录 |
 
 ## 目录结构
 
@@ -192,7 +199,7 @@ dsh-desktop/
 │   └── *.test.mjs                # 脚本测试
 ├── .github/
 │   ├── scripts/                  # 版本管理 / 更新器产物脚本
-│   └── workflows/                # 三平台构建与自动发布
+│   └── workflows/                # 三平台 CI 构建与独立 release 发布
 ├── docs/                         # 插件边界文档、截图等
 ├── dist/                         # 前端构建产物（生成，勿手改）
 ├── CHANGELOG.md

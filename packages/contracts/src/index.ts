@@ -72,11 +72,28 @@ export interface RemotePluginPreset {
   enabled: boolean;
   group: string;
   source: RemotePluginSource;
+  allow_build?: string[];
 }
 
 export interface DesktopSettings {
   autostart: boolean;
   startup_mode: StartupMode;
+}
+
+/** 局域网反向代理配置，存于壳侧 lan-proxy.json。 */
+export interface LanProxySettings {
+  bind: string;
+  port: number;
+  target: string | null;
+}
+
+/** 局域网反向代理状态快照。 */
+export interface LanProxySnapshot {
+  settings: LanProxySettings;
+  running: boolean;
+  url: string | null;
+  urls: string[];
+  error: string | null;
 }
 
 /** 壳侧维护的本地项目条目（项目列表与右键菜单操作的唯一状态源）。 */
@@ -174,6 +191,10 @@ export const COMMANDS = {
   windowAction: "window_action",
   getDesktopSettings: "get_desktop_settings",
   setDesktopSettings: "set_desktop_settings",
+  getLanProxy: "get_lan_proxy",
+  setLanProxy: "set_lan_proxy",
+  startLanProxy: "start_lan_proxy",
+  stopLanProxy: "stop_lan_proxy",
   getProjects: "get_projects",
   addProject: "add_project",
   updateProject: "update_project",

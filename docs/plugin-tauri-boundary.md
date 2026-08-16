@@ -46,7 +46,9 @@ DSH Desktop 是 dsh 的桌面套壳：Rust 后端拉起 `dsh web` 子进程，�
 | 职责 | 检测/安装/拉起/监控/停止 dsh 子进程；窗口/菜单/全局快捷键；应用数据目录；`config.json`；原生交互（打开日志目录）；打包分发 |
 | 已声明能力 | capabilities `core:default` + `global-shortcut:default`（覆盖 main 窗口） |
 | 实现契约 | native IPC 类型与常量见 `packages/contracts`，完整命令清单见 `apps/shell/src-tauri/AGENTS.md`；bridge client 实际消费的 profile / 远程插件 / 受管插件命令为 `get_profiles` / `get_active_profile` / `select_profile` / `get_remote_plugins` / `set_remote_plugins` / `sync_remote_plugins` / `get_installed_plugins` / `install_profile_plugin` / `remove_profile_plugin` / `update_profile_plugins` |
+| 局域网访问 | `get_lan_proxy` / `set_lan_proxy` / `start_lan_proxy` / `stop_lan_proxy`，配置存 `lan-proxy.json`，由 Rust 受管子进程启动内嵌 `lan-proxy.mjs` |
 | 配置 | `config.json`（应用数据目录，含 `remote_plugins_path` 外部预设文件或目录与 `remote_plugins` 本地分组预设）与 `desktop-settings.json`（自启/启动模式）→ 环境变量（`DSH_BIN`/ `DSH_NODE`/ `DSH_HOME`/ `DSH_DESKTOP_REMOTE_PLUGINS_PATH`）→ PATH 检测（合并进程、macOS/Linux/Windows 系统 PATH 与非 Windows shell PATH） |
+| 局域网配置 | `lan-proxy.json`（bind/port/target），与 `config.json` 独立，无 token 门禁，仅限可信网络 |
 
 **红线**：Tauri 壳不实现任何 dsh 产品功能——不做 agent、不做工具、不接 LLM、
 不解析 dsh 的完整配置树、**不实现 dsh 的插件清单/配置树解析**。profile 发现只做最小 manifest 校验（bundle 顺序 / direct dependencies），具体安装、更新与配置变更仍交给 `dsh plugin` 与 dsh 自己。
@@ -172,6 +174,9 @@ snake_case）。
   `get_desktop_settings` / `set_desktop_settings` 读写；OS 级启停由 autostart 插件执行——
   均属 **Tauri 壳域**。不使用 dsh settings 的 `desktop` 命名空间，因为 dsh Web 配置接口
   对其返回 `settings-not-exposed`。
+- **局域网访问设置项归属**：代理配置存 `lan-proxy.json`，启停由 Rust 受管子进程管理；bridge client 经
+  `lanProxy.get()` / `set()` / `start()` / `stop()` 调 `get_lan_proxy` / `set_lan_proxy` /
+  `start_lan_proxy` / `stop_lan_proxy` 控制，均属 **Tauri 壳域**。
 - **外观设置项归属**：bridge client 面复用上游已注册的 `ui-theme` 命名空间，
   只 bind 不注册，渲染“外观”设置节（主题偏好 / 主题库 / 背景图 / 玻璃透明度 / 自定义主题 /
   排版），快照本地生效并防抖写回 Host——属 **dsh 插件域**；壳侧 `get_ui_theme` /
@@ -209,6 +214,10 @@ snake_case）。
    不下载依赖**（内嵌包已自包含；远程插件预设走 `dsh plugin add`，不属于这条内嵌路径）。
 
 **远程插件预设**：壳侧 `config.json.remote_plugins` 保存本地分组预设；`remote_plugins_path` 可指向外部 JSON 文件或目录。默认检测 `$DSH_HOME/remote-plugins(.json)`、应用数据目录与仓库 `packages/external-plugins`。外部目录中每个顶层 `*.json` 文件代表一个 group，文件内为 URL/git 预设；外部预设固定只读。启动时对 active profile 依次执行 `dsh plugin --profile <active> add <url>`，失败只记日志并继续启动。bridge 的“插件”设置节提供分组预设、整组同步、已安装依赖列表、移除与更新操作。远程预设会写 profile manifest，与内嵌 Option B 相互独立。
+
+外部预设可选 `allow_build` 数组；声明后会以 `dsh plugin --profile <active> add --allow-build <package> ... <url>` 安装，用于放行 GitHub/git 插件的构建脚本。若预设未声明 `allow_build`，则按 pnpm 默认策略拒绝运行构建脚本。
+
+构建时 `yarn build:plugins` 会把 `packages/external-plugins/*.json` 装配到 `resources/external-plugins/` 并随 Tauri 包分发；发布模式检测顺序为 `$DSH_HOME/remote-plugins(.json)`、应用数据目录、随包 `resources/external-plugins`，开发模式再回退到仓库目录。
 
 **Option B 语义**：内嵌插件只随桌面壳的 `--patch` 挂载；**单独运行 `dsh`（不带 `--patch`）
 不挂载它们**，与 `dsh plugin --profile <active> add` 的 profile 安装相互独立。停用某个内嵌插件只需

@@ -19,6 +19,10 @@
   color: var(--dsw-alias-label-primary);
   font-size: 13px;
   font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .settingDesc {
@@ -51,6 +55,10 @@
   color: var(--dsw-alias-label-primary);
   font-size: 13px;
   font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .toggleDesc {
@@ -118,7 +126,7 @@
 
 .segmentedField {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 14px;
   min-width: 0;
@@ -130,6 +138,8 @@
 .segmentedLabel {
   color: var(--dsw-alias-label-secondary);
   font-size: 12px;
+  min-width: max-content;
+  white-space: nowrap;
 }
 
 .segmented {

@@ -38,6 +38,9 @@ pub struct RemotePluginPreset {
     pub group: String,
     #[serde(default)]
     pub source: RemotePluginSource,
+    /// pnpm `--allow-build` 白名单；仅远程预设显式声明时透传给安装命令。
+    #[serde(default)]
+    pub allow_build: Vec<String>,
 }
 
 fn default_enabled() -> bool {
@@ -135,6 +138,7 @@ mod tests {
                 enabled: true,
                 group: "tools".into(),
                 source: RemotePluginSource::External,
+                allow_build: vec![],
             }],
         };
         save(&path, &config).unwrap();

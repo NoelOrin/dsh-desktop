@@ -14,7 +14,7 @@
 | `yarn build:web` | 构建前端到 `dist/`（Tauri 的 `beforeBuildCommand` 会调用） |
 | `yarn build:plugins` | 编译 `packages/plugins` 各插件并把自包含 dist 包装配进 `apps/shell/src-tauri/resources/plugins/`，自动清理已删除插件的旧产物；可传 `--home <path>` 同步热部署 |
 | `yarn tauri` | 透传 Tauri CLI 到 shell workspace |
-| `yarn lan-proxy` | 启动零依赖局域网反向代理（支持 Bearer token 门禁，详见 README） |
+| `yarn lan-proxy` | 启动零依赖局域网反向代理（无鉴权，详见 README） |
 | `yarn typecheck` | 对所有 workspace 执行 TypeScript 类型检查（shell / contracts / plugins） |
 | `yarn lint` / `yarn format` / `yarn format:check` | Biome 检查 / 格式化（格式约定见 `biome.json`） |
 | `corepack yarn install` | 安装依赖（Yarn 4 + node-modules，生成 `node_modules` 目录） |
@@ -26,7 +26,7 @@
 - `packages/contracts/` - 前后端共享的 native IPC 契约类型与常量（`@dsh-desktop/contracts`）
 - `packages/plugins/` - dsh 插件容器：`bridge/`（桥接 Tauri 壳能力）+ `projects/`（项目列表与右键菜单 host 端点）+ `shortcuts/`（全局快捷键设置页）+ `reasoning/`（模型设置页，含第三方思考强度），每个含 `dsh` 字段的子目录一个 cordis 插件；`client-kit/` 为共享注入/构建 helper，不进入插件 resources；`packages/external-plugins/` 是外部远程插件预设目录（每个顶层 JSON 文件一个 group）
 - `scripts/` - 根级开发脚本：`dev.mjs` / `watch-plugins.mjs` / `build-plugins.mjs` / `lan-proxy.mjs`
-- `.github/` - 三平台 CI 构建、自动发布与版本号脚本
+- `.github/` - 三平台 CI 构建、独立 release 发布与版本号脚本
 - `docs/` - 插件边界文档、设计/实施记录与截图等资源
 
 ## 窗口与关键流程
@@ -70,4 +70,4 @@ PATH 检测会合并桌面进程自身 PATH、macOS 系统 PATH（`/etc/paths` +
 - `dist/`、`apps/shell/src-tauri/target/`、`apps/shell/src-tauri/gen/` 与 `apps/shell/src-tauri/resources/plugins/` 均为生成产物，勿手改（已在 `.gitignore` 或由脚本生成）
 - 新增 Tauri IPC 能力需同步修改 `apps/shell/src-tauri/capabilities/default.json` 和/或 `bridge.json`、`packages/contracts/src/index.ts`、Rust 命令、相关前端/桥接调用与各 AGENTS 契约表
 - 修改根级脚本、CI、插件装配或桥接面时，同步更新对应子目录 `AGENTS.md`，避免文档与实现脱节
-- 本仓库只有 `release` 分支；push 到 `release` 会触发自动发版
+- 本仓库只有 `release` 分支；push 到 `release` 触发版本准备与 CI 构建，GitHub Release 发布时才触发 release workflow

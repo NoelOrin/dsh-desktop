@@ -25,7 +25,13 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "preset": "recommended"
+      "preset": "recommended",
+      "correctness": {
+        "noUnknownPseudoClass": {
+          "level": "error",
+          "options": { "ignore": ["global"] }
+        }
+      }
     }
   },
   "javascript": {

@@ -700,7 +700,7 @@ export function apply(ctx: ClientContextLike): void {
   const NS = "settings.shortcuts";
   const t = ctx.locale.bind(NS);
   const settingsScope = ctx.settingsScope.bind<ShortcutsSettings>({
-    namespace: "dsh-desktop.shortcuts",
+    namespace: "dsh-desktop-shortcuts",
   });
   ctx.effect(() => migrateLegacyShortcuts(settingsScope), "shortcuts: 迁移旧 localStorage 设置");
 

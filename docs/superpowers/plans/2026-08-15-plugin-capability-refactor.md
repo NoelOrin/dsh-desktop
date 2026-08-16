@@ -524,7 +524,7 @@ Expected: 布局测试通过。
 
 - [ ] **Step 1: host 注册设置**
 
-在 `src/index.ts` 注册 `dsh-desktop.shortcuts` settings，schema 包含 `doubleEscapeStopEnabled`、`doubleEscapeStopTimeoutMs`、`presets`。schema 默认值与现有 `normalizeShortcutsSettings` 一致。
+在 `src/index.ts` 注册 `dsh-desktop-shortcuts` settings，schema 包含 `doubleEscapeStopEnabled`、`doubleEscapeStopTimeoutMs`、`presets`。schema 默认值与现有 `normalizeShortcutsSettings` 一致。
 
 - [ ] **Step 2: client 替换 localStorage**
 

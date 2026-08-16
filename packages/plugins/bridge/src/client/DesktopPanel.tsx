@@ -1,13 +1,19 @@
-/** 桌面设置节：运行状态、路径配置、维护工具与开机自启。 */
+/** 桌面设置节：运行状态、路径配置、局域网访问、维护工具、开机自启与统一应用重启。 */
 import {
   Button,
+  IconChevronDownOutline14,
   IconDownloadOutline16,
   IconFolderOpenOutline16,
+  IconGlobeOutline14,
+  IconPlayOutline16,
   IconRefreshOutline16,
+  IconStopFill16,
   Input,
+  Menu,
   StateDot,
 } from "@deepseek-ai/dsh-client-ui-primitives";
-import { useEffect, useRef, useState } from "react";
+
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import css from "./desktop.module.css";
 import {
   type DesktopModeSettings,
@@ -15,6 +21,8 @@ import {
   type DshConfig,
   type DshProfileSummary,
   getBridge,
+  type LanProxySettings,
+  type LanProxySnapshot,
   type RemotePluginPreset,
   type RuntimeSnapshot,
   type SettingsScopeLike,
@@ -26,6 +34,18 @@ import { SegmentedField, type SegmentOption, ToggleField } from "./ui/controls";
 
 const MAX_LOGS = 500;
 const SHOW_LOGS = new Set(["installing", "starting", "failed"]);
+
+interface ConfigPanelHandle {
+  apply(): Promise<void>;
+}
+
+interface ProfilePanelHandle {
+  apply(): Promise<void>;
+}
+
+interface ModePanelHandle {
+  apply(): Promise<void>;
+}
 
 function StartupSettings({ t }: { t: Translate }): JSX.Element {
   const [autostart, setAutostart] = useState(false);
@@ -249,13 +269,17 @@ function StatusPanel({ t }: { t: Translate }): JSX.Element {
   );
 }
 
-function ConfigPanel({ t }: { t: Translate }): JSX.Element {
+const ConfigPanel = forwardRef<ConfigPanelHandle, { t: Translate }>(function ConfigPanel(
+  { t },
+  ref,
+) {
   const [dshBin, setDshBin] = useState("");
   const [dshNode, setDshNode] = useState("");
   const [dshHome, setDshHome] = useState("");
   const [dshRemotePluginsPath, setDshRemotePluginsPath] = useState("");
   const dshShortcutsRef = useRef<string[]>([]);
   const dshRemotePluginsRef = useRef<RemotePluginPreset[]>([]);
+  const [dirty, setDirty] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -281,7 +305,7 @@ function ConfigPanel({ t }: { t: Translate }): JSX.Element {
     };
   }, []);
 
-  const save = async () => {
+  const save = async (): Promise<boolean> => {
     const config: DshConfig = {
       dsh_bin: dshBin || null,
       dsh_node: dshNode || null,
@@ -293,17 +317,28 @@ function ConfigPanel({ t }: { t: Translate }): JSX.Element {
     const bridge = getBridge();
     if (!bridge) {
       setError("桌面壳桥接不可用");
-      return;
+      return false;
     }
     try {
       await bridge.setConfig(config);
+      setDirty(false);
       setSaved(true);
       setError(null);
+      return true;
     } catch (e) {
       setSaved(false);
       setError(`保存失败: ${String(e)}`);
+      return false;
     }
   };
+
+  useImperativeHandle(ref, () => ({
+    apply: async () => {
+      if (dirty && !(await save())) {
+        throw new Error("配置保存失败");
+      }
+    },
+  }));
 
   const fields: Array<{
     id: string;
@@ -363,6 +398,7 @@ function ConfigPanel({ t }: { t: Translate }): JSX.Element {
               placeholder={field.placeholder}
               onChange={(event) => {
                 field.onChange(event.currentTarget.value);
+                setDirty(true);
                 setSaved(false);
                 setError(null);
               }}
@@ -374,21 +410,218 @@ function ConfigPanel({ t }: { t: Translate }): JSX.Element {
         <Button type="button" onClick={() => void save()}>
           {t("config.save")}
         </Button>
+      </div>
+      {error ? <p className={css.messageError}>{error}</p> : null}
+      {saved ? <p className={css.messageInfo}>{t("config.saved")}</p> : null}
+    </div>
+  );
+});
+
+function LanProxyPanel({ t }: { t: Translate }): JSX.Element {
+  const [settings, setSettings] = useState<LanProxySettings>({
+    bind: "0.0.0.0",
+    port: 8080,
+    target: "",
+  });
+  const [running, setRunning] = useState(false);
+  const [urls, setUrls] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const applySnapshot = useCallback((snapshot: LanProxySnapshot): void => {
+    setSettings({
+      bind: snapshot.settings.bind,
+      port: snapshot.settings.port,
+      target: snapshot.settings.target ?? "",
+    });
+    setRunning(snapshot.running);
+    setUrls(snapshot.urls);
+    setError(snapshot.error ?? null);
+  }, []);
+
+  const nextSettings = (): LanProxySettings => ({
+    bind: settings.bind.trim() || "0.0.0.0",
+    port: settings.port || 8080,
+    target: (settings.target ?? "").trim() || null,
+  });
+
+  const runAction = async (
+    action: (bridge: NonNullable<ReturnType<typeof getBridge>>) => Promise<LanProxySnapshot>,
+    success: string,
+  ): Promise<void> => {
+    const bridge = getBridge();
+    if (!bridge) {
+      setError(t("lanProxy.unavailable"));
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const snapshot = await action(bridge);
+      applySnapshot(snapshot);
+      setNotice(success);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const refresh = (): Promise<void> =>
+    runAction((bridge) => bridge.lanProxy.get(), t("lanProxy.refreshed"));
+  const save = (): Promise<void> =>
+    runAction((bridge) => bridge.lanProxy.set(nextSettings()), t("lanProxy.saved"));
+  const start = (): Promise<void> =>
+    runAction(async (bridge) => {
+      await bridge.lanProxy.set(nextSettings());
+      const snapshot = await bridge.lanProxy.start();
+      return snapshot;
+    }, t("lanProxy.started"));
+  const stop = (): Promise<void> =>
+    runAction((bridge) => bridge.lanProxy.stop(), t("lanProxy.stopNotice"));
+
+  useEffect(() => {
+    let disposed = false;
+    getBridge()
+      ?.lanProxy.get()
+      .then((snapshot) => {
+        if (!disposed) applySnapshot(snapshot);
+      })
+      .catch((e: unknown) => {
+        if (!disposed) setError(String(e));
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [applySnapshot]);
+
+  const fields: Array<{
+    id: string;
+    label: string;
+    placeholder: string;
+    value: string;
+    onChange: (value: string) => void;
+  }> = [
+    {
+      id: "lan-proxy-bind",
+      label: t("lanProxy.bind"),
+      placeholder: "0.0.0.0",
+      value: settings.bind,
+      onChange: (value) => setSettings((prev) => ({ ...prev, bind: value })),
+    },
+    {
+      id: "lan-proxy-port",
+      label: t("lanProxy.port"),
+      placeholder: "8080",
+      value: String(settings.port),
+      onChange: (value) => setSettings((prev) => ({ ...prev, port: Number(value) || 0 })),
+    },
+    {
+      id: "lan-proxy-target",
+      label: t("lanProxy.target"),
+      placeholder: t("lanProxy.placeholderTarget"),
+      value: settings.target ?? "",
+      onChange: (value) => setSettings((prev) => ({ ...prev, target: value })),
+    },
+  ];
+
+  const statusUrl = running && (urls[0] ?? `http://${settings.bind}:${settings.port}`);
+
+  return (
+    <div className={css.block}>
+      <ToggleField
+        id="lan-proxy-enabled"
+        checked={running}
+        disabled={busy}
+        onChange={(enabled) => void (enabled ? start() : stop())}
+        title={t("lanProxy.enabled")}
+        description={t("lanProxy.desc")}
+      />
+      <div className={css.configGrid}>
+        {fields.map((field) => (
+          <label key={field.id} className={css.field} htmlFor={field.id}>
+            <span className={css.fieldLabel}>
+              <span>{field.label}</span>
+            </span>
+            <Input
+              className={css.input}
+              id={field.id}
+              value={field.value}
+              placeholder={field.placeholder}
+              onChange={(event) => {
+                field.onChange(event.currentTarget.value);
+                setError(null);
+                setNotice(null);
+              }}
+            />
+          </label>
+        ))}
+      </div>
+      {statusUrl ? (
+        <div className={css.lanProxyStatus}>
+          <StateDot state={running ? "done" : "warning"} size={12} />
+          <div className={css.lanProxyMeta}>
+            <span className={css.lanProxyTitle}>
+              {running ? t("lanProxy.running") : t("lanProxy.stopped")}
+            </span>
+            <code className={css.lanProxyUrl}>{statusUrl}</code>
+          </div>
+        </div>
+      ) : null}
+      {urls.length > 1 ? (
+        <div className={css.lanProxyUrls}>
+          {urls.map((url) => (
+            <code key={url} className={css.lanProxyUrlItem}>
+              {url}
+            </code>
+          ))}
+        </div>
+      ) : null}
+      <div className={css.formActions}>
         <Button
           type="button"
           variant="outline"
           icon={<IconRefreshOutline16 />}
-          onClick={() =>
-            void getBridge()
-              ?.restart()
-              .catch((e: unknown) => console.error(e))
-          }
+          disabled={busy}
+          onClick={() => void refresh()}
         >
-          {t("config.restart")}
+          {t("lanProxy.refresh")}
         </Button>
+        <Button
+          type="button"
+          variant="outline"
+          icon={<IconGlobeOutline14 />}
+          disabled={busy}
+          onClick={() => void save()}
+        >
+          {t("lanProxy.save")}
+        </Button>
+        {running ? (
+          <Button
+            type="button"
+            variant="outline"
+            icon={<IconStopFill16 />}
+            disabled={busy}
+            onClick={() => void stop()}
+          >
+            {t("lanProxy.stop")}
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            variant="outline"
+            icon={<IconPlayOutline16 />}
+            disabled={busy}
+            onClick={() => void start()}
+          >
+            {t("lanProxy.start")}
+          </Button>
+        )}
       </div>
       {error ? <p className={css.messageError}>{error}</p> : null}
-      {saved ? <p className={css.messageInfo}>{t("config.saved")}</p> : null}
+      {notice ? <p className={css.messageInfo}>{notice}</p> : null}
     </div>
   );
 }
@@ -467,14 +700,16 @@ function ToolsPanel({ t }: { t: Translate }): JSX.Element {
   );
 }
 
-function ProfilePanel(): JSX.Element {
+const ProfilePanel = forwardRef<ProfilePanelHandle, object>(function ProfilePanel(_props, ref) {
   const [profiles, setProfiles] = useState<DshProfileSummary[]>([]);
   const [active, setActive] = useState<DesktopProfileState | null>(null);
   const [selected, setSelected] = useState("");
+  const [pending, setPending] = useState(false);
   const [loading, setLoading] = useState(true);
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
     let disposed = false;
@@ -517,30 +752,45 @@ function ProfilePanel(): JSX.Element {
         },
       ].filter((profile) => profile.name !== "");
 
-  const switchProfile = async (name: string) => {
+  const selectProfile = (id: string): void => {
+    setMenuOpen(false);
+    const next = id;
+    const changed = next !== current;
+    setSelected(next);
+    setPending(changed);
+    setNotice(changed ? `已选择 profile “${next}”，点击“应用并重启”切换` : null);
+    setError(null);
+  };
+
+  const applySelection = async (): Promise<void> => {
+    if (!pending) return;
     const bridge = getBridge();
     if (!bridge) {
-      setError("桌面壳桥接不可用");
-      return;
+      const message = "桌面壳桥接不可用";
+      setError(message);
+      throw new Error(message);
     }
     setError(null);
     setNotice(null);
     setSwitching(true);
     try {
-      const result = await bridge.profiles.select(name);
+      const result = await bridge.profiles.select(selected);
       setSelected(result.profile);
+      setPending(false);
       setNotice(`已选择 profile “${result.profile}”，重启 dsh 后切换`);
-      await bridge.restart();
     } catch (e) {
-      setError(`切换 profile 失败: ${String(e)}`);
+      const message = `切换 profile 失败: ${String(e)}`;
+      setError(message);
       setSelected(current);
+      throw new Error(message);
     } finally {
       setSwitching(false);
     }
   };
 
+  useImperativeHandle(ref, () => ({ apply: applySelection }));
+
   const selectedProfile = options.find((p) => p.name === selected) ?? null;
-  const canApply = !loading && !switching && selectedProfile?.web_capable === true;
   const selectedProblem = selectedProfile?.problem ?? null;
 
   return (
@@ -556,46 +806,53 @@ function ProfilePanel(): JSX.Element {
         </span>
       </div>
       <div className={css.actions}>
-        <select
-          id="desktop-profile"
-          className={css.profileSelect}
-          value={selected}
-          disabled={loading || switching}
-          onChange={(event) => {
-            setSelected(event.currentTarget.value);
-            setNotice(null);
-            setError(null);
-          }}
-        >
-          {loading ? <option value="">加载中…</option> : null}
-          {options.map((profile) => (
-            <option key={profile.name} value={profile.name} disabled={!profile.web_capable}>
-              {profile.name}
-            </option>
-          ))}
-        </select>
-        <Button type="button" disabled={!canApply} onClick={() => void switchProfile(selected)}>
-          应用并重启
-        </Button>
+        <Menu
+          open={menuOpen}
+          onClose={() => setMenuOpen(false)}
+          className={css.profileMenu}
+          portal
+          selectedId={selected}
+          items={options.map((profile) => ({
+            id: profile.name,
+            label: profile.name,
+            disabled: !profile.web_capable,
+          }))}
+          onSelect={selectProfile}
+          anchor={
+            <Button
+              id="desktop-profile"
+              type="button"
+              variant="outline"
+              className={css.profileSelectButton}
+              disabled={loading || switching}
+              aria-expanded={menuOpen}
+              aria-haspopup="menu"
+              onClick={() => setMenuOpen((open) => !open)}
+            >
+              <span className={css.profileSelectLabel}>
+                {loading ? "加载中…" : (selectedProfile?.name ?? selected)}
+              </span>
+              <IconChevronDownOutline14 />
+            </Button>
+          }
+        />
       </div>
       {selectedProblem ? <p className={css.messageError}>{selectedProblem}</p> : null}
       {notice ? <p className={css.messageInfo}>{notice}</p> : null}
       {error ? <p className={css.messageError}>{error}</p> : null}
     </div>
   );
-}
+});
 
-function ModePanel({
-  modeScope,
-  t,
-}: {
-  modeScope: SettingsScopeLike<DesktopModeSettings>;
-  t: Translate;
-}): JSX.Element {
+const ModePanel = forwardRef<
+  ModePanelHandle,
+  { modeScope: SettingsScopeLike<DesktopModeSettings>; t: Translate }
+>(function ModePanel({ modeScope, t }, ref) {
   const [mode, setMode] = useState<DesktopModeSettings["mode"]>("compatibility");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
 
   useEffect(() => {
     let disposed = false;
@@ -618,16 +875,31 @@ function ModePanel({
     };
   }, [modeScope]);
 
-  const applyMode = async (next: DesktopModeSettings["mode"]) => {
+  const saveMode = async (): Promise<void> => {
+    if (!pending) return;
     setError(null);
     setNotice(null);
     try {
-      await modeScope.set("mode", next);
-      setMode(next);
+      await modeScope.set("mode", mode);
+      setPending(false);
       setNotice(t("mode.restart"));
     } catch (e) {
-      setError(`模式设置失败: ${String(e)}`);
+      const message = `模式设置失败: ${String(e)}`;
+      setError(message);
+      throw new Error(message);
     }
+  };
+
+  useImperativeHandle(ref, () => ({ apply: saveMode }));
+
+  const selectMode = (next: DesktopModeSettings["mode"]) => {
+    setMode(next);
+    const snapshot = modeScope.getSnapshot();
+    const currentMode = snapshot.status === "ready" ? snapshot.value?.mode : undefined;
+    const changed = next !== currentMode;
+    setPending(changed);
+    setError(null);
+    setNotice(changed ? t("mode.pending") : null);
   };
 
   const options: Array<SegmentOption<DesktopModeSettings["mode"]>> = [
@@ -642,13 +914,13 @@ function ModePanel({
         value={mode}
         options={options}
         disabled={loading}
-        onChange={(next) => void applyMode(next)}
+        onChange={selectMode}
       />
       {error ? <p className={css.messageError}>{error}</p> : null}
       {notice ? <p className={css.messageInfo}>{notice}</p> : null}
     </div>
   );
-}
+});
 
 export function DesktopPanel({
   t,
@@ -657,6 +929,31 @@ export function DesktopPanel({
   t: Translate;
   modeScope: SettingsScopeLike<DesktopModeSettings>;
 }): JSX.Element {
+  const configRef = useRef<ConfigPanelHandle>(null);
+  const profileRef = useRef<ProfilePanelHandle>(null);
+  const modeRef = useRef<ModePanelHandle>(null);
+  const [applying, setApplying] = useState(false);
+  const [applyError, setApplyError] = useState<string | null>(null);
+
+  const applyAndRestart = async (): Promise<void> => {
+    const bridge = getBridge();
+    if (!bridge) {
+      setApplyError("桌面壳桥接不可用");
+      return;
+    }
+    setApplying(true);
+    setApplyError(null);
+    try {
+      await configRef.current?.apply();
+      await profileRef.current?.apply();
+      await modeRef.current?.apply();
+      await bridge.restart();
+    } catch (e) {
+      setApplyError(`${t("applyRestart.failed")}: ${String(e)}`);
+    } finally {
+      setApplying(false);
+    }
+  };
   return (
     <SettingsPage>
       <SettingsSection
@@ -671,15 +968,22 @@ export function DesktopPanel({
         title={t("nav.config")}
         description={t("nav.config.desc")}
       >
-        <ConfigPanel t={t} />
+        <ConfigPanel ref={configRef} t={t} />
+      </SettingsSection>
+      <SettingsSection
+        headingId="desktop-lan-proxy-heading"
+        title={t("lanProxy.title")}
+        description={t("lanProxy.sectionDesc")}
+      >
+        <LanProxyPanel t={t} />
       </SettingsSection>
       <SettingsSection
         headingId="desktop-profile-heading"
         title="运行环境"
         description="选择 dsh web 使用的 profile"
       >
-        <ProfilePanel />
-        <ModePanel modeScope={modeScope} t={t} />
+        <ProfilePanel ref={profileRef} />
+        <ModePanel ref={modeRef} modeScope={modeScope} t={t} />
       </SettingsSection>
       <SettingsSection
         headingId="desktop-tools-heading"
@@ -694,6 +998,24 @@ export function DesktopPanel({
         description={t("nav.autostart.desc")}
       >
         <StartupSettings t={t} />
+      </SettingsSection>
+      <SettingsSection
+        headingId="desktop-apply-restart-heading"
+        title={t("applyRestart.title")}
+        description={t("applyRestart.desc")}
+      >
+        <div className={css.applyRestartBar}>
+          <Button
+            type="button"
+            icon={<IconRefreshOutline16 />}
+            disabled={applying}
+            aria-busy={applying}
+            onClick={() => void applyAndRestart()}
+          >
+            {t("applyRestart.action")}
+          </Button>
+        </div>
+        {applyError ? <p className={css.messageError}>{applyError}</p> : null}
       </SettingsSection>
     </SettingsPage>
   );

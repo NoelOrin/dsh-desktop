@@ -10,7 +10,7 @@
 | 面 | 文件 | 职责 |
 | --- | --- | --- |
 | host | `src/index.ts` | 插件入口（`export const name` + `apply(ctx)`）；定义 `DshDesktopBridge` 类型；注册 `dsh-desktop/health` 健康端点，不实现 dsh 业务 |
-| client | `src/client.tsx` | 在 dsh WebUI 设置面板注册“插件”“桌面”与“外观”设置节；“插件”节按 group 管理远程插件预设与已安装插件，外部目录预设只读，“桌面”节提供状态 / 配置 / profile / 界面模式 / 工具 / 开机自启与启动模式，“外观”节提供主题偏好 / 主题库 / 背景图 / 玻璃透明度 / 自定义主题 / 排版；`ui-theme` 命名空间只 bind 不注册，快照经 `createThemeStore` 防抖写回，变化时 `applyThemeSection` 实时应用 |
+| client | `src/client.tsx` | 在 dsh WebUI 设置面板注册“插件”“桌面”与“外观”设置节；“插件”节按 group 管理远程插件预设与已安装插件，外部目录预设只读，“桌面”节提供状态 / 配置 / 局域网访问 / profile / 界面模式 / 工具 / 开机自启与启动模式，并统一提供“应用与重启”入口；“外观”节提供主题偏好 / 主题库 / 背景图 / 玻璃透明度 / 自定义主题 / 排版；`ui-theme` 命名空间只 bind 不注册，快照经 `createThemeStore` 防抖写回，变化时 `applyThemeSection` 实时应用 |
 | shared | `src/shared/theme.ts` | 主题家族、token 推导、背景/玻璃/排版边界与默认值 |
 | client UI | `src/client/*` | 插件/桌面/外观设置节组件（`PluginPanel.tsx`、`DesktopPanel.tsx`、`AppearanceSection.tsx` 等）、设置菜单/标签/卡片插件图标（`settings-nav-icons.ts`）、桌面壳形态（`desktop-shell.ts` + `desktop.module.css` 内全局规则）、advanced 三栏布局与主题 presenter（`advanced/*`）、共享控件（`ui/controls.*`）、运行时类型切片（`runtime.ts`）与主题应用逻辑；桥接读取与样式注入统一走 `../../../client-kit/inject.ts` |
 
@@ -31,8 +31,10 @@ client 面依赖 `@deepseek-ai/dsh-client-ui-settings` 等 dsh client 生态（p
 | `onStatus(cb)` / `onLog(cb)` | 事件 `dsh-status` / `dsh-log` | 订阅运行状态与日志 |
 | `autostart.get()` / `autostart.set(enabled)` | `get_autostart` / `set_autostart` | 查询 / 设置开机自启 |
 | `desktop.get()` / `desktop.set(settings)` | `get_desktop_settings` / `set_desktop_settings` | 查询 / 设置开机自启与自启后窗口状态 |
+| `lanProxy.get()` / `set(settings)` / `start()` / `stop()` | `get_lan_proxy` / `set_lan_proxy` / `start_lan_proxy` / `stop_lan_proxy` | 查询 / 保存 / 启动 / 停止局域网反向代理（运行中保存配置会自动重启） |
 | `profiles.list()` / `profiles.active()` / `profiles.select(name)` | `get_profiles` / `get_active_profile` / `select_profile` | profile 发现、状态机快照与选择（写入 pending，重启后生效） |
 | `remotePlugins.list()` / `remotePlugins.save(presets)` | `get_remote_plugins` / `set_remote_plugins` | 读取合并后预设（外部固定 + 本地分组）/ 保存本地预设 |
+  - 预设可选 `allow_build`，安装远程插件时透传 pnpm `--allow-build`
 | `plugins.installed()` / `install(spec)` / `remove(name)` / `update()` / `sync(group?)` | `get_installed_plugins` / `install_profile_plugin` / `remove_profile_plugin` / `update_profile_plugins` / `sync_remote_plugins` | 已安装插件列表与受管插件操作；`sync(group?)` 支持整组同步 |
 | `shortcuts.register(s, cb)` / `unregister(s)` / `list()` / `unregisterAll()` | `register_shortcut` / `unregister_shortcut` / `get_shortcuts` / `unregister_all_shortcuts` | 全局快捷键管理 |
 | `onShortcut(cb)` | 事件 `dsh-shortcut` | 订阅快捷键按下 |
@@ -54,6 +56,14 @@ projects 插件只经 host 端点提供数据，右键“打开位置”复用 `
   `set_desktop_settings` 读写壳状态，不再依赖 dsh settings 的 `desktop` 命名空间；
 - dsh 上游 Web 配置接口对 `desktop` 命名空间返回 `settings-not-exposed`，因此桥接 UI 必须走壳命令，
   否则开关无法落盘。
+
+## 局域网访问设置项归属
+
+- 局域网代理配置存于壳侧应用数据目录的 `lan-proxy.json`（bind/port/target），启停由 Rust 侧
+  受管子进程管理，均属 **Tauri 壳域**；
+- bridge client 面经 `lanProxy.get()` / `lanProxy.set(settings)` / `lanProxy.start()` /
+  `lanProxy.stop()` 调 `get_lan_proxy` / `set_lan_proxy` / `start_lan_proxy` / `stop_lan_proxy` 读写并控制；
+- 已取消 token 门禁，监听非本机地址时局域网设备无需鉴权即可访问，使用前应确认网络可信。
 
 ## 外观设置项归属
 

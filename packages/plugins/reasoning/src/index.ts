@@ -1,14 +1,14 @@
 export const name = "reasoning";
 
-/** pi-ai 各思考等级的显示名；xhigh / max 用参考实现的用户友好文案。 */
+/** 思考等级显示名；low / medium / high / xhigh / max 按 canonical id 展示。 */
 const THINKING_LEVEL_LABELS: Record<string, string> = {
   off: "Off",
   minimal: "Minimal",
-  low: "Low",
-  medium: "Medium",
-  high: "High",
-  xhigh: "Very High",
-  max: "Extreme",
+  low: "low",
+  medium: "medium",
+  high: "high",
+  xhigh: "xhigh",
+  max: "max",
 };
 
 interface ReasoningEffortLike {

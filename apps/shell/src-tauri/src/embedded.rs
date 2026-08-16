@@ -16,7 +16,7 @@ pub struct MountedPlugin {
 
 /// 遍历 `resource_dir/plugins/*` 子目录，把每个含 `dshDesktop.id` 的插件包
 /// 装配到 `home/profiles/node_modules/<name>/`（dsh 的模块兜底目录）。
-/// 以版本号为键：目标缺失或版本不同才重装（幂等、自愈）。单包失败只记日志跳过；
+/// 以内容为键：目标缺失或文件内容不同才重装（幂等、自愈）。单包失败只记日志跳过；
 /// plugins 根目录缺失直接返回空。返回装配成功的插件列表。
 pub fn assemble(resource_dir: &Path, home: &Path, log: &mut dyn FnMut(&str)) -> Vec<MountedPlugin> {
     assemble_inner(resource_dir, home, log, false)
@@ -33,7 +33,7 @@ pub fn assemble_dev(
 
 /// 装配内嵌插件并生成 `--patch` overlay。
 ///
-/// 开发模式使用 `assemble_dev` 强制重装，发布模式使用版本键控的 `assemble`；
+/// 开发模式使用 `assemble_dev` 强制重装，发布模式使用内容校验的 `assemble`；
 /// 任一阶段失败都不影响 dsh 启动，仅向日志写入原因。
 pub fn prepare_overlay(
     resource_dir: Option<&Path>,
@@ -137,9 +137,9 @@ fn assemble_inner(
 
         let target = home.join("profiles").join("node_modules").join(name);
 
-        if !force && target_has_version(&target, version) {
+        if !force && target_matches_source(&target, &dir) {
             log(&format!(
-                "[desktop] 插件 {name}@{version} 已装配（版本相同），跳过复制"
+                "[desktop] 插件 {name}@{version} 已装配（内容一致），跳过复制"
             ));
             mounted.push(MountedPlugin {
                 id: id.to_string(),
@@ -242,7 +242,11 @@ fn is_valid_plugin_id(id: &str) -> bool {
 /// `target/<profile>`，不会包含源码里的 `resources`，因此显式回退到
 /// `CARGO_MANIFEST_DIR/resources`，保证 `yarn dev` 也能装配内嵌插件。
 pub fn plugins_resource_dir(resource_dir: Option<&Path>) -> Option<PathBuf> {
-    if cfg!(debug_assertions) {
+    plugins_resource_dir_for_mode(resource_dir, cfg!(debug_assertions))
+}
+
+fn plugins_resource_dir_for_mode(resource_dir: Option<&Path>, dev: bool) -> Option<PathBuf> {
+    if dev {
         Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources"))
     } else {
         resource_dir.map(|dir| dir.join("resources"))
@@ -266,15 +270,80 @@ fn read_manifest(dir: &Path) -> Result<serde_json::Value, String> {
     })
 }
 
-/// 目标目录的 package.json 版本是否与源版本一致（一致则无需重装）。
-fn target_has_version(target: &Path, version: &str) -> bool {
-    let Ok(text) = fs::read_to_string(target.join("package.json")) else {
+/// 目标目录是否已包含源插件当前内容（文件清单与字节均一致）。
+fn target_matches_source(target: &Path, source: &Path) -> bool {
+    let mut source_files = Vec::new();
+    if !collect_regular_files(source, &mut source_files) {
+        return false;
+    }
+    for rel in &source_files {
+        let source_path = source.join(rel);
+        let target_path = target.join(rel);
+        if fs::read(source_path).ok() != fs::read(target_path).ok() {
+            return false;
+        }
+    }
+    let mut target_files = Vec::new();
+    if !collect_regular_files(target, &mut target_files) {
+        return false;
+    }
+    source_files.sort();
+    target_files.sort();
+    source_files == target_files
+}
+
+/// 递归收集目录下的普通文件相对路径；任何读取失败都返回 false。
+fn collect_regular_files(root: &Path, files: &mut Vec<PathBuf>) -> bool {
+    let Ok(entries) = fs::read_dir(root) else {
         return false;
     };
-    let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&text) else {
+    for entry in entries {
+        let Ok(entry) = entry else {
+            return false;
+        };
+        let path = entry.path();
+        let Ok(ty) = entry.file_type() else {
+            return false;
+        };
+        if ty.is_dir() {
+            if !collect_regular_files_impl(root, &path, files) {
+                return false;
+            }
+        } else if ty.is_file() {
+            let Ok(rel) = path.strip_prefix(root) else {
+                return false;
+            };
+            files.push(rel.to_path_buf());
+        }
+    }
+    true
+}
+
+/// 递归收集目录下的普通文件相对路径；任何读取失败都返回 false。
+fn collect_regular_files_impl(root: &Path, dir: &Path, files: &mut Vec<PathBuf>) -> bool {
+    let Ok(entries) = fs::read_dir(dir) else {
         return false;
     };
-    manifest.get("version").and_then(|v| v.as_str()) == Some(version)
+    for entry in entries {
+        let Ok(entry) = entry else {
+            return false;
+        };
+        let path = entry.path();
+        let Ok(ty) = entry.file_type() else {
+            return false;
+        };
+        if ty.is_dir() {
+            if !collect_regular_files_impl(root, &path, files) {
+                return false;
+            }
+        } else if ty.is_file() {
+            let Ok(rel) = path.strip_prefix(root) else {
+                return false;
+            };
+            files.push(rel.to_path_buf());
+        }
+    }
+    true
 }
 
 /// 递归复制目录（std::fs 手写，不引入 fs_extra）。
@@ -395,7 +464,16 @@ mod tests {
     }
 
     #[test]
-    fn assemble_copies_when_missing_and_version_differs() {
+    fn release_plugins_resource_dir_maps_to_nested_resources() {
+        let root = temp_dir().join(format!("dsh-release-resource-test-{}", std::process::id()));
+        let path = plugins_resource_dir_for_mode(Some(&root), false)
+            .expect("release 下应返回嵌套 resources");
+        assert_eq!(path, root.join("resources"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn assemble_copies_when_missing_and_content_differs() {
         // 构造：resources/plugins/bridge/{package.json, cordis.patch.yml, lib/index.js}
         // 目标 home/profiles/node_modules/@dsh-desktop/plugin-bridge
         let root = temp_dir().join(format!("dsh-assemble-test-{}", std::process::id()));
@@ -445,8 +523,7 @@ mod tests {
             .join("@dsh-desktop/no-id")
             .exists());
 
-        // 2) 同版本 → 不再复制（改源文件内容后目标不变）
-        std::fs::write(bridge.join("lib/index.js"), "// v1-modified").unwrap();
+        // 2) 同版本且内容一致 → 不再复制
         let mounted2 = assemble(&resources, &home, &mut |_| {});
         assert_eq!(mounted2.len(), 1);
         assert_eq!(
@@ -454,17 +531,28 @@ mod tests {
             "// v1"
         );
 
-        // 3) 版本不同 → 重新复制
+        // 2b) 同版本但内容变化 → 自愈重装，避免旧产物继续被加载
+        std::fs::write(bridge.join("lib/index.js"), "// v1-modified").unwrap();
+        assert!(!target_matches_source(&target, &bridge));
+        let mounted2b = assemble(&resources, &home, &mut |_| {});
+        assert_eq!(mounted2b.len(), 1);
+        assert_eq!(
+            std::fs::read_to_string(target.join("lib/index.js")).unwrap(),
+            "// v1-modified"
+        );
+
+        // 3) 版本不同且内容不同 → 重新复制
         std::fs::write(
             bridge.join("package.json"),
             r#"{"name":"@dsh-desktop/plugin-bridge","version":"0.2.0","dshDesktop":{"id":"bridge"}}"#,
         )
         .unwrap();
+        std::fs::write(bridge.join("lib/index.js"), "// v2").unwrap();
         let mounted3 = assemble(&resources, &home, &mut |_| {});
         assert_eq!(mounted3.len(), 1);
         assert_eq!(
             std::fs::read_to_string(target.join("lib/index.js")).unwrap(),
-            "// v1-modified"
+            "// v2"
         );
         let target_pkg = std::fs::read_to_string(target.join("package.json")).unwrap();
         assert!(target_pkg.contains("\"version\":\"0.2.0\""));

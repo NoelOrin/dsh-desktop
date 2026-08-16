@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import crypto from "node:crypto";
 /**
  * dsh-web 局域网反向代理（零依赖，仅 Node 内置模块）
  *
@@ -15,14 +14,10 @@ import crypto from "node:crypto";
  *   - 原样透传 Sec-Fetch-Site（保留跨站防护，cross-site 依旧 403）
  *   - 处理 WebSocket 升级（/api/events.mux、/api/events.host）与流式响应
  *
- * 可选 token 门禁（强烈建议启用）：HTTP 请求与 WS 握手都要求
- *   Authorization: Bearer <token>
  *
  * 用法：
  *   node scripts/lan-proxy.mjs [--bind 0.0.0.0] [--port 8080]
- *                              [--target 127.0.0.1:53553] [--token <secret>]
  * 环境变量（同名参数优先）：DSH_PROXY_BIND / DSH_PROXY_PORT /
- *                          DSH_PROXY_TARGET / DSH_PROXY_TOKEN
  */
 import http from "node:http";
 import os from "node:os";
@@ -36,15 +31,12 @@ const HELP = `dsh-web 局域网反向代理
   --bind <host>       监听地址，默认 0.0.0.0（局域网可访问）
   --port <port>       监听端口，默认 8080
   --target <host:port> 上游 dsh web 地址，默认 127.0.0.1:53553
-  --token <secret>    启用 Bearer token 门禁（强烈建议）
   --help, -h          显示帮助
 
 环境变量（优先级低于同名参数）:
-  DSH_PROXY_BIND / DSH_PROXY_PORT / DSH_PROXY_TARGET / DSH_PROXY_TOKEN
 
 示例:
-  node scripts/lan-proxy.mjs --token "一个足够长的随机串"
-  DSH_PROXY_TOKEN=xxx node scripts/lan-proxy.mjs --port 9090
+  node scripts/lan-proxy.mjs --port 9090
 `;
 
 // ---- 参数解析 ----
@@ -63,7 +55,6 @@ if (argv.includes("--help") || argv.includes("-h")) {
 const BIND = opt("bind", "DSH_PROXY_BIND", "0.0.0.0");
 const PORT = Number(opt("port", "DSH_PROXY_PORT", "8080"));
 const TARGET_RAW = opt("target", "DSH_PROXY_TARGET", "127.0.0.1:53553");
-const TOKEN = opt("token", "DSH_PROXY_TOKEN", "");
 
 if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
   console.error(`[lan-proxy] 端口无效: ${PORT}`);
@@ -142,25 +133,8 @@ function filterResponseHeaders(headers) {
   return out;
 }
 
-// ---- token 门禁 ----
-// timing-safe 比较：长度不一致先拒绝，等长后按字节比较，避免时序侧信道泄露 token。
-function authorized(req) {
-  if (!TOKEN) return true;
-  const auth = req.headers.authorization;
-  if (typeof auth !== "string") return false;
-  const a = Buffer.from(auth);
-  const b = Buffer.from(`Bearer ${TOKEN}`);
-  if (a.length !== b.length) return false; // 长度不同直接拒绝（也兜住空值）
-  return crypto.timingSafeEqual(a, b);
-}
-
 // ---- HTTP 转发 ----
 const server = http.createServer((req, res) => {
-  if (!authorized(req)) {
-    res.writeHead(401, { "Content-Type": "text/plain; charset=utf-8" });
-    res.end("未授权");
-    return;
-  }
   const proxyReq = http.request(
     {
       hostname: TARGET.hostname,
@@ -189,21 +163,6 @@ const server = http.createServer((req, res) => {
 const RELAY_EXCLUDE = new Set(["connection", "upgrade", "transfer-encoding", "content-length"]);
 
 server.on("upgrade", (req, socket, head) => {
-  if (!authorized(req)) {
-    // 客户端可能已断开：兜住 error，避免 socket.end() 触发未处理 EPIPE
-    socket.on("error", () => {});
-    // 用 end() 而非 write()+destroy()：确保 401 响应完整送达客户端
-    const body401 = "未授权";
-    socket.end(
-      "HTTP/1.1 401 Unauthorized\r\n" +
-        "Connection: close\r\n" +
-        "Content-Type: text/plain; charset=utf-8\r\n" +
-        `Content-Length: ${Buffer.byteLength(body401)}\r\n` +
-        "\r\n" +
-        body401,
-    );
-    return;
-  }
   const proxyReq = http.request({
     hostname: TARGET.hostname,
     port: TARGET_PORT,
@@ -285,12 +244,7 @@ server.listen(PORT, BIND, () => {
   console.log(`[lan-proxy] 已启动`);
   console.log(`  监听:      ${BIND}:${PORT}`);
   console.log(`  上游 dsh:  http://${TARGET_HOST}`);
-  console.log(`  token:     ${TOKEN ? "已启用（Bearer）" : "未启用 ⚠ 局域网内任何人都能访问"}`);
   for (const ip of lanAddresses()) {
     console.log(`  局域网访问: http://${ip}:${PORT}`);
-  }
-  if (!TOKEN) {
-    console.warn(`\n  ⚠⚠  未设置 token：dsh 的 fence 不是认证层，谁连上谁就有本机完整权限`);
-    console.warn(`  ⚠⚠  强烈建议加 --token，或至少只在可信网络中使用。`);
   }
 });

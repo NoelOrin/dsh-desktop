@@ -16,6 +16,7 @@ mod desktop_settings;
 mod embedded;
 mod host_lifecycle;
 mod inject;
+mod lan_proxy;
 mod mode;
 mod notifications;
 pub mod plugin_ops;
@@ -172,17 +173,33 @@ fn normalize_remote_plugins(
             return Err("远程插件 URL 重复".to_string());
         }
         plugin.source = config::RemotePluginSource::Local;
+        plugin.allow_build = plugin
+            .allow_build
+            .iter()
+            .map(|value| value.trim().to_string())
+            .collect();
+        for package in &plugin.allow_build {
+            if package.is_empty()
+                || package.starts_with('-')
+                || package.chars().any(char::is_control)
+                || package.chars().count() > 512
+            {
+                return Err("远程插件 allow_build 无效".to_string());
+            }
+        }
         normalized.push(plugin);
     }
     Ok(normalized)
 }
 
 /// 外部插件路径优先级：config/env 显式路径 > `$DSH_HOME/remote-plugins` >
-/// 应用数据目录 > 仓库 `packages/external-plugins`。默认路径只有存在时才被检测到。
+/// 应用数据目录 > 随包 resources/external-plugins（发布模式）> 仓库 `packages/external-plugins`。
+/// 默认路径只有存在时才被检测到。
 fn resolve_external_remote_plugins_path(
     config: &config::DshConfig,
     profile_home: &Path,
     app_data_dir: Option<&Path>,
+    resource_dir: Option<&Path>,
 ) -> Option<PathBuf> {
     if let Some(path) = config
         .remote_plugins_path
@@ -198,6 +215,11 @@ fn resolve_external_remote_plugins_path(
     if let Some(dir) = app_data_dir {
         candidates.push(dir.join("remote-plugins"));
         candidates.push(dir.join("remote-plugins.json"));
+    }
+    if !cfg!(debug_assertions) {
+        if let Some(dir) = resource_dir {
+            candidates.push(dir.join("resources").join("external-plugins"));
+        }
     }
     candidates
         .push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../packages/external-plugins"));
@@ -328,9 +350,11 @@ fn load_effective_remote_plugins(
     config: &config::DshConfig,
     profile_home: &Path,
     app_data_dir: Option<&Path>,
+    resource_dir: Option<&Path>,
 ) -> Result<Vec<config::RemotePluginPreset>, String> {
     let local = config.remote_plugins.clone();
-    let Some(path) = resolve_external_remote_plugins_path(config, profile_home, app_data_dir)
+    let Some(path) =
+        resolve_external_remote_plugins_path(config, profile_home, app_data_dir, resource_dir)
     else {
         return Ok(local);
     };
@@ -490,6 +514,12 @@ const BRIDGE_SCRIPT: &str = r#"(function () {
       unregisterAll: function () { return invoke("unregister_all_shortcuts"); },
     },
     onShortcut: function (cb) { return listen("dsh-shortcut", cb); },
+    lanProxy: {
+      get: function () { return invoke("get_lan_proxy"); },
+      set: function (settings) { return invoke("set_lan_proxy", { settings: settings }); },
+      start: function () { return invoke("start_lan_proxy"); },
+      stop: function () { return invoke("stop_lan_proxy"); },
+    },
     update: {
       check: function () { return invoke("check_update"); },
       install: function () { return invoke("install_update"); },
@@ -1238,6 +1268,9 @@ struct AppState {
     desktop_settings_path: PathBuf,
     projects_path: PathBuf,
     profile_state_path: PathBuf,
+    lan_proxy_path: PathBuf,
+    lan_proxy_config_path: PathBuf,
+    lan_proxy: lan_proxy::LanProxyManager,
     /// 应用是否正在退出（托盘"退出"置 true，用于关闭到托盘时区分真正退出）。
     exiting: Arc<AtomicBool>,
     /// --autostart + settings startupMode=tray 时隐藏主窗口，直到用户从托盘唤起。
@@ -1395,6 +1428,9 @@ pub fn run() {
             let desktop_settings_path = app_data.join("desktop-settings.json");
             let projects_path = app_data.join("projects.json");
             let profile_state_path = app_data.join("profile-state.json");
+            let lan_proxy_path = app_data.join("lan-proxy.mjs");
+            let lan_proxy_config_path = app_data.join("lan-proxy.json");
+            fs::write(&lan_proxy_path, lan_proxy::SCRIPT_SOURCE)?;
 
             let inner = Arc::new(Mutex::new(Inner {
                 log_dir: Some(log_dir.clone()),
@@ -1474,6 +1510,9 @@ pub fn run() {
                 desktop_settings_path,
                 projects_path,
                 profile_state_path,
+                lan_proxy_path,
+                lan_proxy_config_path,
+                lan_proxy: lan_proxy::LanProxyManager::new(),
                 exiting: exiting.clone(),
                 start_in_tray: start_in_tray.clone(),
                 shortcuts: Arc::new(Mutex::new(HashMap::new())),
@@ -1584,6 +1623,10 @@ pub fn run() {
             set_autostart,
             get_desktop_settings,
             set_desktop_settings,
+            get_lan_proxy,
+            set_lan_proxy,
+            start_lan_proxy,
+            stop_lan_proxy,
             get_projects,
             add_project,
             update_project,
@@ -1679,6 +1722,8 @@ pub fn run() {
             }
 
             if let RunEvent::Exit = event {
+                let state = app.state::<AppState>();
+                state.lan_proxy.stop();
                 let _ = app.state::<AppState>().tx.send(ManagerMessage::Shutdown);
             }
         });
@@ -1976,6 +2021,7 @@ impl DshManager {
             &startup_config,
             &profile_home,
             app_data_dir.as_deref(),
+            self.app.path().resource_dir().ok().as_deref(),
         ) {
             Ok(presets) => presets,
             Err(error) => {
@@ -1985,12 +2031,13 @@ impl DshManager {
         };
         for preset in remote_plugins.iter().filter(|preset| preset.enabled) {
             self.append_log(&format!("[desktop] 自动下载远程插件: {}", preset.url));
-            match self.plugin_ops.install_profile_plugin(
+            match self.plugin_ops.install_profile_plugin_with_allow_build(
                 &node,
                 &entry,
                 &profile_home,
                 &active,
                 &preset.url,
+                &preset.allow_build,
             ) {
                 Ok(result) => {
                     for line in &result.output {
@@ -2517,6 +2564,7 @@ fn effective_remote_plugins_for_state(
         &config,
         &home,
         state.app.path().app_data_dir().ok().as_deref(),
+        state.app.path().resource_dir().ok().as_deref(),
     )
 }
 
@@ -2557,12 +2605,13 @@ fn sync_remote_plugins(
         .filter(|preset| preset.enabled)
         .filter(|preset| group.as_deref().is_none_or(|group| preset.group == group))
     {
-        results.push(state.plugin_ops.install_profile_plugin(
+        results.push(state.plugin_ops.install_profile_plugin_with_allow_build(
             &node,
             &entry,
             &home,
             &profile,
             &preset.url,
+            &preset.allow_build,
         )?);
     }
     Ok(results)
@@ -2865,6 +2914,60 @@ fn set_desktop_settings(
         }
     }
     desktop_settings::save_desktop_settings(&state.desktop_settings_path, &settings)
+}
+
+/// 读取局域网代理配置与当前运行状态。
+#[tauri::command]
+fn get_lan_proxy(state: State<AppState>) -> Result<lan_proxy::LanProxySnapshot, String> {
+    lan_proxy_snapshot(&state)
+}
+
+/// 保存局域网代理配置；运行中时按新配置自动重启。
+#[tauri::command]
+fn set_lan_proxy(
+    state: State<AppState>,
+    settings: lan_proxy::LanProxySettings,
+) -> Result<lan_proxy::LanProxySnapshot, String> {
+    lan_proxy::validate(&settings)?;
+    lan_proxy::save(&state.lan_proxy_config_path, &settings)?;
+    if state.lan_proxy.is_running() {
+        start_lan_proxy_internal(&state)?;
+    }
+    lan_proxy_snapshot(&state)
+}
+
+/// 启动局域网代理。
+#[tauri::command]
+fn start_lan_proxy(state: State<AppState>) -> Result<lan_proxy::LanProxySnapshot, String> {
+    start_lan_proxy_internal(&state)
+}
+
+/// 停止局域网代理。
+#[tauri::command]
+fn stop_lan_proxy(state: State<AppState>) -> Result<lan_proxy::LanProxySnapshot, String> {
+    state.lan_proxy.stop();
+    lan_proxy_snapshot(&state)
+}
+
+fn lan_proxy_snapshot(state: &AppState) -> Result<lan_proxy::LanProxySnapshot, String> {
+    let settings = lan_proxy::load(&state.lan_proxy_config_path);
+    Ok(state.lan_proxy.snapshot(&settings))
+}
+
+fn start_lan_proxy_internal(state: &AppState) -> Result<lan_proxy::LanProxySnapshot, String> {
+    let settings = lan_proxy::load(&state.lan_proxy_config_path);
+    lan_proxy::validate(&settings)?;
+    let config = config::load(&state.config_path).effective(|key| std::env::var(key).ok());
+    let node =
+        resolve_node(&config).ok_or_else(|| "未检测到 Node.js，无法启动局域网代理".to_string())?;
+    let current_url = state.inner.lock().unwrap().snapshot().url;
+    state.lan_proxy.start(
+        &node,
+        &state.lan_proxy_path,
+        &settings,
+        current_url.as_deref(),
+    )?;
+    Ok(state.lan_proxy.snapshot(&settings))
 }
 
 /// 读取本地项目列表（项目列表与右键菜单状态的唯一状态源）。
@@ -4211,7 +4314,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join("tools.json"),
-            r#"[{"url":"https://example.com/tool.tgz"}]"#,
+            r#"[{"url":"https://example.com/tool.tgz","allow_build":["dsh-better-sidebar"]}]"#,
         )
         .unwrap();
 
@@ -4220,6 +4323,7 @@ mod tests {
         assert_eq!(presets[0].group, "tools");
         assert_eq!(presets[0].url, "https://example.com/tool.tgz");
         assert_eq!(presets[0].source, config::RemotePluginSource::External);
+        assert_eq!(presets[0].allow_build, vec!["dsh-better-sidebar"]);
 
         std::fs::remove_dir_all(&root).ok();
     }
@@ -4286,6 +4390,20 @@ mod tests {
                 "0".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn remote_plugin_preset_rejects_invalid_allow_build() {
+        let result = normalize_remote_plugins(vec![config::RemotePluginPreset {
+            id: "plugin".into(),
+            url: "https://example.com/plugin.tgz".into(),
+            enabled: true,
+            group: "default".into(),
+            source: config::RemotePluginSource::Local,
+            allow_build: vec!["-bad".into()],
+        }]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("allow_build"));
     }
 
     #[test]

@@ -12,6 +12,39 @@ declare module "@deepseek-ai/dsh-client-ui-primitives" {
 
   export function Input(props: InputHTMLAttributes<HTMLInputElement>): JSX.Element;
 
+  export interface MenuItem {
+    id: string;
+    label: ReactNode;
+    disabled?: boolean | undefined;
+    icon?: ReactNode;
+    danger?: boolean | undefined;
+    submenu?: readonly MenuItem[] | undefined;
+  }
+
+  export type MenuEntry =
+    | MenuItem
+    | { type: "separator"; id: string }
+    | { type: "label"; id: string; text: string };
+
+  export function Menu(props: {
+    open: boolean;
+    anchor: ReactNode;
+    items: readonly MenuEntry[];
+    selectedId?: string | undefined;
+    selectedIds?: readonly string[] | undefined;
+    onSelect: (id: string) => void;
+    onClose: () => void;
+    align?: "start" | "end";
+    side?: "bottom" | "top" | "right";
+    portal?: boolean;
+    closeOnPointerLeave?: boolean;
+    dense?: boolean;
+    compact?: boolean;
+    getAnchorRect?: () => DOMRect | null;
+    footer?: readonly MenuEntry[];
+    className?: string;
+  }): JSX.Element;
+
   export type StateDotState = "done" | "warning" | "ongoing" | "error";
 
   export function StateDot(props: {
@@ -35,6 +68,13 @@ declare module "@deepseek-ai/dsh-client-ui-primitives" {
 
   export function IconDownloadOutline16(props?: { size?: number; className?: string }): JSX.Element;
 
+  export function IconGlobeOutline14(props?: { size?: number; className?: string }): JSX.Element;
+  export function IconChevronDownOutline14(props?: {
+    size?: number;
+    className?: string;
+  }): JSX.Element;
+  export function IconPlayOutline16(props?: { size?: number; className?: string }): JSX.Element;
+  export function IconStopFill16(props?: { size?: number; className?: string }): JSX.Element;
   export function IconRefreshOutline16(props?: { size?: number; className?: string }): JSX.Element;
 
   export function IconTrashOutline16(props?: { size?: number; className?: string }): JSX.Element;
@@ -45,6 +85,8 @@ declare module "@deepseek-ai/dsh-client-ui-primitives" {
   }): JSX.Element;
 
   export function IconLightOutline16(props?: { size?: number; className?: string }): JSX.Element;
+
+  export function IconLinkOutline16(props?: { size?: number; className?: string }): JSX.Element;
 
   export function IconDarkOutline16(props?: { size?: number; className?: string }): JSX.Element;
 

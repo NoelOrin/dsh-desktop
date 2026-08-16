@@ -9,6 +9,7 @@ DSH Desktop 的 Rust 后端。职责：检测 / 一键安装或更新 `dsh`、�
 - `src/inject.rs` - dsh web 页面注入：当前托管 origin + host token 校验、`BRIDGE_SCRIPT` 与 `HARNESS_CHROME_SCRIPT` 的统一注入入口
 - `src/config.rs` - `DshConfig` 结构、`config.json` 的 load/save 与 effective 合并逻辑
 - `src/desktop_settings.rs` - 读取 `settings.yaml` 的 `desktop` 分节与壳侧 `desktop-settings.json`（`startupMode`）
+- `src/lan_proxy.rs` - 局域网反向代理：`lan-proxy.json` 配置、`lan-proxy.mjs` 内嵌脚本、受管子进程启停与状态快照
 - `src/embedded.rs` - 内嵌插件 resources 装配、内容一致性幂等、开发模式强制重装与 overlay 生成
 - `src/mode.rs` - 读取 `settings.yaml` 的 `dsh-desktop.mode`（`compatibility` / `advanced`，Linux 固定兼容模式）
 - `src/profiles.rs` - dsh profile 发现、默认 `web`、pending / last-known-good / 回滚状态机与已安装插件摘要
@@ -52,6 +53,7 @@ DSH Desktop 的 Rust 后端。职责：检测 / 一键安装或更新 `dsh`、�
 ## IPC 命令与事件
 
 - 命令：`get_status` / `get_pending_deeplinks` / `ack_deeplink` / `restart` / `install_dsh` / `update_dsh` / `open_log_directory` / `get_config` / `set_config` / `open_external` / `get_autostart` / `set_autostart` / `get_desktop_settings` / `set_desktop_settings` / `get_projects` / `add_project` / `update_project` / `remove_project` / `set_project_pinned` / `mark_project_read` / `archive_project_chats` / `create_project_worktree` / `show_project_in_finder` / `get_profiles` / `get_active_profile` / `select_profile` / `get_remote_plugins` / `set_remote_plugins` / `sync_remote_plugins` / `get_installed_plugins` / `install_profile_plugin` / `remove_profile_plugin` / `update_profile_plugins` / `register_shortcut` / `unregister_shortcut` / `get_shortcuts` / `unregister_all_shortcuts` / `check_update` / `install_update` / `request_notification_permission` / `get_ui_theme` / `window_action` / `open_paths` / `import_paths`
+  局域网命令：`get_lan_proxy` / `set_lan_proxy` / `start_lan_proxy` / `stop_lan_proxy`
 - 事件：`dsh-status`（RuntimeSnapshot）、`dsh-log`（单行文本）、`dsh-file-drop`（结构化文件拖放 payload）、`dsh-theme`（系统主题 `light` / `dark`）、`dsh-deeplink`（深链 payload）、`dsh-shortcut`（快捷键字符串）、`dsh-update-available`（新版本号）、`dsh-ui-theme`（`UiThemeSnapshot`）、`dsh-window-state`（`{ maximized }`）、`dsh-notification-action`（通知动作 payload）
 - `get_config` 返回“生效配置”：config.json 有值则用之，未设置的字段回退到环境变量（含 `DSH_DESKTOP_REMOTE_PLUGINS_PATH`）；`set_config` 只写 `config.json`，不会修改环境变量
 - `set_config` 会校验 `DSH_BIN` / `DSH_NODE` 为存在的绝对文件、`DSH_HOME` 为绝对目录，并保留现有 `shortcuts` 与 `remote_plugins` 记录
@@ -69,6 +71,7 @@ DSH Desktop 的 Rust 后端。职责：检测 / 一键安装或更新 `dsh`、�
 - **残留清理**：启动/重启前经 `process::cleanup_stale_dsh_web` 枚举进程，只清理带应用数据目录 overlay 或 `DSH_DESKTOP_MANAGED` 标记的旧 `dsh web` 实例，不误杀单独启动的 `dsh web`
 - **文件拖放与动作**：main 窗口 `DragDropEvent::Drop` 生成结构化 `dsh-file-drop`；`open_paths` / `import_paths` 命令以 `open` / `import` 动作转发给 dsh web
 - **桥接**：`on_page_load` 经 `inject::inject_dsh_web` 对“当前托管 dsh origin”注入 `BRIDGE_SCRIPT` 与 `HARNESS_CHROME_SCRIPT`，暴露 `window.__DSH_DESKTOP__`（openExternal / 状态与日志 / 配置 / profile / 远程插件预设 / 受管插件操作 / 开机自启与启动模式 / 快捷键 / 更新）；`HARNESS_CHROME_SCRIPT` 只保留侧边栏右键菜单，标题栏形态由 bridge client 提供，权限由 `capabilities/bridge.json` 与 `capabilities/shortcuts.json` remote 白名单收口
+- **局域网访问**：`lan_proxy.rs` 将根 `scripts/lan-proxy.mjs` 内嵌到应用数据目录，以 Node 子进程启动/停止；设置页经 `get_lan_proxy` / `set_lan_proxy` / `start_lan_proxy` / `stop_lan_proxy` 读写 `lan-proxy.json` 并控制启停；无 token 门禁，仅限可信网络
 - **无边框窗口**：main 窗口无系统边框（macOS 用 Overlay title bar）；`window_action` 支持 minimize / maximize（切换）/ close / toggle-visible（显示↔隐藏）；`dsh-window-state` 在 setup、窗口 Resized 与 dsh 就绪导航后广播
 - **导航策略**：`create_main_window` 在窗口创建时注册 `on_navigation` / `on_new_window`；只允许 Tauri 本地页面、固定开发服务器与当前托管的 dsh origin，外部 HTTP/HTTPS 交给系统浏览器，`window.open` 一律拒绝
 - **窗口状态记忆**：window-state 插件保存 main 窗口大小/位置/最大化状态，下次启动恢复
@@ -76,12 +79,16 @@ DSH Desktop 的 Rust 后端。职责：检测 / 一键安装或更新 `dsh`、�
 - **开机自启与启动模式**：autostart 插件注册系统自启；`desktop_settings` 优先读取壳侧 `desktop-settings.json` 的 `startupMode`，未配置时回退 `settings.yaml` 的 `desktop.startupMode`，支持 `normal` / `tray` / `minimized`
 - **profile 与界面模式**：`profiles.rs` 发现 `$DSH_HOME/profiles` 并按 bundle 顺序判断 web_capable；`select_profile` 只写 pending，启动成功后提交 last-known-good，失败回滚；`mode.rs` 读取 `settings.yaml` 的 `dsh-desktop.mode` 并注入 URL 查询参数/子进程环境
 - **远程插件预设与受管插件操作**：启动时合并外部固定预设与 `config.json.remote_plugins`，对 active profile 执行 `dsh plugin add`；bridge“插件”页可整组同步、安装、移除与更新（`PluginOps` 单操作互斥）
+- **外部预设构建注入**：`yarn build:plugins` 把 `packages/external-plugins/*.json` 复制到 `resources/external-plugins/`，发布模式从随包资源目录加载；开发模式读仓库目录
+- **远程插件构建白名单**：外部/本地远程预设可声明 `allow_build`，安装时透传 `dsh plugin add --allow-build <package>`；未声明时不改变 pnpm 默认构建策略
 - **自定义快捷键**：`register_shortcut` / `unregister_shortcut` / `get_shortcuts` / `unregister_all_shortcuts` 管理全局快捷键，注册表存于 AppState 并持久化到 `config.json.shortcuts`
 - **退出确认**：托盘“退出”先弹确认框，确认后置 `exiting`、发 `Stop` 并退出；取消则无操作
 
 ## config.json 与配置优先级
 
 - 位置：`app_data_dir()/config.json`；字段 `dsh_bin` / `dsh_node` / `dsh_home` / `remote_plugins_path`（外部文件或目录，默认检测 `$DSH_HOME/remote-plugins(.json)`、app data 与仓库 `packages/external-plugins`）/ `shortcuts` / `remote_plugins`（本地分组预设）
+- 远程外部预设默认检测顺序：`$DSH_HOME/remote-plugins(.json)`、app data、随包 `resources/external-plugins`（发布模式）与仓库 `packages/external-plugins`（开发模式）
+- 局域网配置：`app_data_dir()/lan-proxy.json`（bind/port/target）；脚本源 `app_data_dir()/lan-proxy.mjs` 由二进制内嵌写入
 - 优先级：**config.json → 环境变量（`DSH_BIN` / `DSH_NODE` / `DSH_HOME` / `DSH_DESKTOP_REMOTE_PLUGINS_PATH`）→ PATH 检测**
 - PATH 检测合并进程自身 PATH、macOS 系统 PATH（`/etc/paths` + `/etc/paths.d`）、Linux `/etc/environment`、Windows 用户/系统注册表 PATH 与非 Windows 用户 shell PATH；shell 探测使用 `-l -c` 非交互模式并重定向到临时文件，带 1.5s 硬超时；合并结果注入 dsh/npm 子进程
 - `DshConfig::effective()` 实现合并：config.json 有值则用之，否则回退到环境变量；`resolve_dsh` 再在合并结果之上做文件级检测

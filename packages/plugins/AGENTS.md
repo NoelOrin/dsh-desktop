@@ -131,6 +131,7 @@ dsh 插件的开发容器：**每个含 `dsh` 字段的子目录一个 dsh 插�
 - host 侧设置 namespace 必须小写 kebab-case，用 `ctx.settings.register(ns, schema,
   options)` 注册；`base` 是组合层，`applies` 是 `live` / `restart`，跨字段约束放
   `validate()`，不放 schema。
+- host 插件直接访问 `ctx.settings` 时，必须在模块导出中声明 `inject: ["settings"]`；namespace 禁止包含点号，避免 dsh settings 校验失败。
 - 用户层、组合 base、schema 默认值按“默认值 → base → user”解析；`replace` 才是删除/
   重置路径，`update` 只稀疏合并 user 层。
 - 对外传输设置描述必须 `redactSecrets: true`，secret 用 path op 写回，绝不能把

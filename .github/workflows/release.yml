@@ -1,0 +1,144 @@
+name: Release
+
+on:
+  release:
+    types:
+      - published
+
+concurrency:
+  group: release-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Resolve release version
+        id: version
+        shell: bash
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          VERSION="${TAG#v}"
+          if [ -z "$VERSION" ]; then
+            echo "无法从 release tag 解析版本: $TAG" >&2
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for CI artifacts
+        id: artifacts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_WORKFLOW: .github/workflows/build.yml
+        run: |
+          set -euo pipefail
+          REPO="$GITHUB_REPOSITORY"
+          TARGET_SHA="$(git rev-parse HEAD)"
+          RUN_ID=""
+
+          for attempt in $(seq 1 90); do
+            RUN_JSON="$(gh api "repos/$REPO/actions/runs?event=push&branch=release&per_page=100" \
+              | jq -c --arg sha "$TARGET_SHA" --arg path "$CI_WORKFLOW" \
+                '[.workflow_runs[] | select(.path == $path and .head_sha == $sha)] | first // empty')"
+
+            if [ -z "$RUN_JSON" ]; then
+              echo "[$attempt/90] 未找到 release commit 对应的 CI run，继续等待"
+              sleep 20
+              continue
+            fi
+
+            STATUS="$(printf '%s' "$RUN_JSON" | jq -r .status)"
+            CONCLUSION="$(printf '%s' "$RUN_JSON" | jq -r .conclusion)"
+            RUN_ID="$(printf '%s' "$RUN_JSON" | jq -r .id)"
+
+            if [ "$STATUS" != "completed" ]; then
+              echo "[$attempt/90] CI run $RUN_ID 仍在执行，继续等待"
+              sleep 20
+              continue
+            fi
+
+            if [ "$CONCLUSION" != "success" ]; then
+              echo "CI run $RUN_ID 未成功（$CONCLUSION），无法复用构建产物" >&2
+              exit 1
+            fi
+
+            ARTIFACT_COUNT="$(gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts?per_page=100" \
+              --jq '[.artifacts[] | select(.name | startswith("DSH-Desktop-"))] | length')"
+            if [ "$ARTIFACT_COUNT" -lt 3 ]; then
+              echo "CI run $RUN_ID 的 DSH-Desktop artifacts 不完整（$ARTIFACT_COUNT/3，可能已过期或被清理）" >&2
+              exit 1
+            fi
+
+            echo "找到 CI run $RUN_ID，开始下载产物"
+            gh run download "$RUN_ID" --repo "$REPO" --dir artifacts
+            echo "RUN_ID=$RUN_ID" >> "$GITHUB_OUTPUT"
+            break
+          done
+
+          if [ -z "$RUN_ID" ]; then
+            echo "等待 30 分钟后仍未找到 release commit 对应的成功 CI 产物" >&2
+            exit 1
+          fi
+
+      - name: Rename artifacts with platform names
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          set -euo pipefail
+          find artifacts -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' \) | while read -r f; do
+            dir=$(dirname "$f")
+            case "$f" in
+              *.dmg) new="DSH.Desktop-${VERSION}-macOS-aarch64.dmg" ;;
+              *.exe) new="DSH.Desktop-${VERSION}-Windows-x64.exe" ;;
+              *.AppImage) new="DSH.Desktop-${VERSION}-Linux-x64.AppImage" ;;
+              *.deb) new="DSH.Desktop-${VERSION}-Linux-x64.deb" ;;
+            esac
+            mv "$f" "$dir/$new"
+          done
+          find artifacts -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' \)
+
+      - name: Extract latest changelog
+        id: notes
+        shell: bash
+        run: |
+          awk 'BEGIN{found=0} /^## \[/{if(found) exit; found=1} found{print}' CHANGELOG.md > /tmp/RELEASE_NOTES.md
+          if [ ! -s /tmp/RELEASE_NOTES.md ]; then
+            printf '# DSH Desktop v%s\n' "${{ steps.version.outputs.VERSION }}" > /tmp/RELEASE_NOTES.md
+          fi
+
+      - name: Upload release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          mapfile -t ASSETS < <(find . -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' \) -print)
+          if [ "${#ASSETS[@]}" -eq 0 ]; then
+            echo "未找到 release assets" >&2
+            exit 1
+          fi
+
+          gh release upload "$TAG" "${ASSETS[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+
+          BODY="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body)"
+          if [ -z "$BODY" ]; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file /tmp/RELEASE_NOTES.md
+          fi

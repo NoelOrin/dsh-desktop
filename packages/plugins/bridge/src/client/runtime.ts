@@ -19,6 +19,12 @@ export interface BridgeLike {
     get(): Promise<DesktopSettings>;
     set(settings: DesktopSettings): Promise<void>;
   };
+  lanProxy: {
+    get(): Promise<LanProxySnapshot>;
+    set(settings: LanProxySettings): Promise<LanProxySnapshot>;
+    start(): Promise<LanProxySnapshot>;
+    stop(): Promise<LanProxySnapshot>;
+  };
   profiles: {
     list(): Promise<DshProfileSummary[]>;
     active(): Promise<DesktopProfileState>;
@@ -73,6 +79,7 @@ export interface RemotePluginPreset {
   enabled: boolean;
   group: string;
   source: RemotePluginSource;
+  allow_build?: string[];
 }
 
 export type StartupMode = "normal" | "tray" | "minimized";
@@ -87,6 +94,21 @@ export interface DesktopModeSettings {
 export interface DesktopSettings {
   autostart: boolean;
   startup_mode: StartupMode;
+}
+
+/** 局域网反向代理配置与快照（与 Rust lan-proxy.rs 对齐）。 */
+export interface LanProxySettings {
+  bind: string;
+  port: number;
+  target: string | null;
+}
+
+export interface LanProxySnapshot {
+  settings: LanProxySettings;
+  running: boolean;
+  url: string | null;
+  urls: string[];
+  error: string | null;
 }
 
 /** dsh profile 摘要（与 packages/contracts 的 DshProfileSummary 对齐）。 */

@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="800" viewBox="0 0 660 400" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="660" y2="400" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f8fafc"/>
+      <stop offset="0.55" stop-color="#f1f5fb"/>
+      <stop offset="1" stop-color="#e9eef7"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="660" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4d6bfe"/>
+      <stop offset="1" stop-color="#38bdf8"/>
+    </linearGradient>
+    <linearGradient id="shadow" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="1" stop-color="#4d6bfe" stop-opacity="0.16"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="660" height="400" fill="url(#bg)"/>
+
+  <rect x="0" y="0" width="660" height="5" fill="url(#accent)"/>
+
+  <text x="330" y="58" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue', sans-serif" font-size="30" font-weight="700" fill="#0f172a">DSH Desktop</text>
+  <text x="330" y="86" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue', sans-serif" font-size="16" font-weight="500" fill="#64748b">DeepSeek Harness 桌面端</text>
+
+  <line x1="248" y1="106" x2="412" y2="106" stroke="#dbe3ef" stroke-width="1.5"/>
+  <circle cx="412" cy="106" r="3" fill="#4d6bfe"/>
+  <circle cx="248" cy="106" r="3" fill="#4d6bfe"/>
+
+  <circle cx="180" cy="170" r="68" fill="#ffffff" fill-opacity="0.46"/>
+  <circle cx="180" cy="170" r="68" stroke="#4d6bfe" stroke-opacity="0.18" stroke-width="2"/>
+  <circle cx="480" cy="170" r="68" fill="#ffffff" fill-opacity="0.46"/>
+  <circle cx="480" cy="170" r="68" stroke="#4d6bfe" stroke-opacity="0.18" stroke-width="2"/>
+
+  <path d="M252 170 L422 170" stroke="#94a3b8" stroke-opacity="0.7" stroke-width="2"/>
+  <path d="M410 162 L420 170 L410 178" stroke="#94a3b8" stroke-opacity="0.7" stroke-width="2" fill="none"/>
+
+  <text x="330" y="345" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue', sans-serif" font-size="16" font-weight="500" fill="#475569">拖拽到 Applications 文件夹即可安装</text>
+  <text x="330" y="368" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue', sans-serif" font-size="12" font-weight="400" fill="#94a3b8">首次启动时会自动准备 DeepSeek Harness 环境</text>
+
+  <rect x="260" y="376" width="140" height="3" rx="1.5" fill="url(#shadow)"/>
+</svg>

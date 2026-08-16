@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-sync-remote-plugins"
+description = "Enables the sync_remote_plugins command without any pre-configured scope."
+commands.allow = ["sync_remote_plugins"]
+
+[[permission]]
+identifier = "deny-sync-remote-plugins"
+description = "Denies the sync_remote_plugins command without any pre-configured scope."
+commands.deny = ["sync_remote_plugins"]

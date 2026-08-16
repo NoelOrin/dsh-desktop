@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-install-profile-plugin"
+description = "Enables the install_profile_plugin command without any pre-configured scope."
+commands.allow = ["install_profile_plugin"]
+
+[[permission]]
+identifier = "deny-install-profile-plugin"
+description = "Denies the install_profile_plugin command without any pre-configured scope."
+commands.deny = ["install_profile_plugin"]

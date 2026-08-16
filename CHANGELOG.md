@@ -1,8 +1,16 @@
 # Changelog
 
-## [Unreleased]
+## [0.4.1] - 2026-08-16
 
 ### Bug Fixes
+
+- fix(ci): release dispatch 显式指定仓库 (#6)
+
+### Other
+
+- docs(changelog): 关联 PR #6 修复说明 (#6)
+
+### Pending Updates
 
 - [PR #6](https://github.com/NoelOrin/dsh-desktop/pull/6)：修复 release workflow 自动 dispatch 无法推断仓库的问题
 

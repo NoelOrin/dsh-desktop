@@ -17,6 +17,7 @@ mod embedded;
 mod host_lifecycle;
 mod inject;
 mod notifications;
+pub mod plugin_ops;
 mod process;
 mod profiles;
 mod projects;
@@ -1044,6 +1045,7 @@ struct DshManager {
     profile_state_path: PathBuf,
     startup_context: Option<profiles::StartupContext>,
     start_in_tray: Arc<AtomicBool>,
+    plugin_ops: plugin_ops::PluginOps,
 }
 
 pub fn run() {
@@ -1176,6 +1178,7 @@ pub fn run() {
                 profile_state_path: app_data.join("profile-state.json"),
                 startup_context: None,
                 start_in_tray: start_in_tray.clone(),
+                plugin_ops: plugin_ops::PluginOps::new(),
                 managed_dsh_url: managed_dsh_url.clone(),
                 host_token: host_token.clone(),
             };
@@ -1819,6 +1822,7 @@ impl DshManager {
 
     /// 优雅停止子进程：unix 下先 SIGTERM 等宽限期，再 SIGKILL；Windows 直接 TerminateProcess。
     fn cleanup_child(&mut self) {
+        let _ = self.plugin_ops.cancel_current();
         if let Some(mut child) = self.child.take() {
             self.lifecycle.invalidate();
             #[cfg(unix)]
@@ -3088,7 +3092,7 @@ fn find_in_path_entries(entries: &[PathBuf], name: &str) -> Option<PathBuf> {
 }
 
 /// 合并 GUI 进程自身、系统全局 PATH 与用户 shell PATH，保证桌面启动时也能找到 node/npm/dsh。
-fn effective_path() -> String {
+pub(crate) fn effective_path() -> String {
     static CACHE: OnceLock<String> = OnceLock::new();
 
     CACHE

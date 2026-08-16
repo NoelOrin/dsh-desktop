@@ -5,12 +5,13 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const BUSY_MESSAGE: &str = "当前只有一个插件操作可运行";
 const CANCELLED_MESSAGE: &str = "插件操作已取消";
 const MAX_ARG_LENGTH: usize = 512;
 const POLL_INTERVAL: Duration = Duration::from_millis(25);
+const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// 受管 dsh 插件操作结果，与 packages/contracts 的 PluginOperationResult 对齐。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -40,6 +41,7 @@ struct RunningOp {
 struct PluginOpsState {
     active: Mutex<Option<Arc<RunningOp>>>,
     changed: Condvar,
+    cancelling: AtomicBool,
     #[cfg(test)]
     cancel_wait_started: AtomicBool,
 }
@@ -64,6 +66,7 @@ impl PluginOps {
             state: Arc::new(PluginOpsState {
                 active: Mutex::new(None),
                 changed: Condvar::new(),
+                cancelling: AtomicBool::new(false),
                 #[cfg(test)]
                 cancel_wait_started: AtomicBool::new(false),
             }),
@@ -145,11 +148,13 @@ impl PluginOps {
 
     /// 取消当前操作；active 槽位保留到 run_operation 完成输出收集后再清理。
     pub fn cancel_current(&self) -> Result<(), String> {
+        self.state.cancelling.store(true, Ordering::SeqCst);
         let running = {
             let active = self.state.active.lock().unwrap();
             active.as_ref().cloned()
         };
         let Some(running) = running else {
+            self.state.cancelling.store(false, Ordering::SeqCst);
             return Ok(());
         };
         running.cancelled.store(true, Ordering::SeqCst);
@@ -158,19 +163,24 @@ impl PluginOps {
             terminate_child(&mut child);
         }
         self.wait_for_cleanup(&running);
+        self.state.cancelling.store(false, Ordering::SeqCst);
         Ok(())
     }
 
-    fn clear_active(&self) {
+    fn clear_active(&self, running: &Arc<RunningOp>) {
         let mut active = self.state.active.lock().unwrap();
-        let had_active = active.take().is_some();
-        drop(active);
-        if had_active {
+        let is_current = active
+            .as_ref()
+            .map_or(false, |current| Arc::ptr_eq(current, running));
+        if is_current {
+            active.take();
+            drop(active);
             self.state.changed.notify_all();
         }
     }
 
     fn wait_for_cleanup(&self, running: &Arc<RunningOp>) {
+        let deadline = Instant::now() + CLEANUP_TIMEOUT;
         let mut active = self.state.active.lock().unwrap();
         while active
             .as_ref()
@@ -178,7 +188,18 @@ impl PluginOps {
         {
             #[cfg(test)]
             self.state.cancel_wait_started.store(true, Ordering::SeqCst);
-            active = self.state.changed.wait(active).unwrap();
+            let now = Instant::now();
+            if now >= deadline {
+                drop(active);
+                self.clear_active(running);
+                return;
+            }
+            let (guard, _) = self
+                .state
+                .changed
+                .wait_timeout(active, deadline - now)
+                .unwrap();
+            active = guard;
         }
     }
 
@@ -207,8 +228,11 @@ impl PluginOps {
             command.process_group(0);
         }
 
-        let (child_state, cancelled) = {
+        let (child_state, cancelled, running) = {
             let mut active = self.state.active.lock().unwrap();
+            if self.state.cancelling.load(Ordering::SeqCst) {
+                return Err(CANCELLED_MESSAGE.to_string());
+            }
             if active.is_some() {
                 return Err(BUSY_MESSAGE.to_string());
             }
@@ -218,14 +242,14 @@ impl PluginOps {
             });
             let child_state = running.child.clone();
             let cancelled = running.cancelled.clone();
-            active.replace(running);
-            (child_state, cancelled)
+            active.replace(running.clone());
+            (child_state, cancelled, running)
         };
 
         let mut child = match command.spawn() {
             Ok(child) => child,
             Err(error) => {
-                self.clear_active();
+                self.clear_active(&running);
                 return Err(format!("无法启动插件操作: {error}"));
             }
         };
@@ -237,7 +261,7 @@ impl PluginOps {
             if cancelled.load(Ordering::SeqCst) {
                 drop(state);
                 terminate_child(&mut child);
-                self.clear_active();
+                self.clear_active(&running);
                 return Err(CANCELLED_MESSAGE.to_string());
             }
             *state = Some(child);
@@ -280,9 +304,9 @@ impl PluginOps {
             thread::sleep(POLL_INTERVAL);
         };
 
-        let _ = stdout_handle.join();
-        let _ = stderr_handle.join();
-        self.clear_active();
+        join_with_timeout(stdout_handle);
+        join_with_timeout(stderr_handle);
+        self.clear_active(&running);
 
         if let Some(error) = wait_error {
             return Err(error);
@@ -334,9 +358,23 @@ fn collect_stream(
     }
 }
 
+fn join_with_timeout(handle: thread::JoinHandle<()>) {
+    let deadline = Instant::now() + CLEANUP_TIMEOUT;
+    while !handle.is_finished() {
+        if Instant::now() >= deadline {
+            return;
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+    let _ = handle.join();
+}
+
 fn validate_value(label: &str, value: &str) -> Result<(), String> {
     if value.trim().is_empty() {
         return Err(format!("{label} 不能为空"));
+    }
+    if value.starts_with('-') {
+        return Err(format!("{label} 不能以 - 开头"));
     }
     if value.contains('\0') {
         return Err(format!("{label} 不能包含 NUL"));
@@ -600,6 +638,14 @@ process.stderr.write("stderr from fake dsh\n");
         }
         assert!(ops.is_busy(), "取消后旧操作清理完成前应保持忙碌");
 
+        let rejected = ops
+            .install_profile_plugin(&node_path(), &fake_dsh, &home, "web", "pkg")
+            .unwrap_err();
+        assert!(
+            rejected.contains("已取消"),
+            "取消期间的新操作应被拒绝: {rejected}"
+        );
+
         release_tx.send(()).unwrap();
         assert!(cancel_handle.join().unwrap().is_ok());
         let error = handle.join().unwrap().unwrap_err();
@@ -649,6 +695,21 @@ process.stderr.write("stderr from fake dsh\n");
         assert!(ops
             .remove_profile_plugin(&node, dsh, home, "web", "..")
             .is_err());
+        assert_eq!(
+            ops.install_profile_plugin(&node, dsh, home, "web", "-pkg")
+                .unwrap_err(),
+            "spec 不能以 - 开头"
+        );
+        assert_eq!(
+            ops.remove_profile_plugin(&node, dsh, home, "web", "-name")
+                .unwrap_err(),
+            "name 不能以 - 开头"
+        );
+        assert_eq!(
+            ops.install_profile_plugin(&node, dsh, home, "-web", "pkg")
+                .unwrap_err(),
+            "profile 不能以 - 开头"
+        );
     }
 
     #[test]

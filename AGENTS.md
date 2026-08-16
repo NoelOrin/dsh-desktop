@@ -70,4 +70,4 @@ PATH 检测会合并桌面进程自身 PATH、macOS 系统 PATH（`/etc/paths` +
 - `dist/`、`apps/shell/src-tauri/target/`、`apps/shell/src-tauri/gen/` 与 `apps/shell/src-tauri/resources/plugins/` 均为生成产物，勿手改（已在 `.gitignore` 或由脚本生成）
 - 新增 Tauri IPC 能力需同步修改 `apps/shell/src-tauri/capabilities/default.json` 和/或 `bridge.json`、`packages/contracts/src/index.ts`、Rust 命令、相关前端/桥接调用与各 AGENTS 契约表
 - 修改根级脚本、CI、插件装配或桥接面时，同步更新对应子目录 `AGENTS.md`，避免文档与实现脱节
-- 本仓库只有 `release` 分支；push 到 `release` 触发版本准备与 CI 构建，GitHub Release 发布时才触发 release workflow
+- 本仓库只有 `release` 分支；push 到 `release` 自动 bump、构建并发布 GitHub Release

@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Features
+
+- [PR #5](https://github.com/NoelOrin/dsh-desktop/pull/5)：构建成功后自动创建并发布 GitHub Release
+
 ## [0.3.1] - 2026-08-16
 
 ### Bug Fixes
